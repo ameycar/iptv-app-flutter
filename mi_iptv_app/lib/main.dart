@@ -4,7 +4,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+  try {
+    await Firebase.initializeApp();
+    print("Firebase inicializado correctamente");
+  } catch (e) {
+    print("Error al inicializar Firebase: $e");
+  }
   runApp(const AmeycarTVApp());
 }
 
