@@ -1,0 +1,30 @@
+
+{
+  "project_info": {
+    "project_number": "1056187378484",
+    "project_id": "ameycartv",
+    "storage_bucket": "ameycartv.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1056187378484:android:db9892c4c28259c2f19361",
+        "android_client_info": {
+          "package_name": "com.example.mi_iptv_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA8g264lGZ7FFe8qAou9Lvajso4NowgHP8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
