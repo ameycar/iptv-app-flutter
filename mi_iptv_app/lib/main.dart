@@ -169,7 +169,7 @@ class _MainHomeScreenState extends State<MainHomeScreen> with SingleTickerProvid
                       alignment: Alignment.bottomCenter,
                       child: Container(
                         width: double.infinity,
-                        color: Colors.black70,
+                        color: Colors.black.withOpacity(0.7),
                         padding: const EdgeInsets.all(4),
                         child: Text(
                           data['titulo'] ?? 'Sin título',
