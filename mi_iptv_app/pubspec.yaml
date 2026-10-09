@@ -1,22 +1,25 @@
 name: mi_iptv_app
-description: "AmeycarTV IPTV App"
-publish_to: 'none'
+description: "Una aplicación de streaming para AmeycarTV."
+publish_to: "none"
+
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.6
-  firebase_core: ^3.1.0
-  cloud_firestore: ^5.0.1
+  cupertino_icons: ^1.0.8
+  firebase_core: ^3.12.1
+  cloud_firestore: ^5.6.5
+  video_player: ^2.9.2
+  chewie: ^1.8.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true
