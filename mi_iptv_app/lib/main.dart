@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -121,7 +123,17 @@ class _MainHomeScreenState extends State<MainHomeScreen> with SingleTickerProvid
                     const SizedBox(height: 8),
                     ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurpleAccent),
-                      onPressed: () {},
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const VideoPlayerScreen(
+                              videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                              title: 'Película de prueba',
+                            ),
+                          ),
+                        );
+                      },
                       icon: const Icon(Icons.play_arrow, color: Colors.white),
                       label: const Text('Reproducir Ahora', style: TextStyle(color: Colors.white)),
                     ),
@@ -157,31 +169,49 @@ class _MainHomeScreenState extends State<MainHomeScreen> with SingleTickerProvid
                 itemCount: docs.length,
                 itemBuilder: (context, index) {
                   final data = docs[index].data() as Map<String, dynamic>;
-                  return Container(
-                    width: 120,
-                    margin: const EdgeInsets.only(right: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[900],
-                      borderRadius: BorderRadius.circular(8),
-                      image: data['portada'] != null
-                          ? DecorationImage(
-                              image: NetworkImage(data['portada']),
-                              fit: BoxFit.cover,
-                            )
-                          : null,
-                    ),
-                    child: Align(
-                      alignment: Alignment.bottomCenter,
-                      child: Container(
-                        width: double.infinity,
-                        color: Colors.black.withOpacity(0.7),
-                        padding: const EdgeInsets.all(4),
-                        child: Text(
-                          data['titulo'] ?? 'Sin título',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(fontSize: 12, color: Colors.white),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                  final videoUrl = data['url'] ?? '';
+                  final titulo = data['titulo'] ?? 'Sin título';
+
+                  return GestureDetector(
+                    onTap: () {
+                      if (videoUrl.isNotEmpty) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => VideoPlayerScreen(
+                              videoUrl: videoUrl,
+                              title: titulo,
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                    child: Container(
+                      width: 120,
+                      margin: const EdgeInsets.only(right: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[900],
+                        borderRadius: BorderRadius.circular(8),
+                        image: data['portada'] != null
+                            ? DecorationImage(
+                                image: NetworkImage(data['portada']),
+                                fit: BoxFit.cover,
+                              )
+                            : null,
+                      ),
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Container(
+                          width: double.infinity,
+                          color: Colors.black.withOpacity(0.7),
+                          padding: const EdgeInsets.all(4),
+                          child: Text(
+                            titulo,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 12, color: Colors.white),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ),
                     ),
@@ -209,6 +239,75 @@ class _MainHomeScreenState extends State<MainHomeScreen> with SingleTickerProvid
         child: const Center(
           child: Icon(Icons.movie, color: Colors.grey, size: 40),
         ),
+      ),
+    );
+  }
+}
+
+class VideoPlayerScreen extends StatefulWidget {
+  final String videoUrl;
+  final String title;
+
+  const VideoPlayerScreen({
+    super.key,
+    required this.videoUrl,
+    required this.title,
+  });
+
+  @override
+  State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
+}
+
+class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+  late VideoPlayerController _videoPlayerController;
+  ChewieController? _chewieController;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializePlayer();
+  }
+
+  void _initializePlayer() async {
+    _videoPlayerController = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
+    await _videoPlayerController.initialize();
+    _chewieController = ChewieController(
+      videoPlayerController: _videoPlayerController,
+      autoPlay: true,
+      looping: false,
+      aspectRatio: _videoPlayerController.value.aspectRatio,
+      errorBuilder: (context, errorMessage) {
+        return Center(
+          child: Text(
+            errorMessage,
+            style: const TextStyle(color: Colors.white),
+          ),
+        );
+      },
+    );
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _videoPlayerController.dispose();
+    _chewieController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.title),
+        backgroundColor: Colors.black,
+      ),
+      backgroundColor: Colors.black,
+      body: Center(
+        child: _chewieController != null &&
+                _chewieController!.videoPlayerController.value.isInitialized
+            ? Chewie(controller: _chewieController!)
+            : const CircularProgressIndicator(),
       ),
     );
   }
