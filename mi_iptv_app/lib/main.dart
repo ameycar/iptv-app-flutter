@@ -16,7 +16,7 @@ class AmeycarTVApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF0F141C),
       ),
-      home: const HomeScreen(),
+      home: HomeScreen(),
     );
   }
 }
