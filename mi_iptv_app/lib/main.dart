@@ -17,7 +17,7 @@ class AmeycarTVApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF0F0F1A),
         primaryColor: Colors.deepPurpleAccent,
       ),
-      home: const HomeScreen(),
+      home: HomeScreen(),
     );
   }
 }
