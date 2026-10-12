@@ -48,11 +48,18 @@ class _HomeScreenState extends State<HomeScreen> {
   List<ChannelModel> _channels = [];
   int _selectedChannelIndex = 0;
   String _selectedCategory = 'Todos';
+  String _selectedSection = 'En Vivo'; // 'En Vivo', 'Películas', 'Series'
+  
   VideoPlayerController? _videoPlayerController;
   bool _isVideoLoading = false;
   bool _isListeningVoice = false;
   bool _isFullScreenMode = false;
   bool _showOsd = true;
+
+  // Buscador por texto con Lupita
+  bool _isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   // Asistente de Voz y TTS
   final stt.SpeechToText _speech = stt.SpeechToText();
@@ -106,21 +113,30 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _nextChannel() {
-    if (_channels.isEmpty) return;
-    setState(() {
-      _selectedChannelIndex = (_selectedChannelIndex + 1) % _channels.length;
-    });
-    _initializeVideo(_channels[_selectedChannelIndex].streamUrl);
-    _triggerOsdTimer();
+    final currentList = _filteredChannels;
+    if (currentList.isEmpty) return;
+    final currentCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+    int curIdxInFiltered = currentList.indexOf(currentCh!);
+    int nextIdx = (curIdxInFiltered + 1) % currentList.length;
+    _changeChannel(currentList[nextIdx]);
   }
 
   void _previousChannel() {
-    if (_channels.isEmpty) return;
-    setState(() {
-      _selectedChannelIndex = (_selectedChannelIndex - 1 < 0) ? _channels.length - 1 : _selectedChannelIndex - 1;
-    });
-    _initializeVideo(_channels[_selectedChannelIndex].streamUrl);
-    _triggerOsdTimer();
+    final currentList = _filteredChannels;
+    if (currentList.isEmpty) return;
+    final currentCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+    int curIdxInFiltered = currentList.indexOf(currentCh!);
+    int prevIdx = (curIdxInFiltered - 1 < 0) ? currentList.length - 1 : curIdxInFiltered - 1;
+    _changeChannel(currentList[prevIdx]);
+  }
+
+  void _changeChannel(ChannelModel ch) {
+    final realIndex = _channels.indexOf(ch);
+    if (realIndex != -1) {
+      setState(() => _selectedChannelIndex = realIndex);
+      _initializeVideo(ch.streamUrl);
+      _triggerOsdTimer();
+    }
   }
 
   void _triggerOsdTimer() {
@@ -132,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // Asistente por Voz inteligente estilo Alexa
+  // Asistente de Voz Dinámico (Busca de verdad en tu lista M3U)
   void _startVoiceSearch() async {
     bool available = await _speech.initialize(
       onError: (_) => setState(() => _isListeningVoice = false),
@@ -141,56 +157,105 @@ class _HomeScreenState extends State<HomeScreen> {
     if (available) {
       setState(() {
         _isListeningVoice = true;
-        _voiceMessage = 'Escuchando tu comando...';
+        _voiceMessage = 'Escuchando... Di el nombre, número o grupo del canal';
       });
 
       _speech.listen(
         localeId: 'es_ES',
         onResult: (val) {
           if (val.finalResult) {
-            _processVoiceCommand(val.recognizedWords);
+            _processDynamicVoiceCommand(val.recognizedWords);
           }
         },
       );
     } else {
-      _fallbackVoiceSimulation();
+      _showVoiceTextPrompt();
     }
   }
 
-  void _fallbackVoiceSimulation() {
-    setState(() {
-      _isListeningVoice = true;
-      _voiceMessage = 'Escuchando... Di un comando';
-    });
-
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) {
-        _processVoiceCommand('pon deportes');
-      }
-    });
+  void _showVoiceTextPrompt() {
+    final textController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        title: const Row(
+          children: [
+            Icon(Icons.mic, color: Color(0xFF00E5FF)),
+            SizedBox(width: 8),
+            Text('Comando por Voz o Texto', style: TextStyle(color: Colors.white, fontSize: 16)),
+          ],
+        ),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Ej: ESPN, canal 58, noticias, clan...',
+            hintStyle: TextStyle(color: Colors.white30),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E5FF)),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _processDynamicVoiceCommand(textController.text.trim());
+            },
+            child: const Text('Ejecutar', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
-  void _processVoiceCommand(String query) {
-    final lower = query.toLowerCase();
-    String responseText = '';
+  void _processDynamicVoiceCommand(String query) {
+    if (query.trim().isEmpty) return;
+    final lower = query.toLowerCase().trim();
+    ChannelModel? matchedChannel;
 
-    if (lower.contains('deporte') || lower.contains('fútbol')) {
-      final index = _channels.indexWhere((c) => c.groupCategory == 'Deportes');
-      if (index != -1) {
-        setState(() => _selectedChannelIndex = index);
-        _initializeVideo(_channels[index].streamUrl);
-        responseText = 'Sintonizando deportes: ${_channels[index].name}';
+    // 1. Buscar por número exacto: "canal 58", "58"
+    final numberMatch = RegExp(r'\d+').firstMatch(lower);
+    if (numberMatch != null) {
+      final num = int.tryParse(numberMatch.group(0)!);
+      if (num != null) {
+        matchedChannel = _channels.firstWhere(
+          (c) => c.number == num || c.name.contains('$num'),
+          orElse: () => _channels.first,
+        );
       }
-    } else if (lower.contains('noticia')) {
-      final index = _channels.indexWhere((c) => c.groupCategory == 'Noticias');
-      if (index != -1) {
-        setState(() => _selectedChannelIndex = index);
-        _initializeVideo(_channels[index].streamUrl);
-        responseText = 'Sintonizando noticias en vivo';
+    }
+
+    // 2. Buscar por coincidencia de nombre: "espn", "clan", "axn", "real madrid"
+    if (matchedChannel == null) {
+      for (final ch in _channels) {
+        final chLower = ch.name.toLowerCase();
+        final words = lower.split(' ').where((w) => w.length > 2);
+        for (final word in words) {
+          if (chLower.contains(word)) {
+            matchedChannel = ch;
+            break;
+          }
+        }
+        if (matchedChannel != null) break;
       }
+    }
+
+    // 3. Buscar por categoría: "deportes", "noticias", "infantil"
+    if (matchedChannel == null) {
+      matchedChannel = _channels.firstWhere(
+        (c) => c.groupCategory.toLowerCase().contains(lower),
+        orElse: () => _channels.first,
+      );
+    }
+
+    String responseText = '';
+    if (matchedChannel != null) {
+      _changeChannel(matchedChannel);
+      responseText = 'Sintonizando: ${matchedChannel.name}';
     } else {
-      responseText = 'Comando: "$query". Sintonizando canal recomendado.';
-      _nextChannel();
+      responseText = 'No encontré un canal para "$query"';
     }
 
     setState(() {
@@ -208,7 +273,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Diálogo para importar lista M3U (Fase 5)
+  // Gestor de Listas M3U
   void _openM3uDialog() {
     final controller = TextEditingController();
     showDialog(
@@ -288,6 +353,8 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() {
             _channels = parsed;
             _selectedChannelIndex = 0;
+            _searchQuery = '';
+            _isSearching = false;
           });
           _initializeVideo(_channels[0].streamUrl);
 
@@ -314,8 +381,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<ChannelModel> get _filteredChannels {
-    if (_selectedCategory == 'Todos') return _channels;
-    return _channels.where((c) => c.groupCategory == _selectedCategory).toList();
+    return _channels.where((c) {
+      // Filtro por categoría
+      final matchesCategory = _selectedCategory == 'Todos' || c.groupCategory == _selectedCategory;
+      // Filtro por texto de búsqueda
+      final matchesSearch = _searchQuery.isEmpty ||
+          c.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+          c.number.toString().contains(_searchQuery) ||
+          c.groupCategory.toLowerCase().contains(_searchQuery.toLowerCase());
+
+      return matchesCategory && matchesSearch;
+    }).toList();
   }
 
   @override
@@ -354,19 +430,22 @@ class _HomeScreenState extends State<HomeScreen> {
     return SafeArea(
       child: Column(
         children: [
-          // 1. Barra superior translúcida con Glassmorphism
+          // 1. Barra superior translúcida con Lupita y Micrófono
           _buildTopGlassBar(),
 
           // 2. Video con zapping por gestos
           _buildVideoPlayerSection(activeChannel),
 
-          // 3. Banner EPG dinámico DirecTV
+          // 3. Pestañas principales de navegación (En Vivo | Películas | Series)
+          _buildSectionTabs(),
+
+          // 4. Banner EPG dinámico DirecTV
           _buildLiveEpgCard(),
 
-          // 4. Selector horizontal de categorías
+          // 5. Selector horizontal de categorías
           _buildCategoryChips(),
 
-          // 5. Lista de Canales con foco D-Pad
+          // 6. Lista de Canales con Logos y D-Pad
           Expanded(
             child: _buildChannelListView(),
           ),
@@ -407,6 +486,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
+              _buildSideMenuItem(Icons.search, 'Buscar Canal', () {
+                setState(() => _isSearching = !_isSearching);
+              }),
               _buildSideMenuItem(Icons.mic, 'Asistente IA', _startVoiceSearch),
               _buildSideMenuItem(Icons.playlist_add, 'Listas M3U', _openM3uDialog),
               _buildSideMenuItem(Icons.fullscreen, 'Pantalla Completa', () {
@@ -442,7 +524,12 @@ class _HomeScreenState extends State<HomeScreen> {
               color: const Color(0xFF0F172A).withOpacity(0.7),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: _buildChannelListView(),
+            child: Column(
+              children: [
+                _buildSearchInputHeader(),
+                Expanded(child: _buildChannelListView()),
+              ],
+            ),
           ),
         ),
       ],
@@ -456,49 +543,132 @@ class _HomeScreenState extends State<HomeScreen> {
         color: const Color(0xFF0F172A).withOpacity(0.8),
         border: const Border(bottom: BorderSide(color: Color(0x2200E5FF))),
       ),
+      child: _isSearching
+          ? _buildActiveSearchBar()
+          : Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'AMEYCAR TV',
+                      style: TextStyle(
+                        color: Color(0xFF00E5FF),
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.red),
+                      ),
+                      child: const Text('LIVE', style: TextStyle(color: Colors.red, fontSize: 9, fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    // Lupita de búsqueda
+                    IconButton(
+                      icon: const Icon(Icons.search, color: Color(0xFF00E5FF), size: 22),
+                      onPressed: () => setState(() => _isSearching = true),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 22),
+                      onPressed: _openM3uDialog,
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        _isListeningVoice ? Icons.mic : Icons.mic_none,
+                        color: _isListeningVoice ? Colors.redAccent : const Color(0xFF00E5FF),
+                        size: 24,
+                      ),
+                      onPressed: _startVoiceSearch,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildActiveSearchBar() {
+    return Row(
+      children: [
+        const Icon(Icons.search, color: Color(0xFF00E5FF), size: 20),
+        const SizedBox(width: 10),
+        Expanded(
+          child: TextField(
+            controller: _searchController,
+            autofocus: true,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            decoration: const InputDecoration(
+              hintText: 'Buscar por canal o número...',
+              hintStyle: TextStyle(color: Colors.white38),
+              border: InputBorder.none,
+              isDense: true,
+            ),
+            onChanged: (val) {
+              setState(() => _searchQuery = val.trim());
+            },
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+          onPressed: () {
+            setState(() {
+              _isSearching = false;
+              _searchQuery = '';
+              _searchController.clear();
+            });
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchInputHeader() {
+    if (!_isSearching) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: _buildActiveSearchBar(),
+    );
+  }
+
+  Widget _buildSectionTabs() {
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      color: const Color(0xFF0F172A).withOpacity(0.5),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              const Text(
-                'AMEYCAR TV',
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: ['En Vivo', 'Películas', 'Series'].map((section) {
+          final isSelected = _selectedSection == section;
+          return GestureDetector(
+            onTap: () => setState(() => _selectedSection = section),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                border: isSelected
+                    ? const Border(bottom: BorderSide(color: Color(0xFF00E5FF), width: 2))
+                    : null,
+              ),
+              child: Text(
+                section,
                 style: TextStyle(
-                  color: Color(0xFF00E5FF),
-                  fontWeight: FontWeight.w900,
-                  fontSize: 18,
-                  letterSpacing: 1.2,
+                  color: isSelected ? const Color(0xFF00E5FF) : Colors.white54,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  fontSize: 12,
                 ),
               ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: Colors.red),
-                ),
-                child: const Text('LIVE', style: TextStyle(color: Colors.red, fontSize: 9, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-          Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 22),
-                onPressed: _openM3uDialog,
-              ),
-              IconButton(
-                icon: Icon(
-                  _isListeningVoice ? Icons.mic : Icons.mic_none,
-                  color: _isListeningVoice ? Colors.redAccent : const Color(0xFF00E5FF),
-                  size: 24,
-                ),
-                onPressed: _startVoiceSearch,
-              ),
-            ],
-          ),
-        ],
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -544,7 +714,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             activeChannel != null ? '${activeChannel.number}. ${activeChannel.name}' : '',
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                             maxLines: 1,
-                           overflow: TextOverflow.ellipsis,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         Row(
@@ -590,14 +760,14 @@ class _HomeScreenState extends State<HomeScreen> {
               Icon(Icons.live_tv, color: Colors.redAccent, size: 14),
               SizedBox(width: 6),
               Text(
-                'EN VIVO: Gran Clásico de Liga (15:00 - 17:00)',
+                'EN VIVO: Programación en Tiempo Real',
                 style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
               ),
             ],
           ),
           const SizedBox(height: 3),
           const Text(
-            'Anterior: Resumen Previa | Siguiente: Noticiero Deportivo',
+            'Señal Oficial HLS • Calidad Automática Adaptativa',
             style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
           ),
           const SizedBox(height: 6),
@@ -655,19 +825,39 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Lista de canales con carga de logos reales y fallback
   Widget _buildChannelListView() {
+    final list = _filteredChannels;
+
+    if (list.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.search_off, color: Colors.white30, size: 40),
+            const SizedBox(height: 8),
+            Text(
+              _searchQuery.isNotEmpty
+                  ? 'No se encontraron canales para "$_searchQuery"'
+                  : 'No hay canales disponibles en esta categoría',
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      itemCount: _filteredChannels.length,
+      itemCount: list.length,
       itemBuilder: (context, index) {
-        final channel = _filteredChannels[index];
+        final channel = list[index];
         final isSelected = _channels.indexOf(channel) == _selectedChannelIndex;
 
         return Focus(
           onKey: (node, event) {
             if (event is RawKeyDownEvent && event.logicalKey == LogicalKeyboardKey.select) {
-              setState(() => _selectedChannelIndex = _channels.indexOf(channel));
-              _initializeVideo(channel.streamUrl);
+              _changeChannel(channel);
               return KeyEventResult.handled;
             }
             return KeyEventResult.ignored;
@@ -695,18 +885,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 child: ListTile(
                   dense: true,
-                  leading: CircleAvatar(
-                    radius: 16,
-                    backgroundColor: isSelected ? const Color(0xFF00E5FF) : const Color(0xFF1E293B),
-                    child: Text(
-                      '${channel.number}',
-                      style: TextStyle(
-                        color: isSelected ? Colors.black : Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
+                  leading: _buildChannelLogo(channel, isSelected),
                   title: Text(
                     channel.name,
                     style: TextStyle(
@@ -716,22 +895,57 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   subtitle: Text(
-                    'Grupo: ${channel.groupCategory}',
+                    'Grupo: ${channel.groupCategory} • ${channel.resolution}',
                     style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
                   ),
                   trailing: isSelected
                       ? const Icon(Icons.volume_up, color: Color(0xFF00E5FF), size: 18)
                       : null,
-                  onTap: () {
-                    setState(() => _selectedChannelIndex = _channels.indexOf(channel));
-                    _initializeVideo(channel.streamUrl);
-                  },
+                  onTap: () => _changeChannel(channel),
                 ),
               );
             },
           ),
         );
       },
+    );
+  }
+
+  // Widget para renderizar el logo real del canal o fallback numérico
+  Widget _buildChannelLogo(ChannelModel channel, bool isSelected) {
+    if (channel.logoUrl.isNotEmpty) {
+      return Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.4),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: Image.network(
+            channel.logoUrl,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => _buildFallbackAvatar(channel, isSelected),
+          ),
+        ),
+      );
+    }
+    return _buildFallbackAvatar(channel, isSelected);
+  }
+
+  Widget _buildFallbackAvatar(ChannelModel channel, bool isSelected) {
+    return CircleAvatar(
+      radius: 16,
+      backgroundColor: isSelected ? const Color(0xFF00E5FF) : const Color(0xFF1E293B),
+      child: Text(
+        '${channel.number}',
+        style: TextStyle(
+          color: isSelected ? Colors.black : Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
     );
   }
 
@@ -768,13 +982,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: Colors.black.withOpacity(0.75),
                       child: Row(
                         children: [
-                          CircleAvatar(
-                            backgroundColor: const Color(0xFF00E5FF),
-                            child: Text(
-                              activeChannel != null ? '${activeChannel.number}' : '1',
-                              style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-                            ),
-                          ),
+                          _buildChannelLogo(activeChannel ?? _channels.first, true),
                           const SizedBox(width: 14),
                           Expanded(
                             child: Column(
@@ -822,6 +1030,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _videoPlayerController?.dispose();
     _speech.stop();
     _tts.stop();
+    _searchController.dispose();
     super.dispose();
   }
 }
