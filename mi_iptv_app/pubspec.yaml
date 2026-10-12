@@ -1,5 +1,5 @@
 name: mi_iptv_app
-description: "Una aplicación de streaming para AmeycarTV."
+description: "Una aplicación de streaming moderna para AmeycarTV."
 publish_to: "none"
 
 version: 1.0.0+1
@@ -16,6 +16,9 @@ dependencies:
   video_player: ^2.9.2
   chewie: ^1.8.5
   http: ^1.2.0
+  shared_preferences: ^2.3.2
+  speech_to_text: ^7.0.0
+  flutter_tts: ^4.2.2
 
 dev_dependencies:
   flutter_test:
