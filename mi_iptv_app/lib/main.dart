@@ -544,7 +544,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             activeChannel != null ? '${activeChannel.number}. ${activeChannel.name}' : '',
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                             maxLines: 1,
-                            overflow: TextOverflow.Ellipsis,
+                           overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         Row(
