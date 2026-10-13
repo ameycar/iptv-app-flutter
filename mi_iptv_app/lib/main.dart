@@ -55,6 +55,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isFullScreenMode = false;
   bool _showOsd = true;
 
+  // Lista de alarmas y recordatorios activos
+  final Set<String> _activeAlarms = {};
+
   // Buscador por texto con Lupita
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
@@ -70,6 +73,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     final savedM3u = prefs.getString('saved_m3u_content');
     final lastIndex = prefs.getInt('last_played_channel_index') ?? 0;
+    final savedAlarmsList = prefs.getStringList('saved_active_alarms') ?? [];
+    _activeAlarms.addAll(savedAlarmsList);
 
     if (savedM3u != null && savedM3u.isNotEmpty) {
       _channels = M3USanitizerService.parseAndSanitize(savedM3u);
@@ -183,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // MODAL DE GUÍA EPG Y RECORDATORIOS
+  // MODAL DE GUÍA EPG Y GESTOR DE ALARMAS CON TOGGLE ON/OFF
   void _openEpgScheduleModal(ChannelModel channel) {
     final schedule = EpgService.getUpcomingPrograms(channel.name, channel.groupCategory);
 
@@ -191,123 +196,177 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-        decoration: BoxDecoration(
-          color: const Color(0xFF070A10).withOpacity(0.98),
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.4), width: 1.5),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    _buildChannelLogo(channel, true),
-                    const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          channel.name,
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
-                        const Text(
-                          'Guía de Programación en Tiempo Real',
-                          style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white54),
-                  onPressed: () => Navigator.pop(ctx),
-                ),
-              ],
-            ),
-            const Divider(color: Colors.white12, height: 24),
-            const Text(
-              'Toca un programa futuro para programar tu recordatorio:',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-            const SizedBox(height: 12),
-            Flexible(
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: schedule.length,
-                itemBuilder: (context, index) {
-                  final prog = schedule[index];
-                  final isNow = index == 0;
-
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: isNow ? const Color(0x3300E5FF) : const Color(0xFF131B2E),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: isNow ? const Color(0xFF00E5FF) : Colors.white10,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalContext, setModalState) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          decoration: BoxDecoration(
+            color: const Color(0xFF070A10).withOpacity(0.98),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.4), width: 1.5),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      _buildChannelLogo(channel, true),
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            channel.name,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                          const Text(
+                            'Guía de Programación en Tiempo Real',
+                            style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
+                          ),
+                        ],
                       ),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: isNow ? Colors.redAccent : const Color(0xFF1E293B),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            isNow ? 'EN VIVO' : prog.timeFormatted.split(' - ')[0],
-                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                prog.title,
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                              ),
-                              Text(
-                                prog.timeFormatted,
-                                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            isNow ? Icons.play_circle : Icons.alarm_add,
-                            color: isNow ? const Color(0xFF00E5FF) : const Color(0xFFFFB703),
-                          ),
-                          tooltip: isNow ? 'En emisión ahora' : 'Agendar Alarma',
-                          onPressed: () {
-                            Navigator.pop(ctx);
-                            if (!isNow) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('⏰ ¡Alarma programada para "${prog.title}" a las ${prog.timeFormatted.split(' - ')[0]}!'),
-                                  backgroundColor: const Color(0xFF00E5FF),
-                                ),
-                              );
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                  );
-                },
+                    ],
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white54),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
               ),
-            ),
-          ],
+              const Divider(color: Colors.white12, height: 20),
+              
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Programas y Recordatorios:',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E293B),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '🔔 ${_activeAlarms.length} activas',
+                      style: const TextStyle(color: Color(0xFFFFB703), fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: schedule.length,
+                  itemBuilder: (context, index) {
+                    final prog = schedule[index];
+                    final isNow = index == 0;
+                    final alarmId = '${channel.name}-${prog.title}-${prog.timeFormatted}';
+                    final hasAlarm = _activeAlarms.contains(alarmId);
+
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: isNow
+                            ? const Color(0x3300E5FF)
+                            : hasAlarm
+                                ? const Color(0x22FFB703)
+                                : const Color(0xFF131B2E),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isNow
+                              ? const Color(0xFF00E5FF)
+                              : hasAlarm
+                                  ? const Color(0xFFFFB703)
+                                  : Colors.white10,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: isNow ? Colors.redAccent : const Color(0xFF1E293B),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              isNow ? 'EN VIVO' : prog.timeFormatted.split(' - ')[0],
+                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  prog.title,
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                ),
+                                Text(
+                                  prog.timeFormatted,
+                                  style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: Icon(
+                              isNow
+                                  ? Icons.play_circle
+                                  : hasAlarm
+                                      ? Icons.alarm_on
+                                      : Icons.alarm_add,
+                              color: isNow
+                                  ? const Color(0xFF00E5FF)
+                                  : hasAlarm
+                                      ? const Color(0xFFFFB703)
+                                      : Colors.white38,
+                            ),
+                            tooltip: isNow
+                                ? 'En emisión ahora'
+                                : hasAlarm
+                                    ? 'Desactivar Alarma'
+                                    : 'Activar Alarma',
+                            onPressed: () async {
+                              if (!isNow) {
+                                final prefs = await SharedPreferences.getInstance();
+                                setState(() {
+                                  if (hasAlarm) {
+                                    _activeAlarms.remove(alarmId);
+                                  } else {
+                                    _activeAlarms.add(alarmId);
+                                  }
+                                });
+                                setModalState(() {});
+                                await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(hasAlarm
+                                        ? '🔕 Alarma cancelada para "${prog.title}"'
+                                        : '⏰ ¡Alarma activada para "${prog.title}" a las ${prog.timeFormatted.split(' - ')[0]}!'),
+                                    backgroundColor: hasAlarm ? Colors.redAccent : const Color(0xFF00E5FF),
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -478,7 +537,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildTopGlassBar(),
           _buildVideoPlayerSection(activeChannel),
           _buildSectionTabs(),
-          _buildLiveEpgCard(activeChannel), // EPG DINÁMICO EN TIEMPO REAL
+          _buildLiveEpgCard(activeChannel),
           _buildCategoryChips(),
           Expanded(
             child: _buildChannelListView(),
@@ -615,7 +674,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       onPressed: _openM3uDialog,
                     ),
                     IconButton(
-                      icon: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 24),
+                      icon: const Icon(
+                        Icons.mic,
+                        color: Color(0xFF00E5FF),
+                        size: 24,
+                      ),
                       tooltip: 'Asistente de Voz Inteligente',
                       onPressed: _startVoiceSearch,
                     ),
@@ -773,7 +836,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // TARJETA EPG DINÁMICA CON PROGRAMACIÓN EN VIVO Y PRÓXIMO PROGRAMA
   Widget _buildLiveEpgCard(ChannelModel? activeChannel) {
     if (activeChannel == null) return const SizedBox.shrink();
 
