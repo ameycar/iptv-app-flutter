@@ -4,11 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 import 'models/channel_model.dart';
 import 'services/m3u_sanitizer_service.dart';
+import 'widgets/alexa_voice_sheet.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,7 +51,6 @@ class _HomeScreenState extends State<HomeScreen> {
   
   VideoPlayerController? _videoPlayerController;
   bool _isVideoLoading = false;
-  bool _isListeningVoice = false;
   bool _isFullScreenMode = false;
   bool _showOsd = true;
 
@@ -61,21 +59,10 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
-  // Asistente de Voz y TTS
-  final stt.SpeechToText _speech = stt.SpeechToText();
-  final FlutterTts _tts = FlutterTts();
-  String _voiceMessage = '';
-
   @override
   void initState() {
     super.initState();
-    _initTts();
     _loadSavedChannels();
-  }
-
-  void _initTts() async {
-    await _tts.setLanguage('es-ES');
-    await _tts.setSpeechRate(0.5);
   }
 
   void _loadSavedChannels() async {
@@ -116,7 +103,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final currentList = _filteredChannels;
     if (currentList.isEmpty) return;
     final currentCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
-    int curIdxInFiltered = currentList.indexOf(currentCh!);
+    if (currentCh == null) return;
+    int curIdxInFiltered = currentList.indexOf(currentCh);
     int nextIdx = (curIdxInFiltered + 1) % currentList.length;
     _changeChannel(currentList[nextIdx]);
   }
@@ -125,7 +113,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final currentList = _filteredChannels;
     if (currentList.isEmpty) return;
     final currentCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
-    int curIdxInFiltered = currentList.indexOf(currentCh!);
+    if (currentCh == null) return;
+    int curIdxInFiltered = currentList.indexOf(currentCh);
     int prevIdx = (curIdxInFiltered - 1 < 0) ? currentList.length - 1 : curIdxInFiltered - 1;
     _changeChannel(currentList[prevIdx]);
   }
@@ -148,128 +137,25 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // Asistente de Voz Dinámico (Busca de verdad en tu lista M3U)
-  void _startVoiceSearch() async {
-    bool available = await _speech.initialize(
-      onError: (_) => setState(() => _isListeningVoice = false),
-    );
-
-    if (available) {
-      setState(() {
-        _isListeningVoice = true;
-        _voiceMessage = 'Escuchando... Di el nombre, número o grupo del canal';
-      });
-
-      _speech.listen(
-        localeId: 'es_ES',
-        onResult: (val) {
-          if (val.finalResult) {
-            _processDynamicVoiceCommand(val.recognizedWords);
-          }
-        },
-      );
-    } else {
-      _showVoiceTextPrompt();
-    }
-  }
-
-  void _showVoiceTextPrompt() {
-    final textController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
-        title: const Row(
-          children: [
-            Icon(Icons.mic, color: Color(0xFF00E5FF)),
-            SizedBox(width: 8),
-            Text('Comando por Voz o Texto', style: TextStyle(color: Colors.white, fontSize: 16)),
-          ],
-        ),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(
-            hintText: 'Ej: ESPN, canal 58, noticias, clan...',
-            hintStyle: TextStyle(color: Colors.white30),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E5FF)),
-            onPressed: () {
-              Navigator.pop(ctx);
-              _processDynamicVoiceCommand(textController.text.trim());
-            },
-            child: const Text('Ejecutar', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _processDynamicVoiceCommand(String query) {
-    if (query.trim().isEmpty) return;
-    final lower = query.toLowerCase().trim();
-    ChannelModel? matchedChannel;
-
-    // 1. Buscar por número exacto: "canal 58", "58"
-    final numberMatch = RegExp(r'\d+').firstMatch(lower);
-    if (numberMatch != null) {
-      final num = int.tryParse(numberMatch.group(0)!);
-      if (num != null) {
-        matchedChannel = _channels.firstWhere(
-          (c) => c.number == num || c.name.contains('$num'),
-          orElse: () => _channels.first,
-        );
-      }
-    }
-
-    // 2. Buscar por coincidencia de nombre: "espn", "clan", "axn", "real madrid"
-    if (matchedChannel == null) {
-      for (final ch in _channels) {
-        final chLower = ch.name.toLowerCase();
-        final words = lower.split(' ').where((w) => w.length > 2);
-        for (final word in words) {
-          if (chLower.contains(word)) {
-            matchedChannel = ch;
-            break;
-          }
+  // ASISTENTE DE VOZ INTELIGENTE CON IA Y FILTRO HD ESTILO ALEXA
+  void _startVoiceSearch() {
+    AlexaVoiceSheet.show(
+      context,
+      channels: _channels,
+      currentChannel: _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null,
+      onChannelSelected: (channel) {
+        if (channel is ChannelModel) {
+          _changeChannel(channel);
         }
-        if (matchedChannel != null) break;
-      }
-    }
-
-    // 3. Buscar por categoría: "deportes", "noticias", "infantil"
-    if (matchedChannel == null) {
-      matchedChannel = _channels.firstWhere(
-        (c) => c.groupCategory.toLowerCase().contains(lower),
-        orElse: () => _channels.first,
-      );
-    }
-
-    String responseText = '';
-    if (matchedChannel != null) {
-      _changeChannel(matchedChannel);
-      responseText = 'Sintonizando: ${matchedChannel.name}';
-    } else {
-      responseText = 'No encontré un canal para "$query"';
-    }
-
-    setState(() {
-      _voiceMessage = responseText;
-      _isListeningVoice = false;
-    });
-
-    _tts.speak(responseText);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('🎙️ Alexa: $responseText'),
-        backgroundColor: const Color(0xFF00E5FF),
-      ),
+      },
+      onOpenEpg: () {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('📅 Mostrando programación en vivo en tiempo real'),
+            backgroundColor: Color(0xFF00E5FF),
+          ),
+        );
+      },
     );
   }
 
@@ -382,9 +268,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   List<ChannelModel> get _filteredChannels {
     return _channels.where((c) {
-      // Filtro por categoría
       final matchesCategory = _selectedCategory == 'Todos' || c.groupCategory == _selectedCategory;
-      // Filtro por texto de búsqueda
       final matchesSearch = _searchQuery.isEmpty ||
           c.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
           c.number.toString().contains(_searchQuery) ||
@@ -573,21 +457,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 Row(
                   children: [
-                    // Lupita de búsqueda
                     IconButton(
                       icon: const Icon(Icons.search, color: Color(0xFF00E5FF), size: 22),
+                      tooltip: 'Buscar canal',
                       onPressed: () => setState(() => _isSearching = true),
                     ),
                     IconButton(
                       icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 22),
+                      tooltip: 'Cargar lista M3U',
                       onPressed: _openM3uDialog,
                     ),
                     IconButton(
-                      icon: Icon(
-                        _isListeningVoice ? Icons.mic : Icons.mic_none,
-                        color: _isListeningVoice ? Colors.redAccent : const Color(0xFF00E5FF),
+                      icon: const Icon(
+                        Icons.mic,
+                        color: Color(0xFF00E5FF),
                         size: 24,
                       ),
+                      tooltip: 'Asistente de Voz Inteligente',
                       onPressed: _startVoiceSearch,
                     ),
                   ],
@@ -694,7 +580,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? Center(child: AspectRatio(aspectRatio: _videoPlayerController!.value.aspectRatio, child: VideoPlayer(_videoPlayerController!)))
                     : const Center(child: Icon(Icons.tv_off, color: Colors.white38, size: 48)),
 
-            // OSD inferior del reproductor
             Positioned(
               bottom: 8,
               left: 8,
@@ -825,7 +710,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Lista de canales con carga de logos reales y fallback
   Widget _buildChannelListView() {
     final list = _filteredChannels;
 
@@ -911,7 +795,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Widget para renderizar el logo real del canal o fallback numérico
   Widget _buildChannelLogo(ChannelModel channel, bool isSelected) {
     if (channel.logoUrl.isNotEmpty) {
       return Container(
@@ -949,7 +832,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Reproductor Inmersivo Pantalla Completa
   Widget _buildImmersivePlayer(ChannelModel? activeChannel) {
     return GestureDetector(
       onTap: () => setState(() => _showOsd = !_showOsd),
@@ -966,8 +848,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ? AspectRatio(aspectRatio: _videoPlayerController!.value.aspectRatio, child: VideoPlayer(_videoPlayerController!))
                   : const CircularProgressIndicator(color: Color(0xFF00E5FF)),
             ),
-
-            // OSD Flotante con efecto traslúcido
             if (_showOsd)
               Positioned(
                 bottom: 24,
@@ -1028,8 +908,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _videoPlayerController?.dispose();
-    _speech.stop();
-    _tts.stop();
     _searchController.dispose();
     super.dispose();
   }
