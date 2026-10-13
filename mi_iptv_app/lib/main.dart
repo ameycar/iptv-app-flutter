@@ -577,7 +577,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return SafeArea(
       child: Column(
         children: [
-          _buildTopGlassBar(),
+          _buildTopGlassBar(activeChannel),
           _buildSectionTabs(),
 
           if (_selectedSection == 'En Vivo') ...[
@@ -717,7 +717,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildTopGlassBar() {
+  Widget _buildTopGlassBar([ChannelModel? activeChannel]) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
@@ -729,33 +729,46 @@ class _HomeScreenState extends State<HomeScreen> {
           : Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    const Text(
-                      'AMEYCAR TV',
-                      style: TextStyle(
-                        color: Color(0xFFC77DFF),
-                        fontWeight: FontWeight.w900,
-                        fontSize: 18,
-                        letterSpacing: 1.2,
+                Expanded(
+                  child: Row(
+                    children: [
+                      const Text(
+                        'AMEYCAR TV',
+                        style: TextStyle(
+                          color: Color(0xFFC77DFF),
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16,
+                          letterSpacing: 1.2,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.red),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.red),
+                        ),
+                        child: Text(
+                          _selectedSection == 'En Vivo' ? 'LIVE' : _selectedSection.toUpperCase(),
+                          style: const TextStyle(color: Colors.red, fontSize: 9, fontWeight: FontWeight.bold),
+                        ),
                       ),
-                      child: Text(
-                        _selectedSection == 'En Vivo' ? 'LIVE' : _selectedSection.toUpperCase(),
-                        style: const TextStyle(color: Colors.red, fontSize: 9, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ],
+                      if (activeChannel != null && _selectedSection == 'En Vivo') ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '• ${activeChannel.name}',
+                            style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 13, fontWeight: FontWeight.bold),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
                       icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 22),
@@ -775,12 +788,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF9D4EDD).withOpacity(0.5),
+                              color: const Color(0xFF00E5FF).withOpacity(0.5),
                               blurRadius: 8,
                             ),
                           ],
                         ),
-                        child: const Icon(Icons.mic, color: Color(0xFFC77DFF), size: 22),
+                        child: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 22),
                       ),
                       tooltip: 'Asistente Alexa de Voz',
                       onPressed: _startVoiceSearch,

@@ -45,7 +45,7 @@ class AlexaVoiceSheet extends StatefulWidget {
 
 class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProviderStateMixin {
   final VoiceAssistantService _voiceService = VoiceAssistantService();
-  String _recognizedText = "Escuchando tu voz... Habla ahora";
+  String _recognizedText = "Escuchando... Di: 'Buscar partido', 'ESPN', 'Películas'...";
   String _statusMessage = "ASISTENTE INTELIGENTE AMEYCAR";
   bool _isProcessing = false;
   late AnimationController _animController;
@@ -55,7 +55,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
     super.initState();
     _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1100),
+      duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
 
     _startListening();
@@ -63,7 +63,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
   void _startListening() {
     setState(() {
-      _recognizedText = "Escuchando... Di: 'Buscar partido en HD', 'Peppa Pig', 'Ver Guía', etc.";
+      _recognizedText = "Escuchando tu voz... Habla ahora";
       _statusMessage = "MICRÓFONO ACTIVO";
       _isProcessing = false;
     });
@@ -94,7 +94,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
     setState(() {
       _isProcessing = true;
-      _statusMessage = "ANALIZANDO CANALES Y CALIDAD HD...";
+      _statusMessage = "PROCESANDO CON INTELIGENCIA ARTIFICIAL...";
     });
 
     final result = _voiceService.processVoiceCommand(
@@ -103,32 +103,26 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       currentChannel: widget.currentChannel,
     );
 
-    // Hablar la respuesta por voz al usuario
     await _voiceService.speak(result.spokenResponse);
 
     if (!mounted) return;
 
-    if (result.actionType == 'CHANNEL' && result.targetChannel != null) {
+    if (result.actionType == 'SECTION' && result.targetSection.isNotEmpty) {
+      widget.onNavigateSection?.call(result.targetSection);
+      Future.delayed(const Duration(milliseconds: 1200), () {
+        if (mounted) Navigator.pop(context);
+      });
+    } else if (result.actionType == 'CHANNEL' && result.targetChannel != null) {
       widget.onChannelSelected(result.targetChannel);
-      Future.delayed(const Duration(milliseconds: 1300), () {
+      Future.delayed(const Duration(milliseconds: 1400), () {
         if (mounted) Navigator.pop(context);
       });
     } else if (result.actionType == 'EPG') {
       widget.onOpenEpg?.call();
       Navigator.pop(context);
-    } else if (result.actionType == 'NAV_MOVIES') {
-      widget.onNavigateSection?.call('Películas');
-      Navigator.pop(context);
-    } else if (result.actionType == 'NAV_SERIES') {
-      widget.onNavigateSection?.call('Series');
-      Navigator.pop(context);
-    } else if (result.actionType == 'NAV_LIVE') {
-      widget.onNavigateSection?.call('En Vivo');
-      Navigator.pop(context);
     } else {
-      setState(() {
-        _isProcessing = false;
-        _statusMessage = "COMANDO FINALIZADO";
+      Future.delayed(const Duration(milliseconds: 1600), () {
+        if (mounted) Navigator.pop(context);
       });
     }
   }
@@ -145,13 +139,13 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 26),
       decoration: BoxDecoration(
-        color: const Color(0xFF090B14).withOpacity(0.98),
+        color: const Color(0xFF070A10).withOpacity(0.98),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        border: Border.all(color: const Color(0xFF7B2CBF).withOpacity(0.6), width: 1.5),
+        border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5), width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF7B2CBF).withOpacity(0.35),
-            blurRadius: 30,
+            color: const Color(0xFF00E5FF).withOpacity(0.25),
+            blurRadius: 25,
             spreadRadius: 4,
           )
         ],
@@ -159,7 +153,6 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Barra superior
           Container(
             width: 44,
             height: 4,
@@ -168,99 +161,60 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
               borderRadius: BorderRadius.circular(2),
             ),
           ),
-          const SizedBox(height: 22),
-
-          // Anillo estilo Alexa con ondas moradas y cian concéntricas
+          const SizedBox(height: 18),
           AnimatedBuilder(
             animation: _animController,
             builder: (context, child) {
-              double scale = 1.0 + (_animController.value * 0.16);
-              double glow = _animController.value;
-
-              return SizedBox(
-                width: 100,
-                height: 100,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // Onda exterior morada
-                    Container(
-                      width: 96 * scale,
-                      height: 96 * scale,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: const Color(0xFF9D4EDD).withOpacity(0.5 - (glow * 0.2)),
-                          width: 2.5,
-                        ),
-                      ),
+              double scale = 1.0 + (_animController.value * 0.18);
+              return Transform.scale(
+                scale: _isProcessing ? 1.0 : scale,
+                child: Container(
+                  width: 76,
+                  height: 76,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const RadialGradient(
+                      colors: [
+                        Color(0xFF00E5FF),
+                        Color(0xFF0072FF),
+                        Color(0xFF7B2CBF),
+                      ],
                     ),
-                    // Onda intermedia cian
-                    Container(
-                      width: 82 * (1.0 + (glow * 0.08)),
-                      height: 82 * (1.0 + (glow * 0.08)),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: const Color(0xFF00E5FF).withOpacity(0.6),
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    // Esfera central con gradiente Alexa Morado - Azul
-                    Container(
-                      width: 68,
-                      height: 68,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: const RadialGradient(
-                          colors: [
-                            Color(0xFFC77DFF),
-                            Color(0xFF7B2CBF),
-                            Color(0xFF240046),
-                          ],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF9D4EDD).withOpacity(0.8),
-                            blurRadius: 22 * scale,
-                            spreadRadius: 2,
-                          )
-                        ],
-                      ),
-                      child: Icon(
-                        _isProcessing ? Icons.auto_awesome : Icons.mic,
-                        color: Colors.white,
-                        size: 32,
-                      ),
-                    ),
-                  ],
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00E5FF).withOpacity(0.6),
+                        blurRadius: 20 * scale,
+                        spreadRadius: 3,
+                      )
+                    ],
+                  ),
+                  child: Icon(
+                    _isProcessing ? Icons.auto_awesome : Icons.mic,
+                    color: Colors.black,
+                    size: 36,
+                  ),
                 ),
               );
             },
           ),
-          const SizedBox(height: 20),
-
-          // Estado del Asistente
+          const SizedBox(height: 18),
           Text(
             _statusMessage,
             style: const TextStyle(
-              color: Color(0xFFC77DFF),
+              color: Color(0xFF00E5FF),
               fontWeight: FontWeight.w900,
               fontSize: 12,
               letterSpacing: 1.5,
             ),
           ),
           const SizedBox(height: 12),
-
-          // Transcripción en vivo
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
             decoration: BoxDecoration(
-              color: const Color(0xFF131726),
+              color: const Color(0xFF131B2E),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF7B2CBF).withOpacity(0.3)),
+              border: Border.all(color: Colors.white12),
             ),
             child: Text(
               "\"$_recognizedText\"",
@@ -274,22 +228,18 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             ),
           ),
           const SizedBox(height: 16),
-
-          // Chips de búsqueda rápida sugeridos
           Wrap(
             spacing: 8,
             runSpacing: 8,
             alignment: WrapAlignment.center,
             children: [
-              _buildChip("⚽ Partido en HD"),
-              _buildChip("🐷 Peppa Pig"),
+              _buildChip("⚽ Buscar partido"),
+              _buildChip("📺 ESPN"),
               _buildChip("🎬 Ver Películas"),
-              _buildChip("📅 Ver Guía EPG"),
+              _buildChip("📅 Abrir Guía EPG"),
             ],
           ),
-          const SizedBox(height: 18),
-
-          // Botones inferiores
+          const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -300,14 +250,14 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
               ),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF7B2CBF),
-                  foregroundColor: Colors.white,
+                  backgroundColor: const Color(0xFF00E5FF),
+                  foregroundColor: Colors.black,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 ),
                 onPressed: _handleCommandExecution,
                 icon: const Icon(Icons.check, size: 20),
-                label: const Text("Ejecutar ya", style: TextStyle(fontWeight: FontWeight.bold)),
+                label: const Text("Ejecutar", style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ],
           ),
@@ -327,9 +277,9 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: const Color(0xFF1B1E32),
+          color: const Color(0xFF1E293B),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFF9D4EDD).withOpacity(0.4)),
+          border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.3)),
         ),
         child: Text(
           text,
