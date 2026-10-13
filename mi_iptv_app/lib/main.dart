@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'models/channel_model.dart';
 import 'services/m3u_sanitizer_service.dart';
+import 'services/epg_service.dart';
 import 'widgets/alexa_voice_sheet.dart';
 
 void main() {
@@ -77,7 +78,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (_channels.isNotEmpty) {
-      // Recordar el último canal visto
       _selectedChannelIndex = (lastIndex < _channels.length && lastIndex >= 0) ? lastIndex : 0;
       _initializeVideo(_channels[_selectedChannelIndex].streamUrl);
       _triggerOsdTimer();
@@ -85,7 +85,6 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {});
   }
 
-  // Fast Zapping optimizado
   void _initializeVideo(String url) async {
     if (!mounted) return;
     setState(() => _isVideoLoading = true);
@@ -96,7 +95,6 @@ class _HomeScreenState extends State<HomeScreen> {
       videoPlayerOptions: VideoPlayerOptions(mixWithOthers: false),
     );
 
-    // Desechar el controlador anterior rápidamente
     oldController?.dispose();
 
     try {
@@ -142,7 +140,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _showOsd = true;
       });
 
-      // Guardar el último canal visto para que nunca se pierda
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('last_played_channel_index', realIndex);
 
@@ -169,7 +166,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // ASISTENTE DE VOZ INTELIGENTE CON IA Y FILTRO HD ESTILO ALEXA
   void _startVoiceSearch() {
     AlexaVoiceSheet.show(
       context,
@@ -181,105 +177,135 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       },
       onOpenEpg: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('📅 Mostrando programación en tiempo real'),
-            backgroundColor: Color(0xFF00E5FF),
-          ),
-        );
+        final ch = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+        if (ch != null) _openEpgScheduleModal(ch);
       },
     );
   }
 
-  // DIÁLOGO DE RECORDATORIO DE EVENTOS Y ALARMA
-  void _openReminderDialog(ChannelModel? channel) {
-    if (channel == null) return;
+  // MODAL DE GUÍA EPG Y RECORDATORIOS
+  void _openEpgScheduleModal(ChannelModel channel) {
+    final schedule = EpgService.getUpcomingPrograms(channel.name, channel.groupCategory);
 
-    TimeOfDay selectedTime = TimeOfDay.now();
-    final eventNameController = TextEditingController(text: "Partido / Evento en ${channel.name}");
-
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF0F172A),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
-          ),
-          title: Row(
-            children: [
-              const Icon(Icons.alarm, color: Color(0xFFFFB703), size: 24),
-              const SizedBox(width: 8),
-              Text('Recordatorio: ${channel.name}', style: const TextStyle(color: Colors.white, fontSize: 15)),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Nombre del evento:', style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const SizedBox(height: 6),
-              TextField(
-                controller: eventNameController,
-                style: const TextStyle(color: Colors.white, fontSize: 13),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: const Color(0xFF1E293B),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        decoration: BoxDecoration(
+          color: const Color(0xFF070A10).withOpacity(0.98),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.4), width: 1.5),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    _buildChannelLogo(channel, true),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          channel.name,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                        const Text(
+                          'Guía de Programación en Tiempo Real',
+                          style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 14),
-              const Text('Hora de inicio:', style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const SizedBox(height: 6),
-              InkWell(
-                onTap: () async {
-                  final picked = await showTimePicker(
-                    context: context,
-                    initialTime: selectedTime,
-                  );
-                  if (picked != null) {
-                    setDialogState(() => selectedTime = picked);
-                  }
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E293B),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.4)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        selectedTime.format(context),
-                        style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 15, fontWeight: FontWeight.bold),
-                      ),
-                      const Icon(Icons.access_time, color: Color(0xFF00E5FF), size: 20),
-                    ],
-                  ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white54),
+                  onPressed: () => Navigator.pop(ctx),
                 ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+              ],
             ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E5FF)),
-              onPressed: () {
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('⏰ ¡Alarma programada a las ${selectedTime.format(context)} para ${eventNameController.text}!'),
-                    backgroundColor: const Color(0xFF00E5FF),
-                  ),
-                );
-              },
-              child: const Text('Guardar Alarma', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+            const Divider(color: Colors.white12, height: 24),
+            const Text(
+              'Toca un programa futuro para programar tu recordatorio:',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: schedule.length,
+                itemBuilder: (context, index) {
+                  final prog = schedule[index];
+                  final isNow = index == 0;
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isNow ? const Color(0x3300E5FF) : const Color(0xFF131B2E),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isNow ? const Color(0xFF00E5FF) : Colors.white10,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: isNow ? Colors.redAccent : const Color(0xFF1E293B),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            isNow ? 'EN VIVO' : prog.timeFormatted.split(' - ')[0],
+                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                prog.title,
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              Text(
+                                prog.timeFormatted,
+                                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            isNow ? Icons.play_circle : Icons.alarm_add,
+                            color: isNow ? const Color(0xFF00E5FF) : const Color(0xFFFFB703),
+                          ),
+                          tooltip: isNow ? 'En emisión ahora' : 'Agendar Alarma',
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            if (!isNow) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('⏰ ¡Alarma programada para "${prog.title}" a las ${prog.timeFormatted.split(' - ')[0]}!'),
+                                  backgroundColor: const Color(0xFF00E5FF),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
             ),
           ],
         ),
@@ -287,7 +313,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Gestor de Listas M3U
   void _openM3uDialog() {
     final controller = TextEditingController();
     showDialog(
@@ -409,7 +434,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // PopScope: Si está en Pantalla Completa, la flecha atrás solo sale del fullscreen (no de la app)
     return PopScope(
       canPop: !_isFullScreenMode,
       onPopInvokedWithResult: (didPop, result) {
@@ -441,7 +465,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // VISTA VERTICAL (MÓVIL)
   Widget _buildPortraitLayout() {
     final activeChannel = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
 
@@ -452,22 +475,11 @@ class _HomeScreenState extends State<HomeScreen> {
     return SafeArea(
       child: Column(
         children: [
-          // 1. Barra superior translúcida con Lupita y Micrófono
           _buildTopGlassBar(),
-
-          // 2. Video con zapping por gestos y OSD dinámico que se oculta
           _buildVideoPlayerSection(activeChannel),
-
-          // 3. Pestañas principales de navegación (En Vivo | Películas | Series)
           _buildSectionTabs(),
-
-          // 4. Banner EPG dinámico DirecTV
-          _buildLiveEpgCard(),
-
-          // 5. Selector horizontal de categorías
+          _buildLiveEpgCard(activeChannel), // EPG DINÁMICO EN TIEMPO REAL
           _buildCategoryChips(),
-
-          // 6. Lista de Canales con Logos y D-Pad
           Expanded(
             child: _buildChannelListView(),
           ),
@@ -476,7 +488,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // VISTA HORIZONTAL (ANDROID TV / TIVIGLASS)
   Widget _buildLandscapeLayout() {
     final activeChannel = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
 
@@ -486,7 +497,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Row(
       children: [
-        // Panel lateral izquierdo traslúcido
         Container(
           width: 180,
           decoration: BoxDecoration(
@@ -512,6 +522,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 setState(() => _isSearching = !_isSearching);
               }),
               _buildSideMenuItem(Icons.mic, 'Asistente IA', _startVoiceSearch),
+              _buildSideMenuItem(Icons.list_alt, 'Guía EPG', () {
+                if (activeChannel != null) _openEpgScheduleModal(activeChannel);
+              }),
               _buildSideMenuItem(Icons.playlist_add, 'Listas M3U', _openM3uDialog),
               _buildSideMenuItem(Icons.fullscreen, 'Pantalla Completa', () {
                 setState(() => _isFullScreenMode = true);
@@ -519,8 +532,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-
-        // Video principal (Flex 3)
         Expanded(
           flex: 3,
           child: Container(
@@ -536,8 +547,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
-
-        // Lista de canales a la derecha (Flex 2)
         Expanded(
           flex: 2,
           child: Container(
@@ -606,11 +615,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       onPressed: _openM3uDialog,
                     ),
                     IconButton(
-                      icon: const Icon(
-                        Icons.mic,
-                        color: Color(0xFF00E5FF),
-                        size: 24,
-                      ),
+                      icon: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 24),
                       tooltip: 'Asistente de Voz Inteligente',
                       onPressed: _startVoiceSearch,
                     ),
@@ -699,7 +704,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildVideoPlayerSection(ChannelModel? activeChannel) {
     return GestureDetector(
-      onTap: _toggleOsd, // Toca el video en vertical para mostrar u ocultar el banner
+      onTap: _toggleOsd,
       onVerticalDragEnd: (details) {
         if (details.primaryVelocity! < -150) _nextChannel();
         if (details.primaryVelocity! > 150) _previousChannel();
@@ -719,7 +724,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? Center(child: AspectRatio(aspectRatio: _videoPlayerController!.value.aspectRatio, child: VideoPlayer(_videoPlayerController!)))
                     : const Center(child: Icon(Icons.tv_off, color: Colors.white38, size: 48)),
 
-            // OSD inferior del reproductor (ahora se oculta automáticamente)
             if (_showOsd)
               Positioned(
                 bottom: 8,
@@ -751,7 +755,9 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               IconButton(
                                 icon: const Icon(Icons.alarm_add, color: Color(0xFFFFB703), size: 20),
-                                onPressed: () => _openReminderDialog(activeChannel),
+                                onPressed: () {
+                                  if (activeChannel != null) _openEpgScheduleModal(activeChannel);
+                                },
                               ),
                             ],
                           )
@@ -767,42 +773,73 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildLiveEpgCard() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F172A).withOpacity(0.9),
-        border: const Border(bottom: BorderSide(color: Color(0x1F00E5FF))),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.live_tv, color: Colors.redAccent, size: 14),
-              SizedBox(width: 6),
-              Text(
-                'EN VIVO: Programación en Tiempo Real',
-                style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          const SizedBox(height: 3),
-          const Text(
-            'Señal Oficial HLS • Calidad Automática Adaptativa',
-            style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
-          ),
-          const SizedBox(height: 6),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: const LinearProgressIndicator(
-              value: 0.65,
-              backgroundColor: Color(0xFF1E293B),
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00E5FF)),
-              minHeight: 3,
+  // TARJETA EPG DINÁMICA CON PROGRAMACIÓN EN VIVO Y PRÓXIMO PROGRAMA
+  Widget _buildLiveEpgCard(ChannelModel? activeChannel) {
+    if (activeChannel == null) return const SizedBox.shrink();
+
+    final currentProg = EpgService.getCurrentProgram(activeChannel.name, activeChannel.groupCategory);
+    final nextProg = EpgService.getNextProgram(activeChannel.name, activeChannel.groupCategory);
+
+    return InkWell(
+      onTap: () => _openEpgScheduleModal(activeChannel),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F172A).withOpacity(0.9),
+          border: const Border(bottom: BorderSide(color: Color(0x1F00E5FF))),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.live_tv, color: Colors.redAccent, size: 14),
+                    const SizedBox(width: 6),
+                    Text(
+                      currentProg.title,
+                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+                Text(
+                  currentProg.timeFormatted,
+                  style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+              ],
             ),
-          ),
-        ],
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'A continuación: ${nextProg.title}',
+                  style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  'Quedan ${currentProg.remainingMinutes} min',
+                  style: const TextStyle(color: Colors.white54, fontSize: 10),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: currentProg.progress,
+                backgroundColor: const Color(0xFF1E293B),
+                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00E5FF)),
+                minHeight: 3,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
