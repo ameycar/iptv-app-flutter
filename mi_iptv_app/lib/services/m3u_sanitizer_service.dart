@@ -2,7 +2,7 @@ import 'dart:convert';
 import '../models/channel_model.dart';
 
 class M3USanitizerService {
-  /// Limpia, categoriza y clasifica automáticamente en TV, Películas y Series
+  /// Limpia y separa con precisión: Canales de TV (.m3u8) vs Películas/Series VOD (.mp4, /movie/)
   static List<ChannelModel> parseAndSanitize(String rawM3u) {
     final List<ChannelModel> sanitizedChannels = [];
     final cleanContent = rawM3u.replaceAll('\uFEFF', '').replaceAll('\r\n', '\n');
@@ -17,34 +17,31 @@ class M3USanitizerService {
       final line = lines[i].trim();
 
       if (line.toUpperCase().startsWith('#EXTINF:')) {
-        // 1. Extraer nombre tras la coma
         final commaIndex = line.lastIndexOf(',');
         if (commaIndex != -1 && commaIndex < line.length - 1) {
           tempName = line.substring(commaIndex + 1).trim();
         }
 
-        // 2. Extraer Logo
+        tempName = _cleanChannelTitle(tempName);
+
         final logoMatch = RegExp(r'tvg-logo="([^"]*)"', caseSensitive: false).firstMatch(line);
         tempLogo = logoMatch?.group(1)?.trim() ?? '';
 
-        // 3. Extraer Grupo
         final groupMatch = RegExp(r'group-title="([^"]*)"', caseSensitive: false).firstMatch(line);
         tempGroup = groupMatch?.group(1)?.trim() ?? 'General';
       } else if (line.isNotEmpty && !line.startsWith('#')) {
-        // Sanitizar URL
         String cleanUrl = line.replaceAll(RegExp(r'\s+'), '');
 
         if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
           final contentType = _determineContentType(tempName, tempGroup, cleanUrl);
-          final cleanTitle = _cleanChannelTitle(tempName);
-          final category = _determineCategory(cleanTitle, tempGroup, contentType);
+          final category = _determineCategory(tempName, tempGroup, contentType);
           final year = _extractYear(tempName);
 
           sanitizedChannels.add(
             ChannelModel(
               id: 'item_$channelCounter',
               number: channelCounter,
-              name: cleanTitle.isEmpty ? 'Elemento $channelCounter' : cleanTitle,
+              name: tempName.isEmpty ? 'Elemento $channelCounter' : tempName,
               streamUrl: cleanUrl,
               logoUrl: tempLogo,
               groupCategory: category,
@@ -63,37 +60,33 @@ class M3USanitizerService {
     return sanitizedChannels.isNotEmpty ? sanitizedChannels : getCuratedChannels();
   }
 
-  /// CLASIFICADOR INTELIGENTE DE CONTENIDO
+  /// CLASIFICADOR ESTRICTO: NO confunde canales continuos con películas bajo demanda
   static String _determineContentType(String name, String group, String url) {
+    final lowerUrl = url.toLowerCase();
     final lowerName = name.toLowerCase();
     final lowerGroup = group.toLowerCase();
-    final lowerUrl = url.toLowerCase();
 
-    // 1. Es Serie si tiene formato de temporada/capítulo o el grupo lo dice
-    final isSeriesPattern = RegExp(r'[st]\d+.*[ec]\d+', caseSensitive: false).hasMatch(name) ||
-        lowerName.contains('temporada') ||
-        lowerName.contains('season') ||
-        lowerName.contains('capitulo') ||
-        lowerName.contains('episodio');
+    final isVODExtension = lowerUrl.endsWith('.mp4') || lowerUrl.endsWith('.mkv') || lowerUrl.endsWith('.avi');
+    final isXtreamMovie = lowerUrl.contains('/movie/') || lowerUrl.contains('/movies/') || lowerUrl.contains('/vod/');
+    final isXtreamSeries = lowerUrl.contains('/series/');
+    final hasEpisodeFormat = RegExp(r'[st]\d+.*[ec]\d+', caseSensitive: false).hasMatch(name);
 
-    if (isSeriesPattern || lowerGroup.contains('serie') || lowerGroup.contains('series')) {
+    // 1. Series VOD reales (archivos de series o formato de capítulo)
+    if (isXtreamSeries || (hasEpisodeFormat && isVODExtension)) {
       return 'series';
     }
 
-    // 2. Es Película si el archivo es VOD (.mp4, .mkv) o el grupo/nombre es de cine
-    final isVideoFile = lowerUrl.endsWith('.mp4') || lowerUrl.endsWith('.mkv') || lowerUrl.endsWith('.avi');
-    final isMovieGroup = lowerGroup.contains('pelicula') ||
-        lowerGroup.contains('película') ||
-        lowerGroup.contains('movie') ||
-        lowerGroup.contains('vod') ||
-        lowerGroup.contains('cine') ||
-        lowerGroup.contains('estreno');
-
-    if (isVideoFile || isMovieGroup) {
+    // 2. Películas VOD reales (archivos de video específicos)
+    if (isVODExtension || isXtreamMovie) {
       return 'movie';
     }
 
-    // 3. Por defecto es Canal en Vivo (TV streaming HLS/TS)
+    // Si el grupo dice VOD explícitamente pero no es stream en vivo
+    if (lowerGroup.startsWith('vod') || lowerGroup.contains('vod |') || lowerGroup.contains('vod:')) {
+      if (!lowerUrl.endsWith('.m3u8')) return 'movie';
+    }
+
+    // 3. Todo lo demás (.m3u8, canales 24/7 de cine como 4ever Cinema, Pluto, etc.) son CANALES EN VIVO
     return 'live';
   }
 
@@ -122,16 +115,17 @@ class M3USanitizerService {
       if (lowerGroup.contains('comedia') || lowerName.contains('comedia')) return 'Comedia';
       if (lowerGroup.contains('animacion') || lowerGroup.contains('infantil')) return 'Animación';
       if (lowerGroup.contains('ciencia') || lowerGroup.contains('ficcion')) return 'Ciencia Ficción';
-      return rawGroup.isNotEmpty && rawGroup != 'General' ? rawGroup : 'Cine Estelar';
+      return rawGroup.isNotEmpty && rawGroup != 'General' ? rawGroup : 'Películas';
     }
 
     if (contentType == 'series') {
-      return rawGroup.isNotEmpty && rawGroup != 'General' ? rawGroup : 'Series Populares';
+      return rawGroup.isNotEmpty && rawGroup != 'General' ? rawGroup : 'Series';
     }
 
-    // Categorías de TV en Vivo
+    // Categorías de Canales en Vivo
     if (lowerGroup.contains('deport') || lowerGroup.contains('sport') || lowerGroup.contains('futbol')) return 'Deportes';
     if (lowerGroup.contains('noticia') || lowerGroup.contains('news')) return 'Noticias';
+    if (lowerGroup.contains('cine') || lowerGroup.contains('movie') || lowerGroup.contains('film')) return 'Cine & Series 24/7';
     if (lowerGroup.contains('docu') || lowerGroup.contains('cultura')) return 'Documentales';
     if (lowerGroup.contains('infantil') || lowerGroup.contains('kid')) return 'Infantil';
     if (lowerGroup.contains('music')) return 'Música';
@@ -146,10 +140,8 @@ class M3USanitizerService {
     return '1080p FHD';
   }
 
-  /// Canales y Películas de prueba estables y legales
   static List<ChannelModel> getCuratedChannels() {
     return [
-      // Canales de TV
       ChannelModel(
         id: 'live_1',
         number: 1,
@@ -171,7 +163,6 @@ class M3USanitizerService {
         resolution: '1080p FHD',
         contentType: 'live',
       ),
-      // Películas (VOD)
       ChannelModel(
         id: 'mov_1',
         number: 101,
@@ -196,7 +187,6 @@ class M3USanitizerService {
         year: '2024',
         rating: '9.1',
       ),
-      // Series
       ChannelModel(
         id: 'ser_1',
         number: 201,

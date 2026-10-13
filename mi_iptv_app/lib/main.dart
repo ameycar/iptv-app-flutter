@@ -170,14 +170,27 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  // ASISTENTE DE VOZ INTELIGENTE QUE RECONOCE LA SECCIÓN ACTUAL
   void _startVoiceSearch() {
+    List<ChannelModel> searchPool;
+    if (_selectedSection == 'Películas') {
+      searchPool = _movies.isNotEmpty ? _movies : _channels;
+    } else if (_selectedSection == 'Series') {
+      searchPool = _series.isNotEmpty ? _series : _channels;
+    } else {
+      searchPool = _liveChannels.isNotEmpty ? _liveChannels : _channels;
+    }
+
     AlexaVoiceSheet.show(
       context,
-      channels: _channels,
+      channels: searchPool,
       currentChannel: _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null,
-      onChannelSelected: (channel) {
-        if (channel is ChannelModel) {
-          _changeChannel(channel);
+      onChannelSelected: (item) {
+        if (item is ChannelModel) {
+          _changeChannel(item);
+          if (item.isMovie || item.isSeries) {
+            setState(() => _isFullScreenMode = true);
+          }
         }
       },
       onOpenEpg: () {
@@ -468,7 +481,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Filtros por sección VOD
   List<ChannelModel> get _liveChannels => _channels.where((c) => c.isLive).toList();
   List<ChannelModel> get _movies => _channels.where((c) => c.isMovie).toList();
   List<ChannelModel> get _series => _channels.where((c) => c.isSeries).toList();
@@ -536,32 +548,29 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildTopGlassBar(),
           _buildSectionTabs(),
 
-          // Si está en 'En Vivo', muestra el reproductor y la lista de TV
           if (_selectedSection == 'En Vivo') ...[
             _buildVideoPlayerSection(activeChannel),
             _buildLiveEpgCard(activeChannel),
             _buildCategoryChips(),
             Expanded(child: _buildChannelListView()),
-          ]
-          // Si está en 'Películas', muestra la cuadrícula estilo Netflix
-          else if (_selectedSection == 'Películas') ...[
+          ] else if (_selectedSection == 'Películas') ...[
             Expanded(
               child: VodGridView(
                 items: _movies,
                 contentType: 'movie',
+                searchQuery: _searchQuery,
                 onPlayItem: (item) {
                   _changeChannel(item);
                   setState(() => _isFullScreenMode = true);
                 },
               ),
             ),
-          ]
-          // Si está en 'Series', muestra la cuadrícula de series
-          else ...[
+          ] else ...[
             Expanded(
               child: VodGridView(
                 items: _series,
                 contentType: 'series',
+                searchQuery: _searchQuery,
                 onPlayItem: (item) {
                   _changeChannel(item);
                   setState(() => _isFullScreenMode = true);
@@ -615,7 +624,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
 
-        // Contenido dinámico según la sección seleccionada
         if (_selectedSection == 'En Vivo') ...[
           Expanded(
             flex: 3,
@@ -653,6 +661,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: VodGridView(
               items: _movies,
               contentType: 'movie',
+              searchQuery: _searchQuery,
               onPlayItem: (item) {
                 _changeChannel(item);
                 setState(() => _isFullScreenMode = true);
@@ -664,6 +673,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: VodGridView(
               items: _series,
               contentType: 'series',
+              searchQuery: _searchQuery,
               onPlayItem: (item) {
                 _changeChannel(item);
                 setState(() => _isFullScreenMode = true);
@@ -717,7 +727,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.search, color: Color(0xFF00E5FF), size: 22),
-                      tooltip: 'Buscar',
+                      tooltip: 'Buscar en $_selectedSection',
                       onPressed: () => setState(() => _isSearching = true),
                     ),
                     IconButton(
@@ -727,7 +737,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 24),
-                      tooltip: 'Asistente de Voz',
+                      tooltip: 'Asistente de Voz Inteligente',
                       onPressed: _startVoiceSearch,
                     ),
                   ],
@@ -747,9 +757,9 @@ class _HomeScreenState extends State<HomeScreen> {
             controller: _searchController,
             autofocus: true,
             style: const TextStyle(color: Colors.white, fontSize: 14),
-            decoration: const InputDecoration(
-              hintText: 'Buscar por nombre o número...',
-              hintStyle: TextStyle(color: Colors.white38),
+            decoration: InputDecoration(
+              hintText: 'Buscar en $_selectedSection...',
+              hintStyle: const TextStyle(color: Colors.white38),
               border: InputBorder.none,
               isDense: true,
             ),
@@ -790,7 +800,13 @@ class _HomeScreenState extends State<HomeScreen> {
         children: ['En Vivo', 'Películas', 'Series'].map((section) {
           final isSelected = _selectedSection == section;
           return GestureDetector(
-            onTap: () => setState(() => _selectedSection = section),
+            onTap: () {
+              setState(() {
+                _selectedSection = section;
+                _searchQuery = '';
+                _searchController.clear();
+              });
+            },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(

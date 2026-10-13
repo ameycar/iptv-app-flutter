@@ -3,13 +3,15 @@ import '../models/channel_model.dart';
 
 class VodGridView extends StatefulWidget {
   final List<ChannelModel> items;
-  final String contentType; // 'movie' o 'series'
+  final String contentType;
+  final String searchQuery;
   final Function(ChannelModel item) onPlayItem;
 
   const VodGridView({
     super.key,
     required this.items,
     required this.contentType,
+    required this.searchQuery,
     required this.onPlayItem,
   });
 
@@ -26,8 +28,15 @@ class _VodGridViewState extends State<VodGridView> {
   }
 
   List<ChannelModel> get _filteredItems {
-    if (_selectedGenre == 'Todos') return widget.items;
-    return widget.items.where((e) => e.groupCategory == _selectedGenre).toList();
+    return widget.items.where((e) {
+      final matchesGenre = _selectedGenre == 'Todos' || e.groupCategory == _selectedGenre;
+      final query = widget.searchQuery.toLowerCase().trim();
+      final matchesSearch = query.isEmpty ||
+          e.name.toLowerCase().contains(query) ||
+          e.groupCategory.toLowerCase().contains(query) ||
+          e.year.contains(query);
+      return matchesGenre && matchesSearch;
+    }).toList();
   }
 
   void _showItemDetailsModal(ChannelModel item) {
@@ -49,7 +58,6 @@ class _VodGridViewState extends State<VodGridView> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Póster Grande
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
@@ -66,7 +74,6 @@ class _VodGridViewState extends State<VodGridView> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                // Información de la Película / Serie
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -94,14 +101,14 @@ class _VodGridViewState extends State<VodGridView> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Género: ${item.groupCategory}',
+                        'Categoría: ${item.groupCategory}',
                         style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         widget.contentType == 'movie'
-                            ? 'Película disponible en streaming bajo demanda.'
-                            : 'Serie completa con temporadas y capítulos.',
+                            ? 'Película en streaming alta resolución.'
+                            : 'Serie disponible bajo demanda.',
                         style: const TextStyle(color: Colors.white54, fontSize: 11),
                       ),
                     ],
@@ -110,8 +117,6 @@ class _VodGridViewState extends State<VodGridView> {
               ],
             ),
             const SizedBox(height: 22),
-
-            // Botón de Reproducción estilo Netflix
             SizedBox(
               width: double.infinity,
               height: 48,
@@ -128,7 +133,7 @@ class _VodGridViewState extends State<VodGridView> {
                 },
                 icon: const Icon(Icons.play_arrow, size: 26),
                 label: Text(
-                  widget.contentType == 'movie' ? 'Reproducir Película' : 'Ver Serie / Episodio',
+                  widget.contentType == 'movie' ? 'Reproducir Película' : 'Ver Serie',
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                 ),
               ),
@@ -137,7 +142,7 @@ class _VodGridViewState extends State<VodGridView> {
             Center(
               child: TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cerrar Ficha', style: TextStyle(color: Colors.white54)),
+                child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
               ),
             ),
           ],
@@ -202,8 +207,10 @@ class _VodGridViewState extends State<VodGridView> {
             ),
             const SizedBox(height: 12),
             Text(
-              'No se encontraron ${widget.contentType == 'movie' ? 'películas' : 'series'} en tu lista',
-              style: const TextStyle(color: Colors.white54, fontSize: 14),
+              widget.searchQuery.isNotEmpty
+                  ? 'No se encontraron resultados para "${widget.searchQuery}"'
+                  : 'No hay ${widget.contentType == 'movie' ? 'películas' : 'series'} en esta categoría',
+              style: const TextStyle(color: Colors.white54, fontSize: 13),
             ),
           ],
         ),
@@ -212,7 +219,6 @@ class _VodGridViewState extends State<VodGridView> {
 
     return Column(
       children: [
-        // Selector Horizontal de Géneros
         Container(
           height: 44,
           padding: const EdgeInsets.symmetric(vertical: 4),
@@ -250,8 +256,6 @@ class _VodGridViewState extends State<VodGridView> {
             },
           ),
         ),
-
-        // Cuadrícula de Pósters (Grid estilo Netflix)
         Expanded(
           child: GridView.builder(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -283,7 +287,6 @@ class _VodGridViewState extends State<VodGridView> {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        // Imagen de portada
                         item.logoUrl.isNotEmpty
                             ? Image.network(
                                 item.logoUrl,
@@ -291,8 +294,6 @@ class _VodGridViewState extends State<VodGridView> {
                                 errorBuilder: (_, __, ___) => _buildFallbackPoster(item),
                               )
                             : _buildFallbackPoster(item),
-
-                        // Gradiente inferior para el título
                         Positioned(
                           bottom: 0,
                           left: 0,
@@ -333,8 +334,6 @@ class _VodGridViewState extends State<VodGridView> {
                             ),
                           ),
                         ),
-
-                        // Badge de Resolución arriba
                         Positioned(
                           top: 5,
                           right: 5,
