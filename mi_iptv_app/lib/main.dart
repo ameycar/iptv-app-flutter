@@ -26,10 +26,10 @@ class AmeycarTVApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF070A10),
-        primaryColor: const Color(0xFF00E5FF),
+        primaryColor: const Color(0xFF7B2CBF),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF00E5FF),
-          secondary: Color(0xFFFFB703),
+          primary: Color(0xFF9D4EDD),
+          secondary: Color(0xFF00E5FF),
           surface: Color(0xFF0F172A),
         ),
       ),
@@ -55,6 +55,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isVideoLoading = false;
   bool _isFullScreenMode = false;
   bool _showOsd = true;
+  double _currentVolume = 1.0;
 
   final Set<String> _activeAlarms = {};
 
@@ -104,6 +105,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await _videoPlayerController!.initialize();
       if (mounted) {
+        _videoPlayerController!.setVolume(_currentVolume);
         _videoPlayerController!.play();
         _videoPlayerController!.setLooping(true);
         setState(() => _isVideoLoading = false);
@@ -173,10 +175,10 @@ class _HomeScreenState extends State<HomeScreen> {
   // ASISTENTE DE VOZ INTELIGENTE QUE RECONOCE LA SECCIÓN ACTUAL
   void _startVoiceSearch() {
     List<ChannelModel> searchPool;
-    if (_selectedSection == 'Películas') {
-      searchPool = _movies.isNotEmpty ? _movies : _channels;
-    } else if (_selectedSection == 'Series') {
-      searchPool = _series.isNotEmpty ? _series : _channels;
+    if (_selectedSection == 'Películas' && _movies.isNotEmpty) {
+      searchPool = _movies;
+    } else if (_selectedSection == 'Series' && _series.isNotEmpty) {
+      searchPool = _series;
     } else {
       searchPool = _liveChannels.isNotEmpty ? _liveChannels : _channels;
     }
@@ -187,6 +189,10 @@ class _HomeScreenState extends State<HomeScreen> {
       currentChannel: _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null,
       onChannelSelected: (item) {
         if (item is ChannelModel) {
+          // Si estaba en películas o series y pide un canal de TV en vivo, cambiar la pestaña a En Vivo
+          if (item.isLive && _selectedSection != 'En Vivo') {
+            setState(() => _selectedSection = 'En Vivo');
+          }
           _changeChannel(item);
           if (item.isMovie || item.isSeries) {
             setState(() => _isFullScreenMode = true);
@@ -197,6 +203,32 @@ class _HomeScreenState extends State<HomeScreen> {
         final ch = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
         if (ch != null) _openEpgScheduleModal(ch);
       },
+      onNavigateSection: (section) {
+        setState(() {
+          _selectedSection = section;
+          _searchQuery = '';
+          _searchController.clear();
+        });
+      },
+    );
+  }
+
+  void _adjustVolume(bool up) {
+    setState(() {
+      if (up) {
+        _currentVolume = (_currentVolume + 0.2).clamp(0.0, 1.0);
+      } else {
+        _currentVolume = (_currentVolume - 0.2).clamp(0.0, 1.0);
+      }
+      _videoPlayerController?.setVolume(_currentVolume);
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('🔊 Volumen: ${(_currentVolume * 100).toInt()}%'),
+        duration: const Duration(seconds: 1),
+        backgroundColor: const Color(0xFF7B2CBF),
+      ),
     );
   }
 
@@ -213,7 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
           decoration: BoxDecoration(
             color: const Color(0xFF070A10).withOpacity(0.98),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.4), width: 1.5),
+            border: Border.all(color: const Color(0xFF9D4EDD).withOpacity(0.5), width: 1.5),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -235,7 +267,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const Text(
                             'Guía de Programación en Tiempo Real',
-                            style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
+                            style: TextStyle(color: Color(0xFFC77DFF), fontSize: 11),
                           ),
                         ],
                       ),
@@ -286,14 +318,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: isNow
-                            ? const Color(0x3300E5FF)
+                            ? const Color(0x337B2CBF)
                             : hasAlarm
                                 ? const Color(0x22FFB703)
                                 : const Color(0xFF131B2E),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
                           color: isNow
-                              ? const Color(0xFF00E5FF)
+                              ? const Color(0xFF9D4EDD)
                               : hasAlarm
                                   ? const Color(0xFFFFB703)
                                   : Colors.white10,
@@ -360,7 +392,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     content: Text(hasAlarm
                                         ? '🔕 Alarma cancelada para "${prog.title}"'
                                         : '⏰ ¡Alarma activada para "${prog.title}" a las ${prog.timeFormatted.split(' - ')[0]}!'),
-                                    backgroundColor: hasAlarm ? Colors.redAccent : const Color(0xFF00E5FF),
+                                    backgroundColor: hasAlarm ? Colors.redAccent : const Color(0xFF7B2CBF),
                                   ),
                                 );
                               }
@@ -389,11 +421,11 @@ class _HomeScreenState extends State<HomeScreen> {
           backgroundColor: const Color(0xFF0F172A).withOpacity(0.95),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
+            side: const BorderSide(color: Color(0xFF7B2CBF), width: 1.5),
           ),
           title: const Row(
             children: [
-              Icon(Icons.playlist_play, color: Color(0xFF00E5FF)),
+              Icon(Icons.playlist_play, color: Color(0xFFC77DFF)),
               SizedBox(width: 8),
               Text('Gestor de Listas M3U', style: TextStyle(color: Colors.white, fontSize: 16)),
             ],
@@ -425,7 +457,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E5FF)),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
               onPressed: () async {
                 final url = controller.text.trim();
                 if (url.isNotEmpty) {
@@ -433,7 +465,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _downloadAndSanitizeM3u(url);
                 }
               },
-              child: const Text('Cargar y Sanitizar', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              child: const Text('Cargar y Sanitizar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -596,7 +628,7 @@ class _HomeScreenState extends State<HomeScreen> {
           width: 180,
           decoration: BoxDecoration(
             color: const Color(0xFF0F172A).withOpacity(0.85),
-            border: const Border(right: BorderSide(color: Color(0x3300E5FF))),
+            border: const Border(right: BorderSide(color: Color(0x337B2CBF))),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -606,7 +638,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Text(
                   'AMEYCAR TV',
                   style: TextStyle(
-                    color: Color(0xFF00E5FF),
+                    color: Color(0xFFC77DFF),
                     fontWeight: FontWeight.w900,
                     fontSize: 16,
                     letterSpacing: 1.2,
@@ -618,7 +650,7 @@ class _HomeScreenState extends State<HomeScreen> {
               _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
               const Divider(color: Colors.white12),
               _buildSideMenuItem(Icons.search, 'Buscar', () => setState(() => _isSearching = !_isSearching)),
-              _buildSideMenuItem(Icons.mic, 'Asistente IA', _startVoiceSearch),
+              _buildSideMenuItem(Icons.mic, 'Asistente Alexa', _startVoiceSearch),
               _buildSideMenuItem(Icons.playlist_add, 'Listas M3U', _openM3uDialog),
             ],
           ),
@@ -632,7 +664,7 @@ class _HomeScreenState extends State<HomeScreen> {
               decoration: BoxDecoration(
                 color: Colors.black,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0x3300E5FF)),
+                border: Border.all(color: const Color(0x337B2CBF)),
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
@@ -690,7 +722,7 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
         color: const Color(0xFF0F172A).withOpacity(0.8),
-        border: const Border(bottom: BorderSide(color: Color(0x2200E5FF))),
+        border: const Border(bottom: BorderSide(color: Color(0x227B2CBF))),
       ),
       child: _isSearching
           ? _buildActiveSearchBar()
@@ -702,7 +734,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     const Text(
                       'AMEYCAR TV',
                       style: TextStyle(
-                        color: Color(0xFF00E5FF),
+                        color: Color(0xFFC77DFF),
                         fontWeight: FontWeight.w900,
                         fontSize: 18,
                         letterSpacing: 1.2,
@@ -726,7 +758,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.search, color: Color(0xFF00E5FF), size: 22),
+                      icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 22),
                       tooltip: 'Buscar en $_selectedSection',
                       onPressed: () => setState(() => _isSearching = true),
                     ),
@@ -735,9 +767,22 @@ class _HomeScreenState extends State<HomeScreen> {
                       tooltip: 'Cargar lista M3U',
                       onPressed: _openM3uDialog,
                     ),
+                    // BOTÓN DE ASISTENTE DE VOZ ALEXA
                     IconButton(
-                      icon: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 24),
-                      tooltip: 'Asistente de Voz Inteligente',
+                      icon: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF9D4EDD).withOpacity(0.5),
+                              blurRadius: 8,
+                            ),
+                          ],
+                        ),
+                        child: const Icon(Icons.mic, color: Color(0xFFC77DFF), size: 22),
+                      ),
+                      tooltip: 'Asistente Alexa de Voz',
                       onPressed: _startVoiceSearch,
                     ),
                   ],
@@ -750,7 +795,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildActiveSearchBar() {
     return Row(
       children: [
-        const Icon(Icons.search, color: Color(0xFF00E5FF), size: 20),
+        const Icon(Icons.search, color: Color(0xFFC77DFF), size: 20),
         const SizedBox(width: 10),
         Expanded(
           child: TextField(
@@ -811,13 +856,13 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
                 border: isSelected
-                    ? const Border(bottom: BorderSide(color: Color(0xFF00E5FF), width: 2))
+                    ? const Border(bottom: BorderSide(color: Color(0xFFC77DFF), width: 2))
                     : null,
               ),
               child: Text(
                 section,
                 style: TextStyle(
-                  color: isSelected ? const Color(0xFF00E5FF) : Colors.white54,
+                  color: isSelected ? const Color(0xFFC77DFF) : Colors.white54,
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                   fontSize: 12,
                 ),
@@ -846,7 +891,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Stack(
           children: [
             _isVideoLoading
-                ? const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF)))
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFFC77DFF)))
                 : (_videoPlayerController != null && _videoPlayerController!.value.isInitialized)
                     ? Center(child: AspectRatio(aspectRatio: _videoPlayerController!.value.aspectRatio, child: VideoPlayer(_videoPlayerController!)))
                     : const Center(child: Icon(Icons.tv_off, color: Colors.white38, size: 48)),
@@ -876,6 +921,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           Row(
                             children: [
+                              IconButton(
+                                icon: const Icon(Icons.volume_down, color: Colors.white70, size: 18),
+                                onPressed: () => _adjustVolume(false),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.volume_up, color: Colors.white70, size: 18),
+                                onPressed: () => _adjustVolume(true),
+                              ),
                               IconButton(
                                 icon: const Icon(Icons.fullscreen, color: Colors.white70, size: 20),
                                 onPressed: () => setState(() => _isFullScreenMode = true),
@@ -912,7 +965,7 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: const Color(0xFF0F172A).withOpacity(0.9),
-          border: const Border(bottom: BorderSide(color: Color(0x1F00E5FF))),
+          border: const Border(bottom: BorderSide(color: Color(0x1F9D4EDD))),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -934,7 +987,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 Text(
                   currentProg.timeFormatted,
-                  style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                  style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
@@ -960,7 +1013,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: LinearProgressIndicator(
                 value: currentProg.progress,
                 backgroundColor: const Color(0xFF1E293B),
-                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00E5FF)),
+                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF9D4EDD)),
                 minHeight: 3,
               ),
             ),
@@ -987,17 +1040,17 @@ class _HomeScreenState extends State<HomeScreen> {
               margin: const EdgeInsets.symmetric(horizontal: 4),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(
-                color: isSelected ? const Color(0xFF00E5FF) : const Color(0xFF1E293B).withOpacity(0.8),
+                color: isSelected ? const Color(0xFF7B2CBF) : const Color(0xFF1E293B).withOpacity(0.8),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: isSelected ? const Color(0xFF00E5FF) : Colors.white10,
+                  color: isSelected ? const Color(0xFFC77DFF) : Colors.white10,
                 ),
               ),
               child: Center(
                 child: Text(
                   category,
                   style: TextStyle(
-                    color: isSelected ? Colors.black : Colors.white70,
+                    color: Colors.white,
                     fontSize: 11,
                     fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                   ),
@@ -1053,16 +1106,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 margin: const EdgeInsets.only(bottom: 6),
                 decoration: BoxDecoration(
                   color: isFocused
-                      ? const Color(0x3300E5FF)
+                      ? const Color(0x339D4EDD)
                       : isSelected
                           ? const Color(0xFF1E293B).withOpacity(0.9)
                           : const Color(0xFF0F172A).withOpacity(0.4),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color: isFocused
-                        ? const Color(0xFF00E5FF)
+                        ? const Color(0xFFC77DFF)
                         : isSelected
-                            ? const Color(0x8800E5FF)
+                            ? const Color(0xFF9D4EDD)
                             : Colors.transparent,
                     width: isFocused ? 2 : 1,
                   ),
@@ -1073,7 +1126,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   title: Text(
                     channel.name,
                     style: TextStyle(
-                      color: isSelected ? const Color(0xFF00E5FF) : Colors.white,
+                      color: isSelected ? const Color(0xFFC77DFF) : Colors.white,
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
                     ),
@@ -1083,7 +1136,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
                   ),
                   trailing: isSelected
-                      ? const Icon(Icons.volume_up, color: Color(0xFF00E5FF), size: 18)
+                      ? const Icon(Icons.volume_up, color: Color(0xFFC77DFF), size: 18)
                       : null,
                   onTap: () => _changeChannel(channel),
                 ),
@@ -1120,11 +1173,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildFallbackAvatar(ChannelModel channel, bool isSelected) {
     return CircleAvatar(
       radius: 16,
-      backgroundColor: isSelected ? const Color(0xFF00E5FF) : const Color(0xFF1E293B),
+      backgroundColor: isSelected ? const Color(0xFF7B2CBF) : const Color(0xFF1E293B),
       child: Text(
         '${channel.number}',
-        style: TextStyle(
-          color: isSelected ? Colors.black : Colors.white,
+        style: const TextStyle(
+          color: Colors.white,
           fontSize: 10,
           fontWeight: FontWeight.bold,
         ),
@@ -1146,7 +1199,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Center(
               child: _videoPlayerController != null && _videoPlayerController!.value.isInitialized
                   ? AspectRatio(aspectRatio: _videoPlayerController!.value.aspectRatio, child: VideoPlayer(_videoPlayerController!))
-                  : const CircularProgressIndicator(color: Color(0xFF00E5FF)),
+                  : const CircularProgressIndicator(color: Color(0xFFC77DFF)),
             ),
             if (_showOsd)
               Positioned(
@@ -1175,7 +1228,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                                 Text(
                                   '${activeChannel?.groupCategory} • EN VIVO HLS',
-                                  style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
+                                  style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11),
                                 ),
                               ],
                             ),
@@ -1199,7 +1252,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildSideMenuItem(IconData icon, String title, VoidCallback onTap) {
     return ListTile(
       dense: true,
-      leading: Icon(icon, color: const Color(0xFF00E5FF), size: 20),
+      leading: Icon(icon, color: const Color(0xFFC77DFF), size: 20),
       title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 12)),
       onTap: onTap,
     );
