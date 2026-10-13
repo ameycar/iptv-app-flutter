@@ -6,6 +6,9 @@ class ChannelModel {
   final String logoUrl;
   final String groupCategory;
   final String resolution;
+  final String contentType; // 'live', 'movie', 'series'
+  final String year;
+  final String rating;
   final bool isValid;
   bool isFavorite;
 
@@ -17,9 +20,16 @@ class ChannelModel {
     required this.logoUrl,
     required this.groupCategory,
     this.resolution = '1080p FHD',
+    this.contentType = 'live',
+    this.year = '',
+    this.rating = 'HD',
     this.isValid = true,
     this.isFavorite = false,
   });
+
+  bool get isMovie => contentType == 'movie';
+  bool get isSeries => contentType == 'series';
+  bool get isLive => contentType == 'live';
 
   ChannelModel copyWith({
     String? id,
@@ -29,6 +39,9 @@ class ChannelModel {
     String? logoUrl,
     String? groupCategory,
     String? resolution,
+    String? contentType,
+    String? year,
+    String? rating,
     bool? isValid,
     bool? isFavorite,
   }) {
@@ -40,6 +53,9 @@ class ChannelModel {
       logoUrl: logoUrl ?? this.logoUrl,
       groupCategory: groupCategory ?? this.groupCategory,
       resolution: resolution ?? this.resolution,
+      contentType: contentType ?? this.contentType,
+      year: year ?? this.year,
+      rating: rating ?? this.rating,
       isValid: isValid ?? this.isValid,
       isFavorite: isFavorite ?? this.isFavorite,
     );
@@ -53,6 +69,9 @@ class ChannelModel {
     'logoUrl': logoUrl,
     'groupCategory': groupCategory,
     'resolution': resolution,
+    'contentType': contentType,
+    'year': year,
+    'rating': rating,
     'isValid': isValid,
     'isFavorite': isFavorite,
   };
@@ -66,6 +85,9 @@ class ChannelModel {
       logoUrl: map['logoUrl'] ?? '',
       groupCategory: map['groupCategory'] ?? 'General',
       resolution: map['resolution'] ?? '1080p FHD',
+      contentType: map['contentType'] ?? 'live',
+      year: map['year'] ?? '',
+      rating: map['rating'] ?? 'HD',
       isValid: map['isValid'] ?? true,
       isFavorite: map['isFavorite'] ?? false,
     );

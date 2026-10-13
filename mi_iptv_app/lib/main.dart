@@ -9,6 +9,7 @@ import 'models/channel_model.dart';
 import 'services/m3u_sanitizer_service.dart';
 import 'services/epg_service.dart';
 import 'widgets/alexa_voice_sheet.dart';
+import 'widgets/vod_grid_view.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,17 +49,15 @@ class _HomeScreenState extends State<HomeScreen> {
   List<ChannelModel> _channels = [];
   int _selectedChannelIndex = 0;
   String _selectedCategory = 'Todos';
-  String _selectedSection = 'En Vivo';
+  String _selectedSection = 'En Vivo'; // 'En Vivo', 'Películas', 'Series'
   
   VideoPlayerController? _videoPlayerController;
   bool _isVideoLoading = false;
   bool _isFullScreenMode = false;
   bool _showOsd = true;
 
-  // Lista de alarmas y recordatorios activos
   final Set<String> _activeAlarms = {};
 
-  // Buscador por texto con Lupita
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -110,7 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() => _isVideoLoading = false);
       }
     } catch (e) {
-      debugPrint('Error reproduciendo stream HLS: $e');
+      debugPrint('Error reproduciendo video: $e');
       if (mounted) {
         setState(() => _isVideoLoading = false);
       }
@@ -188,7 +187,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // MODAL DE GUÍA EPG Y GESTOR DE ALARMAS CON TOGGLE ON/OFF
   void _openEpgScheduleModal(ChannelModel channel) {
     final schedule = EpgService.getUpcomingPrograms(channel.name, channel.groupCategory);
 
@@ -330,11 +328,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ? const Color(0xFFFFB703)
                                       : Colors.white38,
                             ),
-                            tooltip: isNow
-                                ? 'En emisión ahora'
-                                : hasAlarm
-                                    ? 'Desactivar Alarma'
-                                    : 'Activar Alarma',
+                            tooltip: isNow ? 'En emisión' : hasAlarm ? 'Desactivar Alarma' : 'Activar Alarma',
                             onPressed: () async {
                               if (!isNow) {
                                 final prefs = await SharedPreferences.getInstance();
@@ -459,7 +453,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('¡${parsed.length} canales sanitizados con éxito!'),
+              content: Text('¡${parsed.length} elementos sanitizados con éxito!'),
               backgroundColor: Colors.green,
             ),
           );
@@ -474,13 +468,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // Filtros por sección VOD
+  List<ChannelModel> get _liveChannels => _channels.where((c) => c.isLive).toList();
+  List<ChannelModel> get _movies => _channels.where((c) => c.isMovie).toList();
+  List<ChannelModel> get _series => _channels.where((c) => c.isSeries).toList();
+
   List<String> get _categories {
-    final groups = _channels.map((c) => c.groupCategory).toSet().toList();
-    return ['Todos', ...groups];
+    final list = _liveChannels.map((c) => c.groupCategory).toSet().toList();
+    return ['Todos', ...list];
   }
 
   List<ChannelModel> get _filteredChannels {
-    return _channels.where((c) {
+    return _liveChannels.where((c) {
       final matchesCategory = _selectedCategory == 'Todos' || c.groupCategory == _selectedCategory;
       final matchesSearch = _searchQuery.isEmpty ||
           c.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
@@ -535,13 +534,41 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         children: [
           _buildTopGlassBar(),
-          _buildVideoPlayerSection(activeChannel),
           _buildSectionTabs(),
-          _buildLiveEpgCard(activeChannel),
-          _buildCategoryChips(),
-          Expanded(
-            child: _buildChannelListView(),
-          ),
+
+          // Si está en 'En Vivo', muestra el reproductor y la lista de TV
+          if (_selectedSection == 'En Vivo') ...[
+            _buildVideoPlayerSection(activeChannel),
+            _buildLiveEpgCard(activeChannel),
+            _buildCategoryChips(),
+            Expanded(child: _buildChannelListView()),
+          ]
+          // Si está en 'Películas', muestra la cuadrícula estilo Netflix
+          else if (_selectedSection == 'Películas') ...[
+            Expanded(
+              child: VodGridView(
+                items: _movies,
+                contentType: 'movie',
+                onPlayItem: (item) {
+                  _changeChannel(item);
+                  setState(() => _isFullScreenMode = true);
+                },
+              ),
+            ),
+          ]
+          // Si está en 'Series', muestra la cuadrícula de series
+          else ...[
+            Expanded(
+              child: VodGridView(
+                items: _series,
+                contentType: 'series',
+                onPlayItem: (item) {
+                  _changeChannel(item);
+                  setState(() => _isFullScreenMode = true);
+                },
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -577,51 +604,73 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
-              _buildSideMenuItem(Icons.search, 'Buscar Canal', () {
-                setState(() => _isSearching = !_isSearching);
-              }),
+              _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
+              _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
+              _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
+              const Divider(color: Colors.white12),
+              _buildSideMenuItem(Icons.search, 'Buscar', () => setState(() => _isSearching = !_isSearching)),
               _buildSideMenuItem(Icons.mic, 'Asistente IA', _startVoiceSearch),
-              _buildSideMenuItem(Icons.list_alt, 'Guía EPG', () {
-                if (activeChannel != null) _openEpgScheduleModal(activeChannel);
-              }),
               _buildSideMenuItem(Icons.playlist_add, 'Listas M3U', _openM3uDialog),
-              _buildSideMenuItem(Icons.fullscreen, 'Pantalla Completa', () {
-                setState(() => _isFullScreenMode = true);
-              }),
             ],
           ),
         ),
-        Expanded(
-          flex: 3,
-          child: Container(
-            margin: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0x3300E5FF)),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: _buildVideoPlayerSection(activeChannel),
-            ),
-          ),
-        ),
-        Expanded(
-          flex: 2,
-          child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0F172A).withOpacity(0.7),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              children: [
-                _buildSearchInputHeader(),
-                Expanded(child: _buildChannelListView()),
-              ],
+
+        // Contenido dinámico según la sección seleccionada
+        if (_selectedSection == 'En Vivo') ...[
+          Expanded(
+            flex: 3,
+            child: Container(
+              margin: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0x3300E5FF)),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: _buildVideoPlayerSection(activeChannel),
+              ),
             ),
           ),
-        ),
+          Expanded(
+            flex: 2,
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A).withOpacity(0.7),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  _buildSearchInputHeader(),
+                  Expanded(child: _buildChannelListView()),
+                ],
+              ),
+            ),
+          ),
+        ] else if (_selectedSection == 'Películas') ...[
+          Expanded(
+            child: VodGridView(
+              items: _movies,
+              contentType: 'movie',
+              onPlayItem: (item) {
+                _changeChannel(item);
+                setState(() => _isFullScreenMode = true);
+              },
+            ),
+          ),
+        ] else ...[
+          Expanded(
+            child: VodGridView(
+              items: _series,
+              contentType: 'series',
+              onPlayItem: (item) {
+                _changeChannel(item);
+                setState(() => _isFullScreenMode = true);
+              },
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -657,7 +706,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         borderRadius: BorderRadius.circular(4),
                         border: Border.all(color: Colors.red),
                       ),
-                      child: const Text('LIVE', style: TextStyle(color: Colors.red, fontSize: 9, fontWeight: FontWeight.bold)),
+                      child: Text(
+                        _selectedSection == 'En Vivo' ? 'LIVE' : _selectedSection.toUpperCase(),
+                        style: const TextStyle(color: Colors.red, fontSize: 9, fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ],
                 ),
@@ -665,7 +717,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.search, color: Color(0xFF00E5FF), size: 22),
-                      tooltip: 'Buscar canal',
+                      tooltip: 'Buscar',
                       onPressed: () => setState(() => _isSearching = true),
                     ),
                     IconButton(
@@ -674,12 +726,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       onPressed: _openM3uDialog,
                     ),
                     IconButton(
-                      icon: const Icon(
-                        Icons.mic,
-                        color: Color(0xFF00E5FF),
-                        size: 24,
-                      ),
-                      tooltip: 'Asistente de Voz Inteligente',
+                      icon: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 24),
+                      tooltip: 'Asistente de Voz',
                       onPressed: _startVoiceSearch,
                     ),
                   ],
@@ -700,7 +748,7 @@ class _HomeScreenState extends State<HomeScreen> {
             autofocus: true,
             style: const TextStyle(color: Colors.white, fontSize: 14),
             decoration: const InputDecoration(
-              hintText: 'Buscar por canal o número...',
+              hintText: 'Buscar por nombre o número...',
               hintStyle: TextStyle(color: Colors.white38),
               border: InputBorder.none,
               isDense: true,
