@@ -4,26 +4,32 @@ import '../services/voice_assistant_service.dart';
 class AlexaVoiceSheet extends StatefulWidget {
   final List<dynamic> channels;
   final dynamic currentChannel;
+  final String currentSection; // 'LIVE', 'PELICULAS', 'SERIES'
   final Function(dynamic channel) onChannelSelected;
   final VoidCallback? onOpenEpg;
   final Function(String section)? onNavigateSection;
+  final Function(String query, String section)? onSearch;
 
   const AlexaVoiceSheet({
     super.key,
     required this.channels,
-    required this.currentChannel,
+    this.currentChannel,
+    this.currentSection = 'LIVE',
     required this.onChannelSelected,
     this.onOpenEpg,
     this.onNavigateSection,
+    this.onSearch,
   });
 
   static void show(
     BuildContext context, {
     required List<dynamic> channels,
     dynamic currentChannel,
+    String currentSection = 'LIVE',
     required Function(dynamic channel) onChannelSelected,
     VoidCallback? onOpenEpg,
     Function(String section)? onNavigateSection,
+    Function(String query, String section)? onSearch,
   }) {
     showModalBottomSheet(
       context: context,
@@ -32,9 +38,11 @@ class AlexaVoiceSheet extends StatefulWidget {
       builder: (ctx) => AlexaVoiceSheet(
         channels: channels,
         currentChannel: currentChannel,
+        currentSection: currentSection,
         onChannelSelected: onChannelSelected,
         onOpenEpg: onOpenEpg,
         onNavigateSection: onNavigateSection,
+        onSearch: onSearch,
       ),
     );
   }
@@ -45,7 +53,7 @@ class AlexaVoiceSheet extends StatefulWidget {
 
 class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProviderStateMixin {
   final VoiceAssistantService _voiceService = VoiceAssistantService();
-  String _recognizedText = "Escuchando... Di: 'Buscar partido', 'ESPN', 'Películas'...";
+  String _recognizedText = "Escuchando... Di lo que deseas ver";
   String _statusMessage = "ASISTENTE INTELIGENTE AMEYCAR";
   bool _isProcessing = false;
   late AnimationController _animController;
@@ -58,6 +66,11 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
 
+    // Saludo personalizado si ya se conoce el nombre del usuario
+    if (_voiceService.userName.isNotEmpty) {
+      _statusMessage = "HOLA ${_voiceService.userName.toUpperCase()} • AMEYCAR AI";
+    }
+
     _startListening();
   }
 
@@ -66,7 +79,9 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
     setState(() {
       _recognizedText = "Escuchando tu voz... Habla ahora";
-      _statusMessage = "MICRÓFONO ACTIVO";
+      _statusMessage = _voiceService.userName.isNotEmpty
+          ? "ESCUCHANDO A ${_voiceService.userName.toUpperCase()}"
+          : "MICRÓFONO ACTIVO";
       _isProcessing = false;
     });
 
@@ -94,13 +109,15 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
     }
   }
 
-  Future<void> _handleCommandExecution() async {
+  Future<void> _handleCommandExecution([String? explicitQuery]) async {
     if (_isProcessing) return;
 
+    final queryToProcess = explicitQuery ?? _recognizedText;
+
     // Validación de texto reconocido
-    if (_recognizedText.isEmpty ||
-        _recognizedText.startsWith("Escuchando") ||
-        _recognizedText == "...") {
+    if (queryToProcess.isEmpty ||
+        queryToProcess.startsWith("Escuchando") ||
+        queryToProcess == "...") {
       setState(() {
         _statusMessage = "NO SE DETECTÓ NINGÚN COMANDO";
       });
@@ -112,19 +129,20 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       _statusMessage = "PROCESANDO CON INTELIGENCIA ARTIFICIAL...";
     });
 
-    // 1. Liberar inmediatamente el hardware de captura de audio
+    // 1. Liberar inmediatamente el micrófono
     try {
       _voiceService.stopListening();
     } catch (_) {}
 
-    // 2. Procesar la consulta con el servicio
+    // 2. Procesar con el cerebro de IA contextual
     final result = _voiceService.processVoiceCommand(
-      query: _recognizedText,
+      query: queryToProcess,
       channels: widget.channels,
       currentChannel: widget.currentChannel,
+      currentSection: widget.currentSection,
     );
 
-    // 3. Responder al usuario por voz si tiene respuesta
+    // 3. Responder por voz con el sintetizador natural
     if (result.spokenResponse.isNotEmpty) {
       try {
         await _voiceService.speak(result.spokenResponse);
@@ -133,25 +151,21 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
     if (!mounted) return;
 
-    // 4. Ejecutar la acción liberando la vista para evitar la pantalla negra en el video
+    // 4. Ejecución de la acción según la intención detectada
     if (result.actionType == 'CHANNEL' && result.targetChannel != null) {
       final channelToPlay = result.targetChannel;
       setState(() {
         _statusMessage = "SINTONIZANDO CANAL...";
       });
 
-      // Breve pausa para asegurar que el síntesis de voz terminó y el audio está libre
       await Future.delayed(const Duration(milliseconds: 350));
       if (!mounted) return;
 
-      // Cerrar primero la ventana emergente para liberar el contexto gráfico
       Navigator.pop(context);
-
-      // Sintonizar el canal limpiamente
       widget.onChannelSelected(channelToPlay);
     } else if (result.actionType == 'SECTION' && result.targetSection.isNotEmpty) {
       setState(() {
-        _statusMessage = "ABRIENDO SECCIÓN...";
+        _statusMessage = "ABRIENDO ${result.targetSection}...";
       });
       await Future.delayed(const Duration(milliseconds: 350));
       if (!mounted) return;
@@ -167,13 +181,28 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
       widget.onOpenEpg?.call();
       Navigator.pop(context);
+    } else if (result.actionType == 'SEARCH') {
+      setState(() {
+        _statusMessage = "BUSCANDO CONTENIDO...";
+      });
+      await Future.delayed(const Duration(milliseconds: 350));
+      if (!mounted) return;
+
+      if (widget.onSearch != null) {
+        widget.onSearch!(result.searchQuery ?? queryToProcess, widget.currentSection);
+      } else {
+        widget.onNavigateSection?.call(result.targetSection);
+      }
+      Navigator.pop(context);
     } else {
-      // Orden no reconocida o de consulta general
+      // Mensaje conversacional o nombre guardado
       setState(() {
         _isProcessing = false;
-        _statusMessage = "LISTO";
+        _statusMessage = _voiceService.userName.isNotEmpty
+            ? "¡HOLA ${_voiceService.userName.toUpperCase()}!"
+            : "LISTO";
       });
-      await Future.delayed(const Duration(milliseconds: 1200));
+      await Future.delayed(const Duration(milliseconds: 1400));
       if (mounted) {
         Navigator.pop(context);
       }
@@ -191,6 +220,9 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
+    // Obtenemos sugerencias dinámicas adaptadas a la sección actual
+    final suggestions = _voiceService.getSuggestionsForContext(widget.currentSection);
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 26),
       decoration: BoxDecoration(
@@ -299,19 +331,44 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           ),
           const SizedBox(height: 16),
 
-          // Sugerencias rápidas (chips)
+          // Indicador de sección activa para sugerencias inteligentes
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                widget.currentSection.toUpperCase().contains('PELICULA')
+                    ? Icons.movie_outlined
+                    : widget.currentSection.toUpperCase().contains('SERIE')
+                        ? Icons.tv_outlined
+                        : Icons.live_tv_outlined,
+                color: const Color(0xFF00E5FF),
+                size: 14,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                "Sugerencias para ${widget.currentSection}:",
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // Sugerencias rápidas (chips) dinámicas y contextuales
           Wrap(
             spacing: 8,
             runSpacing: 8,
             alignment: WrapAlignment.center,
-            children: [
-              _buildChip("⚽ Buscar partido"),
-              _buildChip("📺 ESPN"),
-              _buildChip("🎬 Ver Películas"),
-              _buildChip("📅 Abrir Guía EPG"),
-            ],
+            children: suggestions.map((item) {
+              final label = item['label'] ?? '';
+              final query = item['query'] ?? label;
+              return _buildChip(label, query);
+            }).toList(),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
 
           // Botones inferiores de Cancelar / Ejecutar
           Row(
@@ -334,7 +391,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 ),
-                onPressed: _isProcessing ? null : _handleCommandExecution,
+                onPressed: _isProcessing ? null : () => _handleCommandExecution(),
                 icon: const Icon(Icons.check, size: 20),
                 label: const Text("Ejecutar", style: TextStyle(fontWeight: FontWeight.bold)),
               ),
@@ -345,25 +402,30 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
     );
   }
 
-  Widget _buildChip(String text) {
+  Widget _buildChip(String label, String query) {
     return InkWell(
+      borderRadius: BorderRadius.circular(20),
       onTap: () {
         if (_isProcessing) return;
         setState(() {
-          _recognizedText = text.replaceAll(RegExp(r'[^\w\s]'), '').trim();
+          _recognizedText = query;
         });
-        _handleCommandExecution();
+        _handleCommandExecution(query);
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: const Color(0xFF1E293B),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.3)),
+          border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.35)),
         ),
         child: Text(
-          text,
-          style: const TextStyle(color: Colors.white70, fontSize: 12),
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
         ),
       ),
     );
