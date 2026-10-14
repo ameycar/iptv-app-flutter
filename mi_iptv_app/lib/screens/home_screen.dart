@@ -19,6 +19,8 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (context) => const AddPlaylistScreen()),
     );
 
+    if (!mounted) return;
+
     if (result != null && result is List<PlaylistItem>) {
       setState(() {
         _channels = result;
@@ -36,7 +38,14 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF0F0F1A),
       appBar: AppBar(
-        title: const Text('AMEYCAR TV', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.deepPurpleAccent, letterSpacing: 1.2)),
+        title: const Text(
+          'AMEYCAR TV',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Colors.deepPurpleAccent,
+            letterSpacing: 1.2,
+          ),
+        ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
@@ -53,15 +62,30 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   const Icon(Icons.tv_off_rounded, size: 80, color: Colors.white24),
                   const SizedBox(height: 16),
-                  const Text('No hay canales cargados', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Text(
+                    'No hay canales cargados',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const SizedBox(height: 8),
-                  const Text('Agrega una lista M3U para que la IA la procese.', style: TextStyle(color: Colors.grey)),
+                  const Text(
+                    'Agrega una lista M3U para que la IA la procese.',
+                    style: TextStyle(color: Colors.grey),
+                  ),
                   const SizedBox(height: 24),
                   ElevatedButton.icon(
                     onPressed: _navigateToAddPlaylist,
                     icon: const Icon(Icons.add, color: Colors.white),
-                    label: const Text('Agregar Lista M3U', style: TextStyle(color: Colors.white)),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurpleAccent),
+                    label: const Text(
+                      'Agregar Lista M3U',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.deepPurpleAccent,
+                    ),
                   )
                 ],
               ),
@@ -73,10 +97,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Padding(
-                      padding: const EdgeInsets.vertical: 8.0,
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
                       child: Text(
                         entry.key,
-                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                     SizedBox(

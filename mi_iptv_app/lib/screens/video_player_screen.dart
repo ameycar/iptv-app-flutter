@@ -33,14 +33,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       isLive: widget.item.isLive,
       aspectRatio: _videoPlayerController.value.aspectRatio,
       allowFullScreen: true,
-      colors: ChewieProgressColors(
+      materialProgressColors: ChewieProgressColors(
         playedColor: Colors.deepPurpleAccent,
         handleColor: Colors.deepPurpleAccent,
         backgroundColor: Colors.grey,
       ),
     );
 
-    setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override

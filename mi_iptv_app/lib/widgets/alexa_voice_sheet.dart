@@ -62,32 +62,47 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
   }
 
   void _startListening() {
+    if (_isProcessing) return;
+
     setState(() {
       _recognizedText = "Escuchando tu voz... Habla ahora";
       _statusMessage = "MICRÓFONO ACTIVO";
       _isProcessing = false;
     });
 
-    _voiceService.startListening(
-      onWordsRecognized: (words) {
-        if (mounted) {
-          setState(() {
-            _recognizedText = words;
-          });
-        }
-      },
-      onListeningComplete: () {
-        if (mounted) {
-          _handleCommandExecution();
-        }
-      },
-    );
+    try {
+      _voiceService.startListening(
+        onWordsRecognized: (words) {
+          if (mounted && !_isProcessing) {
+            setState(() {
+              _recognizedText = words;
+            });
+          }
+        },
+        onListeningComplete: () {
+          if (mounted && !_isProcessing) {
+            _handleCommandExecution();
+          }
+        },
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _statusMessage = "TOCA EL MICRÓFONO PARA REINTENTAR";
+        });
+      }
+    }
   }
 
   Future<void> _handleCommandExecution() async {
-    if (_recognizedText.isEmpty || _recognizedText.startsWith("Escuchando")) {
+    if (_isProcessing) return;
+
+    // Validación de texto reconocido
+    if (_recognizedText.isEmpty ||
+        _recognizedText.startsWith("Escuchando") ||
+        _recognizedText == "...") {
       setState(() {
-        _statusMessage = "No se detectó ningún comando";
+        _statusMessage = "NO SE DETECTÓ NINGÚN COMANDO";
       });
       return;
     }
@@ -97,40 +112,80 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       _statusMessage = "PROCESANDO CON INTELIGENCIA ARTIFICIAL...";
     });
 
+    // 1. Liberar inmediatamente el hardware de captura de audio
+    try {
+      _voiceService.stopListening();
+    } catch (_) {}
+
+    // 2. Procesar la consulta con el servicio
     final result = _voiceService.processVoiceCommand(
       query: _recognizedText,
       channels: widget.channels,
       currentChannel: widget.currentChannel,
     );
 
-    await _voiceService.speak(result.spokenResponse);
+    // 3. Responder al usuario por voz si tiene respuesta
+    if (result.spokenResponse.isNotEmpty) {
+      try {
+        await _voiceService.speak(result.spokenResponse);
+      } catch (_) {}
+    }
 
     if (!mounted) return;
 
-    if (result.actionType == 'SECTION' && result.targetSection.isNotEmpty) {
+    // 4. Ejecutar la acción liberando la vista para evitar la pantalla negra en el video
+    if (result.actionType == 'CHANNEL' && result.targetChannel != null) {
+      final channelToPlay = result.targetChannel;
+      setState(() {
+        _statusMessage = "SINTONIZANDO CANAL...";
+      });
+
+      // Breve pausa para asegurar que el síntesis de voz terminó y el audio está libre
+      await Future.delayed(const Duration(milliseconds: 350));
+      if (!mounted) return;
+
+      // Cerrar primero la ventana emergente para liberar el contexto gráfico
+      Navigator.pop(context);
+
+      // Sintonizar el canal limpiamente
+      widget.onChannelSelected(channelToPlay);
+    } else if (result.actionType == 'SECTION' && result.targetSection.isNotEmpty) {
+      setState(() {
+        _statusMessage = "ABRIENDO SECCIÓN...";
+      });
+      await Future.delayed(const Duration(milliseconds: 350));
+      if (!mounted) return;
+
       widget.onNavigateSection?.call(result.targetSection);
-      Future.delayed(const Duration(milliseconds: 1200), () {
-        if (mounted) Navigator.pop(context);
-      });
-    } else if (result.actionType == 'CHANNEL' && result.targetChannel != null) {
-      widget.onChannelSelected(result.targetChannel);
-      Future.delayed(const Duration(milliseconds: 1400), () {
-        if (mounted) Navigator.pop(context);
-      });
+      Navigator.pop(context);
     } else if (result.actionType == 'EPG') {
+      setState(() {
+        _statusMessage = "ABRIENDO GUÍA EPG...";
+      });
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (!mounted) return;
+
       widget.onOpenEpg?.call();
       Navigator.pop(context);
     } else {
-      Future.delayed(const Duration(milliseconds: 1600), () {
-        if (mounted) Navigator.pop(context);
+      // Orden no reconocida o de consulta general
+      setState(() {
+        _isProcessing = false;
+        _statusMessage = "LISTO";
       });
+      await Future.delayed(const Duration(milliseconds: 1200));
+      if (mounted) {
+        Navigator.pop(context);
+      }
     }
   }
 
   @override
   void dispose() {
     _animController.dispose();
-    _voiceService.stopListening();
+    try {
+      _voiceService.stopListening();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -153,6 +208,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Barra superior de arrastre
           Container(
             width: 44,
             height: 4,
@@ -162,44 +218,56 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             ),
           ),
           const SizedBox(height: 18),
-          AnimatedBuilder(
-            animation: _animController,
-            builder: (context, child) {
-              double scale = 1.0 + (_animController.value * 0.18);
-              return Transform.scale(
-                scale: _isProcessing ? 1.0 : scale,
-                child: Container(
-                  width: 76,
-                  height: 76,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const RadialGradient(
-                      colors: [
-                        Color(0xFF00E5FF),
-                        Color(0xFF0072FF),
-                        Color(0xFF7B2CBF),
+
+          // Botón / Animación de micrófono central interactivo
+          GestureDetector(
+            onTap: () {
+              if (!_isProcessing) {
+                _startListening();
+              }
+            },
+            child: AnimatedBuilder(
+              animation: _animController,
+              builder: (context, child) {
+                double scale = 1.0 + (_animController.value * 0.18);
+                return Transform.scale(
+                  scale: _isProcessing ? 1.0 : scale,
+                  child: Container(
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: const RadialGradient(
+                        colors: [
+                          Color(0xFF00E5FF),
+                          Color(0xFF0072FF),
+                          Color(0xFF7B2CBF),
+                        ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF00E5FF).withOpacity(0.6),
+                          blurRadius: 20 * scale,
+                          spreadRadius: 3,
+                        )
                       ],
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF00E5FF).withOpacity(0.6),
-                        blurRadius: 20 * scale,
-                        spreadRadius: 3,
-                      )
-                    ],
+                    child: Icon(
+                      _isProcessing ? Icons.auto_awesome : Icons.mic,
+                      color: Colors.black,
+                      size: 36,
+                    ),
                   ),
-                  child: Icon(
-                    _isProcessing ? Icons.auto_awesome : Icons.mic,
-                    color: Colors.black,
-                    size: 36,
-                  ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
           const SizedBox(height: 18),
+
+          // Estado del asistente
           Text(
             _statusMessage,
+            textAlign: TextAlign.center,
             style: const TextStyle(
               color: Color(0xFF00E5FF),
               fontWeight: FontWeight.w900,
@@ -208,6 +276,8 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             ),
           ),
           const SizedBox(height: 12),
+
+          // Cuadro de texto reconocido
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
@@ -228,6 +298,8 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             ),
           ),
           const SizedBox(height: 16),
+
+          // Sugerencias rápidas (chips)
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -240,11 +312,18 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             ],
           ),
           const SizedBox(height: 16),
+
+          // Botones inferiores de Cancelar / Ejecutar
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               TextButton.icon(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () {
+                  try {
+                    _voiceService.stopListening();
+                  } catch (_) {}
+                  Navigator.pop(context);
+                },
                 icon: const Icon(Icons.close, color: Colors.white60),
                 label: const Text("Cancelar", style: TextStyle(color: Colors.white60)),
               ),
@@ -255,7 +334,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 ),
-                onPressed: _handleCommandExecution,
+                onPressed: _isProcessing ? null : _handleCommandExecution,
                 icon: const Icon(Icons.check, size: 20),
                 label: const Text("Ejecutar", style: TextStyle(fontWeight: FontWeight.bold)),
               ),
@@ -269,6 +348,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
   Widget _buildChip(String text) {
     return InkWell(
       onTap: () {
+        if (_isProcessing) return;
         setState(() {
           _recognizedText = text.replaceAll(RegExp(r'[^\w\s]'), '').trim();
         });

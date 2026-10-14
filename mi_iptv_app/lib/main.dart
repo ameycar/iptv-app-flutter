@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -5,14 +6,101 @@ import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
+
 import 'models/channel_model.dart';
 import 'services/m3u_sanitizer_service.dart';
 import 'services/epg_service.dart';
 import 'widgets/alexa_voice_sheet.dart';
 import 'widgets/vod_grid_view.dart';
 
-void main() {
+// SERVICIO NATIVO PARA ALARMAS Y RECORDATORIOS CON LA APP CERRADA
+class NotificationService {
+  static final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
+
+  static Future<void> initialize() async {
+    try {
+      tz.initializeTimeZones();
+    } catch (e) {
+      debugPrint('Error inicializando timezones: $e');
+    }
+
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const InitializationSettings initSettings =
+        InitializationSettings(android: androidSettings);
+
+    try {
+      await _notificationsPlugin.initialize(initSettings);
+
+      final androidImpl = _notificationsPlugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      if (androidImpl != null) {
+        await androidImpl.requestNotificationsPermission();
+        await androidImpl.requestExactAlarmsPermission();
+      }
+    } catch (e) {
+      debugPrint('Error inicializando FlutterLocalNotifications: $e');
+    }
+  }
+
+  static Future<void> scheduleAlarm({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime scheduledDate,
+  }) async {
+    try {
+      final difference = scheduledDate.difference(DateTime.now());
+      final tz.TZDateTime tzScheduledDate =
+          tz.TZDateTime.now(tz.local).add(difference);
+
+      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+        'epg_alarms_channel',
+        'Alarmas de Programación TV',
+        channelDescription: 'Avisos de inicio de programas en AmeycarTV',
+        importance: Importance.max,
+        priority: Priority.high,
+        playSound: true,
+        enableVibration: true,
+        fullScreenIntent: true,
+        icon: '@mipmap/ic_launcher',
+      );
+
+      const NotificationDetails details =
+          NotificationDetails(android: androidDetails);
+
+      await _notificationsPlugin.zonedSchedule(
+        id,
+        title,
+        body,
+        tzScheduledDate,
+        details,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (e) {
+      debugPrint('Error programando alarma local: $e');
+    }
+  }
+
+  static Future<void> cancelAlarm(int id) async {
+    try {
+      await _notificationsPlugin.cancel(id);
+    } catch (e) {
+      debugPrint('Error cancelando alarma: $e');
+    }
+  }
+}
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.initialize();
   runApp(const AmeycarTVApp());
 }
 
@@ -53,6 +141,7 @@ class _HomeScreenState extends State<HomeScreen> {
   
   VideoPlayerController? _videoPlayerController;
   bool _isVideoLoading = false;
+  bool _hasVideoError = false;
   bool _isFullScreenMode = false;
   bool _showOsd = true;
   double _currentVolume = 1.0;
@@ -63,10 +152,33 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
+  Timer? _clockTimer;
+  String _currentTime = '';
+
   @override
   void initState() {
     super.initState();
+    _startClockTimer();
     _loadSavedChannels();
+  }
+
+  void _startClockTimer() {
+    _updateClock();
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        _updateClock();
+      }
+    });
+  }
+
+  void _updateClock() {
+    final now = DateTime.now();
+    final hour = now.hour.toString().padLeft(2, '0');
+    final minute = now.minute.toString().padLeft(2, '0');
+    final second = now.second.toString().padLeft(2, '0');
+    setState(() {
+      _currentTime = '$hour:$minute:$second';
+    });
   }
 
   void _loadSavedChannels() async {
@@ -90,30 +202,65 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {});
   }
 
-  void _initializeVideo(String url) async {
+  void _initializeVideo(String rawUrl) async {
     if (!mounted) return;
-    setState(() => _isVideoLoading = true);
+    final url = rawUrl.trim();
+    if (url.isEmpty) {
+      setState(() {
+        _isVideoLoading = false;
+        _hasVideoError = true;
+      });
+      return;
+    }
+
+    setState(() {
+      _isVideoLoading = true;
+      _hasVideoError = false;
+    });
 
     final oldController = _videoPlayerController;
-    _videoPlayerController = VideoPlayerController.networkUrl(
-      Uri.parse(url),
-      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: false),
-    );
+    _videoPlayerController = null;
 
-    oldController?.dispose();
+    if (oldController != null) {
+      try {
+        await oldController.pause();
+      } catch (_) {}
+      await oldController.dispose();
+    }
 
     try {
-      await _videoPlayerController!.initialize();
+      Uri? targetUri = Uri.tryParse(url);
+      if (targetUri == null || !targetUri.hasScheme) {
+        targetUri = Uri.parse(Uri.encodeFull(url));
+      }
+
+      // mixWithOthers: true previene que el audio del asistente bloquee o deje en negro el reproductor
+      final controller = VideoPlayerController.networkUrl(
+        targetUri,
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      );
+
+      await controller.initialize();
+
       if (mounted) {
-        _videoPlayerController!.setVolume(_currentVolume);
-        _videoPlayerController!.play();
-        _videoPlayerController!.setLooping(true);
-        setState(() => _isVideoLoading = false);
+        _videoPlayerController = controller;
+        await _videoPlayerController!.setVolume(_currentVolume);
+        await _videoPlayerController!.play();
+        await _videoPlayerController!.setLooping(true);
+        setState(() {
+          _isVideoLoading = false;
+          _hasVideoError = false;
+        });
+      } else {
+        await controller.dispose();
       }
     } catch (e) {
-      debugPrint('Error reproduciendo video: $e');
+      debugPrint('Error reproduciendo stream ($url): $e');
       if (mounted) {
-        setState(() => _isVideoLoading = false);
+        setState(() {
+          _isVideoLoading = false;
+          _hasVideoError = true;
+        });
       }
     }
   }
@@ -121,7 +268,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void _nextChannel() {
     final currentList = _filteredChannels;
     if (currentList.isEmpty) return;
-    final currentCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+    final currentCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+        ? _channels[_selectedChannelIndex]
+        : null;
     if (currentCh == null) return;
     int curIdxInFiltered = currentList.indexOf(currentCh);
     int nextIdx = (curIdxInFiltered + 1) % currentList.length;
@@ -131,7 +280,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void _previousChannel() {
     final currentList = _filteredChannels;
     if (currentList.isEmpty) return;
-    final currentCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+    final currentCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+        ? _channels[_selectedChannelIndex]
+        : null;
     if (currentCh == null) return;
     int curIdxInFiltered = currentList.indexOf(currentCh);
     int prevIdx = (curIdxInFiltered - 1 < 0) ? currentList.length - 1 : curIdxInFiltered - 1;
@@ -139,19 +290,29 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _changeChannel(ChannelModel ch) async {
-    final realIndex = _channels.indexOf(ch);
-    if (realIndex != -1) {
-      setState(() {
-        _selectedChannelIndex = realIndex;
-        _showOsd = true;
-      });
-
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('last_played_channel_index', realIndex);
-
-      _initializeVideo(ch.streamUrl);
-      _triggerOsdTimer();
+    int realIndex = _channels.indexOf(ch);
+    if (realIndex == -1) {
+      realIndex = _channels.indexWhere((c) =>
+        c.streamUrl.trim() == ch.streamUrl.trim() ||
+        c.name.trim().toLowerCase() == ch.name.trim().toLowerCase()
+      );
     }
+    if (realIndex == -1) {
+      _channels.add(ch);
+      realIndex = _channels.length - 1;
+    }
+
+    setState(() {
+      _selectedChannelIndex = realIndex;
+      _showOsd = true;
+      _hasVideoError = false;
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_played_channel_index', realIndex);
+
+    _initializeVideo(ch.streamUrl);
+    _triggerOsdTimer();
   }
 
   void _triggerOsdTimer() {
@@ -186,21 +347,35 @@ class _HomeScreenState extends State<HomeScreen> {
     AlexaVoiceSheet.show(
       context,
       channels: searchPool,
-      currentChannel: _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null,
+      currentChannel: _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+          ? _channels[_selectedChannelIndex]
+          : null,
       onChannelSelected: (item) {
         if (item is ChannelModel) {
-          // Si estaba en películas o series y pide un canal de TV en vivo, cambiar la pestaña a En Vivo
           if (item.isLive && _selectedSection != 'En Vivo') {
             setState(() => _selectedSection = 'En Vivo');
+          } else if (item.isMovie && _selectedSection != 'Películas') {
+            setState(() => _selectedSection = 'Películas');
+          } else if (item.isSeries && _selectedSection != 'Series') {
+            setState(() => _selectedSection = 'Series');
           }
-          _changeChannel(item);
-          if (item.isMovie || item.isSeries) {
-            setState(() => _isFullScreenMode = true);
-          }
+          
+          // Desfase de 300ms para permitir que el micrófono y el asistente
+          // liberen completamente el foco de audio en Android y no quede en negro
+          Future.delayed(const Duration(milliseconds: 300), () {
+            if (mounted) {
+              _changeChannel(item);
+              if (item.isMovie || item.isSeries) {
+                setState(() => _isFullScreenMode = true);
+              }
+            }
+          });
         }
       },
       onOpenEpg: () {
-        final ch = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+        final ch = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+            ? _channels[_selectedChannelIndex]
+            : null;
         if (ch != null) _openEpgScheduleModal(ch);
       },
       onNavigateSection: (section) {
@@ -230,6 +405,29 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: const Color(0xFF7B2CBF),
       ),
     );
+  }
+
+  DateTime? _parseProgramStartTime(String timeStr) {
+    try {
+      final clean = timeStr.trim();
+      final parts = clean.split(':');
+      if (parts.length >= 2) {
+        int hour = int.parse(parts[0].trim());
+        int minute = int.parse(parts[1].trim().split(' ')[0]);
+        if (clean.toLowerCase().contains('pm') && hour < 12) hour += 12;
+        if (clean.toLowerCase().contains('am') && hour == 12) hour = 0;
+
+        final now = DateTime.now();
+        DateTime scheduled = DateTime(now.year, now.month, now.day, hour, minute);
+        if (scheduled.isBefore(now.subtract(const Duration(minutes: 1)))) {
+          scheduled = scheduled.add(const Duration(days: 1));
+        }
+        return scheduled;
+      }
+    } catch (e) {
+      debugPrint('Error parseando hora del programa: $e');
+    }
+    return null;
   }
 
   void _openEpgScheduleModal(ChannelModel channel) {
@@ -265,9 +463,18 @@ class _HomeScreenState extends State<HomeScreen> {
                             channel.name,
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
                           ),
-                          const Text(
-                            'Guía de Programación en Tiempo Real',
-                            style: TextStyle(color: Color(0xFFC77DFF), fontSize: 11),
+                          Row(
+                            children: [
+                              const Text(
+                                'Guía EPG en Tiempo Real',
+                                style: TextStyle(color: Color(0xFFC77DFF), fontSize: 11),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '🕒 $_currentTime',
+                                style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -377,24 +584,54 @@ class _HomeScreenState extends State<HomeScreen> {
                             onPressed: () async {
                               if (!isNow) {
                                 final prefs = await SharedPreferences.getInstance();
-                                setState(() {
-                                  if (hasAlarm) {
-                                    _activeAlarms.remove(alarmId);
-                                  } else {
-                                    _activeAlarms.add(alarmId);
-                                  }
-                                });
-                                setModalState(() {});
-                                await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
+                                final startTimeStr = prog.timeFormatted.split(' - ')[0];
+                                final targetTime = _parseProgramStartTime(startTimeStr);
+                                final int notificationId = alarmId.hashCode.abs() % 2147483647;
 
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(hasAlarm
-                                        ? '🔕 Alarma cancelada para "${prog.title}"'
-                                        : '⏰ ¡Alarma activada para "${prog.title}" a las ${prog.timeFormatted.split(' - ')[0]}!'),
-                                    backgroundColor: hasAlarm ? Colors.redAccent : const Color(0xFF7B2CBF),
-                                  ),
-                                );
+                                if (hasAlarm) {
+                                  await NotificationService.cancelAlarm(notificationId);
+                                  setState(() {
+                                    _activeAlarms.remove(alarmId);
+                                  });
+                                  setModalState(() {});
+                                  await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
+
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('🔕 Alarma cancelada para "${prog.title}"'),
+                                        backgroundColor: Colors.redAccent,
+                                      ),
+                                    );
+                                  }
+                                } else {
+                                  if (targetTime != null) {
+                                    await NotificationService.scheduleAlarm(
+                                      id: notificationId,
+                                      title: '⏰ ¡Comienza ${prog.title}!',
+                                      body: 'En sintonía por ${channel.name}. Toca para abrir AmeycarTV.',
+                                      scheduledDate: targetTime,
+                                    );
+                                  }
+
+                                  setState(() {
+                                    _activeAlarms.add(alarmId);
+                                  });
+                                  setModalState(() {});
+                                  await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
+
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          '⏰ ¡Alarma activada para "${prog.title}" a las $startTimeStr!\nSonará incluso con la app cerrada.',
+                                        ),
+                                        backgroundColor: const Color(0xFF7B2CBF),
+                                        duration: const Duration(seconds: 3),
+                                      ),
+                                    );
+                                  }
+                                }
                               }
                             },
                           ),
@@ -568,7 +805,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildPortraitLayout() {
-    final activeChannel = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+    final activeChannel = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+        ? _channels[_selectedChannelIndex]
+        : null;
 
     if (_isFullScreenMode) {
       return _buildImmersivePlayer(activeChannel);
@@ -616,7 +855,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLandscapeLayout() {
-    final activeChannel = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+    final activeChannel = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+        ? _channels[_selectedChannelIndex]
+        : null;
 
     if (_isFullScreenMode) {
       return _buildImmersivePlayer(activeChannel);
@@ -625,7 +866,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Row(
       children: [
         Container(
-          width: 180,
+          width: 190,
           decoration: BoxDecoration(
             color: const Color(0xFF0F172A).withOpacity(0.85),
             border: const Border(right: BorderSide(color: Color(0x337B2CBF))),
@@ -633,21 +874,37 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
-                padding: EdgeInsets.only(left: 16, top: 20, bottom: 16),
-                child: Text(
-                  'AMEYCAR TV',
-                  style: TextStyle(
-                    color: Color(0xFFC77DFF),
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                    letterSpacing: 1.2,
-                  ),
+              Padding(
+                padding: const EdgeInsets.only(left: 16, top: 20, bottom: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'AMEYCAR TV',
+                      style: TextStyle(
+                        color: Color(0xFFC77DFF),
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    Text(
+                      '🕒 $_currentTime',
+                      style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                  ],
                 ),
               ),
               _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
               _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
               _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
+              _buildSideMenuItem(Icons.calendar_month, 'Guía EPG', () {
+                if (activeChannel != null) {
+                  _openEpgScheduleModal(activeChannel);
+                } else if (_channels.isNotEmpty) {
+                  _openEpgScheduleModal(_channels.first);
+                }
+              }),
               const Divider(color: Colors.white12),
               _buildSideMenuItem(Icons.search, 'Buscar', () => setState(() => _isSearching = !_isSearching)),
               _buildSideMenuItem(Icons.mic, 'Asistente Alexa', _startVoiceSearch),
@@ -754,12 +1011,25 @@ class _HomeScreenState extends State<HomeScreen> {
                           style: const TextStyle(color: Colors.red, fontSize: 9, fontWeight: FontWeight.bold),
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E293B),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0x3300E5FF)),
+                        ),
+                        child: Text(
+                          _currentTime.isNotEmpty ? _currentTime : '--:--',
+                          style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ),
                       if (activeChannel != null && _selectedSection == 'En Vivo') ...[
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             '• ${activeChannel.name}',
-                            style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 13, fontWeight: FontWeight.bold),
+                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -771,6 +1041,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
+                      icon: const Icon(Icons.calendar_month, color: Color(0xFF00E5FF), size: 22),
+                      tooltip: 'Guía de Programación EPG',
+                      onPressed: () {
+                        if (activeChannel != null) {
+                          _openEpgScheduleModal(activeChannel);
+                        } else if (_channels.isNotEmpty) {
+                          _openEpgScheduleModal(_channels.first);
+                        }
+                      },
+                    ),
+                    IconButton(
                       icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 22),
                       tooltip: 'Buscar en $_selectedSection',
                       onPressed: () => setState(() => _isSearching = true),
@@ -780,7 +1061,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       tooltip: 'Cargar lista M3U',
                       onPressed: _openM3uDialog,
                     ),
-                    // BOTÓN DE ASISTENTE DE VOZ ALEXA
                     IconButton(
                       icon: Container(
                         padding: const EdgeInsets.all(4),
@@ -905,9 +1185,37 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             _isVideoLoading
                 ? const Center(child: CircularProgressIndicator(color: Color(0xFFC77DFF)))
-                : (_videoPlayerController != null && _videoPlayerController!.value.isInitialized)
-                    ? Center(child: AspectRatio(aspectRatio: _videoPlayerController!.value.aspectRatio, child: VideoPlayer(_videoPlayerController!)))
-                    : const Center(child: Icon(Icons.tv_off, color: Colors.white38, size: 48)),
+                : _hasVideoError
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.cloud_off, color: Colors.white38, size: 40),
+                            const SizedBox(height: 6),
+                            const Text('Señal no disponible o sin conexión', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                            const SizedBox(height: 8),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF7B2CBF),
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              ),
+                              onPressed: () {
+                                if (activeChannel != null) _initializeVideo(activeChannel.streamUrl);
+                              },
+                              icon: const Icon(Icons.refresh, size: 16, color: Colors.white),
+                              label: const Text('Reintentar', style: TextStyle(color: Colors.white, fontSize: 11)),
+                            ),
+                          ],
+                        ),
+                      )
+                    : (_videoPlayerController != null && _videoPlayerController!.value.isInitialized)
+                        ? Center(
+                            child: AspectRatio(
+                              aspectRatio: _videoPlayerController!.value.aspectRatio,
+                              child: VideoPlayer(_videoPlayerController!),
+                            ),
+                          )
+                        : const Center(child: Icon(Icons.tv_off, color: Colors.white38, size: 48)),
 
             if (_showOsd)
               Positioned(
@@ -1102,7 +1410,9 @@ class _HomeScreenState extends State<HomeScreen> {
       itemCount: list.length,
       itemBuilder: (context, index) {
         final channel = list[index];
-        final isSelected = _channels.indexOf(channel) == _selectedChannelIndex;
+        final isSelected = _channels.isNotEmpty &&
+            _selectedChannelIndex < _channels.length &&
+            _channels[_selectedChannelIndex].streamUrl == channel.streamUrl;
 
         return Focus(
           onKey: (node, event) {
@@ -1210,9 +1520,35 @@ class _HomeScreenState extends State<HomeScreen> {
         body: Stack(
           children: [
             Center(
-              child: _videoPlayerController != null && _videoPlayerController!.value.isInitialized
-                  ? AspectRatio(aspectRatio: _videoPlayerController!.value.aspectRatio, child: VideoPlayer(_videoPlayerController!))
-                  : const CircularProgressIndicator(color: Color(0xFFC77DFF)),
+              child: _isVideoLoading
+                  ? const CircularProgressIndicator(color: Color(0xFFC77DFF))
+                  : _hasVideoError
+                      ? Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
+                            const SizedBox(height: 12),
+                            Text(
+                              'No se pudo reproducir: ${activeChannel?.name ?? "Canal"}',
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                            ),
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
+                              onPressed: () {
+                                if (activeChannel != null) _initializeVideo(activeChannel.streamUrl);
+                              },
+                              icon: const Icon(Icons.refresh, color: Colors.white),
+                              label: const Text('Reintentar', style: TextStyle(color: Colors.white)),
+                            ),
+                          ],
+                        )
+                      : (_videoPlayerController != null && _videoPlayerController!.value.isInitialized)
+                          ? AspectRatio(
+                              aspectRatio: _videoPlayerController!.value.aspectRatio,
+                              child: VideoPlayer(_videoPlayerController!),
+                            )
+                          : const CircularProgressIndicator(color: Color(0xFFC77DFF)),
             ),
             if (_showOsd)
               Positioned(
@@ -1240,11 +1576,18 @@ class _HomeScreenState extends State<HomeScreen> {
                                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
                                 ),
                                 Text(
-                                  '${activeChannel?.groupCategory} • EN VIVO HLS',
+                                  '${activeChannel?.groupCategory} • EN VIVO HLS  •  🕒 $_currentTime',
                                   style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11),
                                 ),
                               ],
                             ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.calendar_month, color: Color(0xFF00E5FF), size: 24),
+                            tooltip: 'Guía EPG',
+                            onPressed: () {
+                              if (activeChannel != null) _openEpgScheduleModal(activeChannel);
+                            },
                           ),
                           IconButton(
                             icon: const Icon(Icons.fullscreen_exit, color: Colors.white, size: 26),
@@ -1273,6 +1616,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _clockTimer?.cancel();
     _videoPlayerController?.dispose();
     _searchController.dispose();
     super.dispose();
