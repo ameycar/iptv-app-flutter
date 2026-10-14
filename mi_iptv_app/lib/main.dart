@@ -512,7 +512,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       itemCount: alarmsList.length,
                       itemBuilder: (context, index) {
                         final alarmId = alarmsList[index];
-                        // Formato: ChannelName-ProgramTitle-TimeFormatted
                         final parts = alarmId.split('-');
                         final channelName = parts.isNotEmpty ? parts[0] : 'Canal';
                         final programTitle = parts.length > 1 ? parts[1] : alarmId;
@@ -1183,7 +1182,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // BARRA SUPERIOR GLASS CON ESPACIADO INTELIGENTE (SIN MONTAR ICONOS NI LA HORA)
+  // BARRA SUPERIOR GLASS CON BADGE INTELIGENTE (ESPACIO CONSTANTE, NUNCA SE MONTA)
   Widget _buildTopGlassBar([ChannelModel? activeChannel]) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1195,86 +1194,67 @@ class _HomeScreenState extends State<HomeScreen> {
           ? _buildActiveSearchBar()
           : Row(
               children: [
-                // LOGO Y BADGES
-                Flexible(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'AMEYCAR TV',
-                        style: TextStyle(
-                          color: Color(0xFFC77DFF),
-                          fontWeight: FontWeight.w900,
-                          fontSize: 14,
-                          letterSpacing: 1.1,
-                        ),
+                // LOGO Y BADGES (ANCHO FIJO ASEGURADO)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'AMEYCAR TV',
+                      style: TextStyle(
+                        color: Color(0xFFC77DFF),
+                        fontWeight: FontWeight.w900,
+                        fontSize: 14,
+                        letterSpacing: 1.1,
                       ),
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.red.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: Colors.red, width: 0.8),
-                        ),
-                        child: Text(
-                          _selectedSection == 'En Vivo' ? 'LIVE' : _selectedSection.toUpperCase(),
-                          style: const TextStyle(color: Colors.red, fontSize: 8.5, fontWeight: FontWeight.bold),
-                        ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.red, width: 0.8),
                       ),
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1E293B),
-                          borderRadius: BorderRadius.circular(5),
-                          border: Border.all(color: const Color(0x3300E5FF)),
-                        ),
-                        child: Text(
-                          _currentTime.isNotEmpty ? _currentTime : '--:--',
-                          style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 10, fontWeight: FontWeight.bold),
-                        ),
+                      child: Text(
+                        _selectedSection == 'En Vivo' ? 'LIVE' : _selectedSection.toUpperCase(),
+                        style: const TextStyle(color: Colors.red, fontSize: 8.5, fontWeight: FontWeight.bold),
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(5),
+                        border: Border.all(color: const Color(0x3300E5FF)),
+                      ),
+                      child: Text(
+                        _currentTime.isNotEmpty ? _currentTime : '--:--',
+                        style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
                 ),
 
                 const Spacer(),
 
-                // CAMPANILLA DIRECTA SI HAY ALARMAS ACTIVAS
-                if (_activeAlarms.isNotEmpty)
-                  InkWell(
-                    onTap: _openActiveAlarmsManagerModal,
-                    borderRadius: BorderRadius.circular(10),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 6),
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0x22FFB703),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFFFB703), width: 0.8),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.alarm_on, color: Color(0xFFFFB703), size: 12),
-                          const SizedBox(width: 3),
-                          Text(
-                            '${_activeAlarms.length}',
-                            style: const TextStyle(color: Color(0xFFFFB703), fontSize: 10, fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // BOTONES DE ACCIÓN COMPACTOS (NO COLISIONAN EN VERTICAL)
+                // ICONO GUÍA EPG CON BADGE DE NOTIFICACIÓN DIRECTO (0 PÍXELES EXTRA DE ANCHO)
                 IconButton(
                   visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                   padding: EdgeInsets.zero,
-                  icon: const Icon(Icons.calendar_month, color: Color(0xFF00E5FF), size: 20),
-                  tooltip: 'Guía EPG',
+                  icon: Badge(
+                    isLabelVisible: _activeAlarms.isNotEmpty,
+                    label: Text(
+                      '${_activeAlarms.length}',
+                      style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                    ),
+                    backgroundColor: const Color(0xFFFFB703),
+                    child: const Icon(Icons.calendar_month, color: Color(0xFF00E5FF), size: 20),
+                  ),
+                  tooltip: _activeAlarms.isNotEmpty 
+                      ? '${_activeAlarms.length} alarmas activas • Toca para abrir' 
+                      : 'Guía EPG',
                   onPressed: () {
                     if (activeChannel != null) {
                       _openEpgScheduleModal(activeChannel);
@@ -1285,7 +1265,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 IconButton(
                   visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                   padding: EdgeInsets.zero,
                   icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 20),
                   tooltip: 'Buscar en $_selectedSection',
@@ -1293,7 +1273,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 IconButton(
                   visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                   padding: EdgeInsets.zero,
                   icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 20),
                   tooltip: 'Cargar M3U',
