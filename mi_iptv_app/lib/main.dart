@@ -234,7 +234,6 @@ class _HomeScreenState extends State<HomeScreen> {
         targetUri = Uri.parse(Uri.encodeFull(url));
       }
 
-      // mixWithOthers: true previene que el audio del asistente bloquee o deje en negro el reproductor
       final controller = VideoPlayerController.networkUrl(
         targetUri,
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
@@ -333,7 +332,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // ASISTENTE DE VOZ INTELIGENTE QUE RECONOCE LA SECCIÓN ACTUAL
   void _startVoiceSearch() {
     List<ChannelModel> searchPool;
     if (_selectedSection == 'Películas' && _movies.isNotEmpty) {
@@ -360,8 +358,6 @@ class _HomeScreenState extends State<HomeScreen> {
             setState(() => _selectedSection = 'Series');
           }
           
-          // Desfase de 300ms para permitir que el micrófono y el asistente
-          // liberen completamente el foco de audio en Android y no quede en negro
           Future.delayed(const Duration(milliseconds: 300), () {
             if (mounted) {
               _changeChannel(item);
@@ -430,6 +426,192 @@ class _HomeScreenState extends State<HomeScreen> {
     return null;
   }
 
+  // MODAL PARA GESTIONAR Y DESACTIVAR ALARMAS ACTIVAS
+  void _openActiveAlarmsManagerModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) {
+          final alarmsList = _activeAlarms.toList();
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+            decoration: BoxDecoration(
+              color: const Color(0xFF070A10).withOpacity(0.98),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              border: Border.all(color: const Color(0xFFFFB703).withOpacity(0.5), width: 1.5),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0x33FFB703),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.alarm_on, color: Color(0xFFFFB703), size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Recordatorios Activos',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            Text(
+                              '${alarmsList.length} alarma${alarmsList.length == 1 ? '' : 's'} programada${alarmsList.length == 1 ? '' : 's'}',
+                              style: const TextStyle(color: Color(0xFFFFB703), fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white54),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+                const Divider(color: Colors.white12, height: 24),
+
+                if (alarmsList.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 30),
+                    child: Center(
+                      child: Column(
+                        children: const [
+                          Icon(Icons.notifications_off_outlined, color: Colors.white24, size: 48),
+                          SizedBox(height: 12),
+                          Text(
+                            'No tienes recordatorios activos',
+                            style: TextStyle(color: Colors.white70, fontSize: 14),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Entra a la Guía EPG de un canal para programar tus programas.',
+                            style: TextStyle(color: Colors.white38, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: alarmsList.length,
+                      itemBuilder: (context, index) {
+                        final alarmId = alarmsList[index];
+                        // Formato: ChannelName-ProgramTitle-TimeFormatted
+                        final parts = alarmId.split('-');
+                        final channelName = parts.isNotEmpty ? parts[0] : 'Canal';
+                        final programTitle = parts.length > 1 ? parts[1] : alarmId;
+                        final programTime = parts.length > 2 ? parts[2] : '';
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF131B2E),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0x33FFB703)),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: const Color(0x227B2CBF),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: const Color(0xFF9D4EDD)),
+                                ),
+                                child: const Icon(Icons.alarm, color: Color(0xFFFFB703), size: 18),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      programTitle,
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          channelName,
+                                          style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11, fontWeight: FontWeight.bold),
+                                        ),
+                                        if (programTime.isNotEmpty) ...[
+                                          const Text('  •  ', style: TextStyle(color: Colors.white30, fontSize: 11)),
+                                          Text(
+                                            programTime,
+                                            style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.redAccent.withOpacity(0.2),
+                                  foregroundColor: Colors.redAccent,
+                                  side: const BorderSide(color: Colors.redAccent, width: 1),
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                                icon: const Icon(Icons.alarm_off, size: 16),
+                                label: const Text('Quitar', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                onPressed: () async {
+                                  final int notificationId = alarmId.hashCode.abs() % 2147483647;
+                                  await NotificationService.cancelAlarm(notificationId);
+                                  
+                                  setState(() {
+                                    _activeAlarms.remove(alarmId);
+                                  });
+                                  setModalState(() {});
+
+                                  final prefs = await SharedPreferences.getInstance();
+                                  await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
+
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('🔕 Alarma cancelada para "$programTitle"'),
+                                        backgroundColor: Colors.redAccent,
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   void _openEpgScheduleModal(ChannelModel channel) {
     final schedule = EpgService.getUpcomingPrograms(channel.name, channel.groupCategory);
 
@@ -495,15 +677,37 @@ class _HomeScreenState extends State<HomeScreen> {
                     'Programas y Recordatorios:',
                     style: TextStyle(color: Colors.white70, fontSize: 12),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1E293B),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '🔔 ${_activeAlarms.length} activas',
-                      style: const TextStyle(color: Color(0xFFFFB703), fontSize: 11, fontWeight: FontWeight.bold),
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _openActiveAlarmsManagerModal();
+                    },
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _activeAlarms.isNotEmpty ? const Color(0xFFFFB703) : Colors.white10,
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _activeAlarms.isNotEmpty ? Icons.notifications_active : Icons.notifications_none,
+                            color: const Color(0xFFFFB703),
+                            size: 14,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${_activeAlarms.length} activas (Ver/Apagar)',
+                            style: const TextStyle(color: Color(0xFFFFB703), fontSize: 11, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -905,6 +1109,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   _openEpgScheduleModal(_channels.first);
                 }
               }),
+              _buildSideMenuItem(
+                Icons.alarm,
+                'Alarmas (${_activeAlarms.length})',
+                _openActiveAlarmsManagerModal,
+              ),
               const Divider(color: Colors.white12),
               _buildSideMenuItem(Icons.search, 'Buscar', () => setState(() => _isSearching = !_isSearching)),
               _buildSideMenuItem(Icons.mic, 'Asistente Alexa', _startVoiceSearch),
@@ -974,111 +1183,141 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // BARRA SUPERIOR GLASS CON ESPACIADO INTELIGENTE (SIN MONTAR ICONOS NI LA HORA)
   Widget _buildTopGlassBar([ChannelModel? activeChannel]) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F172A).withOpacity(0.8),
+        color: const Color(0xFF0F172A).withOpacity(0.85),
         border: const Border(bottom: BorderSide(color: Color(0x227B2CBF))),
       ),
       child: _isSearching
           ? _buildActiveSearchBar()
           : Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(
+                // LOGO Y BADGES
+                Flexible(
                   child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       const Text(
                         'AMEYCAR TV',
                         style: TextStyle(
                           color: Color(0xFFC77DFF),
                           fontWeight: FontWeight.w900,
-                          fontSize: 16,
-                          letterSpacing: 1.2,
+                          fontSize: 14,
+                          letterSpacing: 1.1,
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                         decoration: BoxDecoration(
                           color: Colors.red.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: Colors.red),
+                          border: Border.all(color: Colors.red, width: 0.8),
                         ),
                         child: Text(
                           _selectedSection == 'En Vivo' ? 'LIVE' : _selectedSection.toUpperCase(),
-                          style: const TextStyle(color: Colors.red, fontSize: 9, fontWeight: FontWeight.bold),
+                          style: const TextStyle(color: Colors.red, fontSize: 8.5, fontWeight: FontWeight.bold),
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: const Color(0xFF1E293B),
-                          borderRadius: BorderRadius.circular(6),
+                          borderRadius: BorderRadius.circular(5),
                           border: Border.all(color: const Color(0x3300E5FF)),
                         ),
                         child: Text(
                           _currentTime.isNotEmpty ? _currentTime : '--:--',
-                          style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                          style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 10, fontWeight: FontWeight.bold),
                         ),
                       ),
-                      if (activeChannel != null && _selectedSection == 'En Vivo') ...[
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '• ${activeChannel.name}',
-                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.calendar_month, color: Color(0xFF00E5FF), size: 22),
-                      tooltip: 'Guía de Programación EPG',
-                      onPressed: () {
-                        if (activeChannel != null) {
-                          _openEpgScheduleModal(activeChannel);
-                        } else if (_channels.isNotEmpty) {
-                          _openEpgScheduleModal(_channels.first);
-                        }
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 22),
-                      tooltip: 'Buscar en $_selectedSection',
-                      onPressed: () => setState(() => _isSearching = true),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 22),
-                      tooltip: 'Cargar lista M3U',
-                      onPressed: _openM3uDialog,
-                    ),
-                    IconButton(
-                      icon: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF00E5FF).withOpacity(0.5),
-                              blurRadius: 8,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 22),
+
+                const Spacer(),
+
+                // CAMPANILLA DIRECTA SI HAY ALARMAS ACTIVAS
+                if (_activeAlarms.isNotEmpty)
+                  InkWell(
+                    onTap: _openActiveAlarmsManagerModal,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0x22FFB703),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFFFB703), width: 0.8),
                       ),
-                      tooltip: 'Asistente Alexa de Voz',
-                      onPressed: _startVoiceSearch,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.alarm_on, color: Color(0xFFFFB703), size: 12),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${_activeAlarms.length}',
+                            style: const TextStyle(color: Color(0xFFFFB703), fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
+                  ),
+
+                // BOTONES DE ACCIÓN COMPACTOS (NO COLISIONAN EN VERTICAL)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.calendar_month, color: Color(0xFF00E5FF), size: 20),
+                  tooltip: 'Guía EPG',
+                  onPressed: () {
+                    if (activeChannel != null) {
+                      _openEpgScheduleModal(activeChannel);
+                    } else if (_channels.isNotEmpty) {
+                      _openEpgScheduleModal(_channels.first);
+                    }
+                  },
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 20),
+                  tooltip: 'Buscar en $_selectedSection',
+                  onPressed: () => setState(() => _isSearching = true),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 20),
+                  tooltip: 'Cargar M3U',
+                  onPressed: _openM3uDialog,
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  padding: EdgeInsets.zero,
+                  icon: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF00E5FF).withOpacity(0.5),
+                          blurRadius: 6,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 18),
+                  ),
+                  tooltip: 'Asistente Alexa de Voz',
+                  onPressed: _startVoiceSearch,
                 ),
               ],
             ),
@@ -1089,15 +1328,15 @@ class _HomeScreenState extends State<HomeScreen> {
     return Row(
       children: [
         const Icon(Icons.search, color: Color(0xFFC77DFF), size: 20),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         Expanded(
           child: TextField(
             controller: _searchController,
             autofocus: true,
-            style: const TextStyle(color: Colors.white, fontSize: 14),
+            style: const TextStyle(color: Colors.white, fontSize: 13),
             decoration: InputDecoration(
               hintText: 'Buscar en $_selectedSection...',
-              hintStyle: const TextStyle(color: Colors.white38),
+              hintStyle: const TextStyle(color: Colors.white38, fontSize: 12),
               border: InputBorder.none,
               isDense: true,
             ),
@@ -1107,7 +1346,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         IconButton(
-          icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          padding: EdgeInsets.zero,
+          icon: const Icon(Icons.close, color: Colors.white54, size: 18),
           onPressed: () {
             setState(() {
               _isSearching = false;
