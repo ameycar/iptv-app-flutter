@@ -5,7 +5,7 @@ import '../models/playlist_item.dart';
 import '../services/reminder_service.dart';
 import '../widgets/active_reminders_dialog.dart';
 import '../widgets/epg_modal.dart';
-import '../widgets/voice_assistant_sheet.dart';
+import '../widgets/alexa_voice_sheet.dart';
 import 'add_playlist_screen.dart';
 import 'video_player_screen.dart';
 
@@ -27,6 +27,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   late Timer _clockTimer;
   String _currentTime = '';
   int _activeRemindersCount = 0;
+
+  // Multitarea: Canal reproduciéndose en Miniatura Flotante (PiP)
+  PlaylistItem? _pipChannel;
 
   @override
   void initState() {
@@ -74,36 +77,63 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   void _openVoiceAssistant() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => VoiceAssistantSheet(
-        channels: _channels,
-        onPlayChannel: (channel) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => VideoPlayerScreen(item: channel)),
-          );
-        },
-        onSwitchTab: (tab) {
-          setState(() {
-            _activeTab = tab;
-            _selectedCategory = 'Todos';
-          });
-        },
-        onSearch: (query) {
-          setState(() {
-            _isSearching = true;
-            _searchFilter = query;
-            _searchController.text = query;
-          });
-        },
-        onOpenEPG: () {
-          if (_channels.isNotEmpty) {
-            _openEPGModal(_channels.first);
+    AlexaVoiceSheet.show(
+      context,
+      channels: _channels,
+      currentSection: _activeTab == 'movies'
+          ? 'PELICULAS'
+          : _activeTab == 'series'
+              ? 'SERIES'
+              : 'LIVE',
+      onChannelSelected: (channel) {
+        _playChannel(channel);
+      },
+      onNavigateSection: (section) {
+        setState(() {
+          if (section.toUpperCase().contains('PELI')) {
+            _activeTab = 'movies';
+          } else if (section.toUpperCase().contains('SERIE')) {
+            _activeTab = 'series';
+          } else {
+            _activeTab = 'live';
           }
-        },
+          _selectedCategory = 'Todos';
+        });
+      },
+      onSearch: (query, section) {
+        setState(() {
+          _isSearching = true;
+          _searchFilter = query;
+          _searchController.text = query;
+          if (section.toUpperCase().contains('PELI')) _activeTab = 'movies';
+          else if (section.toUpperCase().contains('SERIE')) _activeTab = 'series';
+          else _activeTab = 'live';
+        });
+      },
+      onOpenEpg: () {
+        if (_channels.isNotEmpty) {
+          _openEPGModal(_channels.first);
+        }
+      },
+    );
+  }
+
+  void _playChannel(PlaylistItem channel) {
+    setState(() {
+      _pipChannel = null; // Cierra el mini-reproductor al abrir en pantalla completa
+    });
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => VideoPlayerScreen(
+          item: channel,
+          channels: _channels,
+          onMinimizeToPiP: (minimizedItem) {
+            setState(() {
+              _pipChannel = minimizedItem;
+            });
+          },
+        ),
       ),
     );
   }
@@ -113,12 +143,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       context: context,
       builder: (context) => EpgModal(
         channel: channel,
-        onPlay: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => VideoPlayerScreen(item: channel)),
-          );
-        },
+        onPlay: () => _playChannel(channel),
       ),
     ).then((_) => _loadRemindersCount());
   }
@@ -135,7 +160,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   List<PlaylistItem> _getFilteredChannels() {
     var list = _channels;
 
-    // Filtro por pestaña (En vivo, películas, series)
     if (_activeTab == 'movies') {
       list = list.where((c) {
         final cat = c.category.toLowerCase();
@@ -149,12 +173,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       }).toList();
     }
 
-    // Filtro por categoría chip
     if (_selectedCategory != 'Todos') {
       list = list.where((c) => c.category == _selectedCategory).toList();
     }
 
-    // Filtro por búsqueda
     if (_searchFilter.trim().isNotEmpty) {
       final q = _searchFilter.toLowerCase();
       list = list.where((c) => c.name.toLowerCase().contains(q) || c.category.toLowerCase().contains(q)).toList();
@@ -163,14 +185,160 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return list;
   }
 
+  // Generador dinámico de guía según la hora y canal
+  Widget _buildDynamicEPGBar() {
+    if (_channels.isEmpty || _activeTab != 'live') return const SizedBox.shrink();
+
+    final now = DateTime.now();
+    final startHour = now.hour;
+    final endHour = (startHour + 1) % 24;
+    final remainingMin = 60 - now.minute;
+
+    final firstChannel = _channels.first;
+    final isSports = firstChannel.name.toLowerCase().contains('deporte') ||
+        firstChannel.name.toLowerCase().contains('espn') ||
+        firstChannel.name.toLowerCase().contains('fox') ||
+        firstChannel.name.toLowerCase().contains('dsports');
+
+    final currentProgram = isSports
+        ? "⚽ Transmisión en Vivo: Fútbol Internacional de Primera División"
+        : "📺 ${firstChannel.name} - Emisión Estelar en Directo (HD)";
+
+    final nextProgram = isSports
+        ? "Resumen de la Jornada y Goles de la Fecha"
+        : "Edición Nocturna y Análisis";
+
+    return GestureDetector(
+      onTap: () => _openEPGModal(firstChannel),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1A38),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.4)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.live_tv, color: Colors.redAccent, size: 16),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    currentProgram,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  '${startHour.toString().padLeft(2, '0')}:00 - ${endHour.toString().padLeft(2, '0')}:00',
+                  style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    'A continuación: $nextProgram',
+                    style: const TextStyle(color: Colors.white60, fontSize: 11),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  'Quedan $remainingMin min',
+                  style: const TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Mini-reproductor flotante para multitarea (PiP)
+  Widget _buildFloatingMiniPlayer() {
+    if (_pipChannel == null) return const SizedBox.shrink();
+
+    return Positioned(
+      bottom: 12,
+      left: 14,
+      right: 14,
+      child: GestureDetector(
+        onTap: () => _playChannel(_pipChannel!),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF121B2F),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFF00E5FF), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF00E5FF).withOpacity(0.3),
+                blurRadius: 15,
+                spreadRadius: 2,
+              )
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.play_circle_fill, color: Color(0xFF00E5FF), size: 30),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _pipChannel!.name,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const Text(
+                      'Reproduciendo en segundo plano • Toca para expandir',
+                      style: TextStyle(color: Colors.cyanAccent, fontSize: 10),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.fullscreen, color: Colors.white),
+                onPressed: () => _playChannel(_pipChannel!),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white54),
+                onPressed: () {
+                  setState(() => _pipChannel = null);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filteredChannels = _getFilteredChannels();
-
-    // Obtener categorías únicas
     final categories = {'Todos', ..._channels.map((c) => c.category.isEmpty ? 'General' : c.category)};
 
-    // Texto de la pestaña activa para el badge rojo
     String tabBadgeName = 'LIVE';
     if (_activeTab == 'movies') tabBadgeName = 'PELÍCULAS';
     if (_activeTab == 'series') tabBadgeName = 'SERIES';
@@ -217,7 +385,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Badge rojo de sección
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                     decoration: BoxDecoration(
@@ -234,7 +401,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                   ),
                   const Spacer(),
-                  // Reloj con fecha/calendario (Completamente separado y limpio)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
@@ -270,7 +436,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 setState(() => _isSearching = true);
               },
             ),
-          // Botón directo a alarmas activas si hay alguna
           if (_activeRemindersCount > 0)
             IconButton(
               tooltip: 'Ver alarmas activas',
@@ -300,7 +465,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             icon: const Icon(Icons.playlist_add, color: Colors.white),
             onPressed: _navigateToAddPlaylist,
           ),
-          // Botón del Asistente por Voz con brillo
           Padding(
             padding: const EdgeInsets.only(right: 8.0),
             child: IconButton(
@@ -318,140 +482,97 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          // Pestañas En Vivo / Películas / Series
-          Container(
-            color: const Color(0xFF121226),
-            child: Row(
-              children: [
-                _buildMainTab('En Vivo', 'live'),
-                _buildMainTab('Películas', 'movies'),
-                _buildMainTab('Series', 'series'),
-              ],
-            ),
-          ),
-
-          // Barra Now Playing EPG en vivo si estamos en TV
-          if (_activeTab == 'live' && _channels.isNotEmpty)
-            GestureDetector(
-              onTap: () => _openEPGModal(_channels.first),
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(14, 10, 14, 4),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E1A38),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.deepPurpleAccent.withOpacity(0.5)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          Column(
+            children: [
+              Container(
+                color: const Color(0xFF121226),
+                child: Row(
                   children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.live_tv, color: Colors.redAccent, size: 16),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text(
-                            'Magacín de Entretenimiento de la Tarde',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        Text(
-                          '23:00 - 00:00',
-                          style: TextStyle(color: Colors.purple.shade200, fontSize: 11),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    const Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'A continuación: Serie Exclusiva: Temporada Estelar',
-                          style: TextStyle(color: Colors.white60, fontSize: 11),
-                        ),
-                        Text(
-                          'Quedan 41 min',
-                          style: TextStyle(color: Colors.cyanAccent, fontSize: 11),
-                        ),
-                      ],
-                    ),
+                    _buildMainTab('En Vivo', 'live'),
+                    _buildMainTab('Películas', 'movies'),
+                    _buildMainTab('Series', 'series'),
                   ],
                 ),
               ),
-            ),
 
-          // Chips de categorías horizontales
-          if (_channels.isNotEmpty)
-            Container(
-              height: 48,
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                children: categories.map((cat) {
-                  final isSelected = _selectedCategory == cat;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: FilterChip(
-                      selected: isSelected,
-                      label: Text(cat),
-                      labelStyle: TextStyle(
-                        color: isSelected ? Colors.white : Colors.white70,
-                        fontSize: 12,
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      ),
-                      backgroundColor: const Color(0xFF1A1A2E),
-                      selectedColor: const Color(0xFF651FFF),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      onSelected: (_) {
-                        setState(() => _selectedCategory = cat);
-                      },
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
+              // Barra de EPG interactiva y dinámica
+              _buildDynamicEPGBar(),
 
-          // Lista de Canales o Cuadrícula
-          Expanded(
-            child: _channels.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.tv_off_rounded, size: 80, color: Colors.white24),
-                        const SizedBox(height: 16),
-                        const Text(
-                          'No hay canales cargados',
-                          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              // Filtro por categorías horizontales
+              if (_channels.isNotEmpty)
+                Container(
+                  height: 48,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    children: categories.map((cat) {
+                      final isSelected = _selectedCategory == cat;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8.0),
+                        child: FilterChip(
+                          selected: isSelected,
+                          label: Text(cat),
+                          labelStyle: TextStyle(
+                            color: isSelected ? Colors.white : Colors.white70,
+                            fontSize: 12,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          ),
+                          backgroundColor: const Color(0xFF1A1A2E),
+                          selectedColor: const Color(0xFF651FFF),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          onSelected: (_) {
+                            setState(() => _selectedCategory = cat);
+                          },
                         ),
-                        const SizedBox(height: 8),
-                        const Text('Agrega una lista M3U para disfrutar de Ameycar TV.', style: TextStyle(color: Colors.grey)),
-                        const SizedBox(height: 24),
-                        ElevatedButton.icon(
-                          onPressed: _navigateToAddPlaylist,
-                          icon: const Icon(Icons.add, color: Colors.white),
-                          label: const Text('Agregar Lista M3U', style: TextStyle(color: Colors.white)),
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF651FFF)),
-                        ),
-                      ],
-                    ),
-                  )
-                : filteredChannels.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No se encontraron coincidencias',
-                          style: TextStyle(color: Colors.white54, fontSize: 15),
+                      );
+                    }).toList(),
+                  ),
+                ),
+
+              // Lista o Cuadrícula de Canales
+              Expanded(
+                child: _channels.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.tv_off_rounded, size: 80, color: Colors.white24),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No hay canales cargados',
+                              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text('Agrega una lista M3U para disfrutar de Ameycar TV.', style: TextStyle(color: Colors.grey)),
+                            const SizedBox(height: 24),
+                            ElevatedButton.icon(
+                              onPressed: _navigateToAddPlaylist,
+                              icon: const Icon(Icons.add, color: Colors.white),
+                              label: const Text('Agregar Lista M3U', style: TextStyle(color: Colors.white)),
+                              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF651FFF)),
+                            ),
+                          ],
                         ),
                       )
-                    : _activeTab == 'movies'
-                        ? _buildMoviesGrid(filteredChannels)
-                        : _buildChannelsList(filteredChannels),
+                    : filteredChannels.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'No se encontraron coincidencias',
+                              style: TextStyle(color: Colors.white54, fontSize: 15),
+                            ),
+                          )
+                        : _activeTab == 'movies'
+                            ? _buildMoviesGrid(filteredChannels)
+                            : _buildChannelsList(filteredChannels),
+              ),
+            ],
           ),
+
+          // Mini-Player Flotante en segundo plano (PiP)
+          _buildFloatingMiniPlayer(),
         ],
       ),
     );
@@ -493,7 +614,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   Widget _buildChannelsList(List<PlaylistItem> list) {
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: EdgeInsets.fromLTRB(14, 8, 14, _pipChannel != null ? 80 : 8),
       itemCount: list.length,
       itemBuilder: (context, index) {
         final ch = list[index];
@@ -517,9 +638,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ? Image.network(
                       ch.logoUrl!,
                       fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.tv, color: Colors.deepPurpleAccent, size: 28),
+                      errorBuilder: (_, __, ___) => const Icon(Icons.tv, color: Color(0xFF00E5FF), size: 28),
                     )
-                  : const Icon(Icons.tv, color: Colors.deepPurpleAccent, size: 28),
+                  : const Icon(Icons.tv, color: Color(0xFF00E5FF), size: 28),
             ),
             title: Text(
               ch.name,
@@ -528,7 +649,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               overflow: TextOverflow.ellipsis,
             ),
             subtitle: Text(
-              'Grupo: ${ch.category.isEmpty ? "General" : ch.category} • 1080p FHD',
+              'Grupo: ${ch.category.isEmpty ? "General" : ch.category} • HD En Vivo',
               style: const TextStyle(color: Colors.white54, fontSize: 11),
             ),
             trailing: Row(
@@ -539,15 +660,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   icon: const Icon(Icons.calendar_month, color: Colors.cyanAccent, size: 22),
                   onPressed: () => _openEPGModal(ch),
                 ),
-                const Icon(Icons.play_arrow_rounded, color: Colors.deepPurpleAccent, size: 28),
+                const Icon(Icons.play_circle_fill, color: Color(0xFF00E5FF), size: 30),
               ],
             ),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => VideoPlayerScreen(item: ch)),
-              );
-            },
+            onTap: () => _playChannel(ch),
           ),
         );
       },
@@ -556,7 +672,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   Widget _buildMoviesGrid(List<PlaylistItem> list) {
     return GridView.builder(
-      padding: const EdgeInsets.all(14),
+      padding: EdgeInsets.fromLTRB(14, 14, 14, _pipChannel != null ? 80 : 14),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         childAspectRatio: 0.72,
@@ -567,12 +683,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       itemBuilder: (context, index) {
         final item = list[index];
         return GestureDetector(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => VideoPlayerScreen(item: item)),
-            );
-          },
+          onTap: () => _playChannel(item),
           child: Container(
             decoration: BoxDecoration(
               color: const Color(0xFF1B1B33),
@@ -589,14 +700,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           item.logoUrl!,
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) => const Center(
-                            child: Icon(Icons.movie, color: Colors.deepPurpleAccent, size: 50),
+                            child: Icon(Icons.movie, color: Color(0xFF00E5FF), size: 50),
                           ),
                         )
                       : const Center(
-                          child: Icon(Icons.movie, color: Colors.deepPurpleAccent, size: 50),
+                          child: Icon(Icons.movie, color: Color(0xFF00E5FF), size: 50),
                         ),
                 ),
-                // Badge HD
                 Positioned(
                   top: 8,
                   right: 8,
@@ -610,7 +720,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     child: const Text('HD', style: TextStyle(color: Colors.cyanAccent, fontSize: 10, fontWeight: FontWeight.bold)),
                   ),
                 ),
-                // Título en degradado inferior
                 Positioned(
                   bottom: 0,
                   left: 0,
