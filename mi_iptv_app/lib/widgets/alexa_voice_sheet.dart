@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -7,7 +8,7 @@ import '../services/ai_curator_service.dart';
 
 class AlexaVoiceSheet extends StatefulWidget {
   final List<PlaylistItem> channels;
-  final String currentSection; // 'live', 'movies', 'series'
+  final String currentSection; // 'live', 'movies', 'series' o 'en vivo', 'peliculas', etc.
   final Function(PlaylistItem item) onChannelSelected;
   final VoidCallback? onOpenEpg;
   final Function(String section)? onNavigateSection;
@@ -59,6 +60,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
   String _statusMessage = "MICRÓFONO ACTIVO";
   bool _isProcessing = false;
   late AnimationController _animController;
+  Timer? _silenceTimer;
 
   @override
   void initState() {
@@ -76,21 +78,42 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       await _tts.setLanguage("es-ES");
       await _tts.setSpeechRate(0.55);
 
-      final available = await _speech.initialize();
+      final available = await _speech.initialize(
+        onError: (e) => print("STT Error: $e"),
+        onStatus: (status) {
+          if (status == "done" || status == "notListening") {
+            _onSilenceTimeout();
+          }
+        },
+      );
+
       if (available) {
         _playBeep();
         _speech.listen(
           localeId: 'es_ES',
-          listenFor: const Duration(seconds: 8),
-          pauseFor: const Duration(seconds: 2),
+          listenFor: const Duration(seconds: 10),
+          pauseFor: const Duration(milliseconds: 1500),
+          partialResults: true,
           onResult: (result) {
             if (!mounted) return;
-            setState(() {
-              _recognizedText = result.recognizedWords;
-            });
-            if (result.finalResult && result.recognizedWords.isNotEmpty) {
-              _playBeep();
-              _executeAICommand(result.recognizedWords);
+            final words = result.recognizedWords.trim();
+            if (words.isNotEmpty) {
+              setState(() {
+                _recognizedText = words;
+              });
+
+              // Reiniciar temporizador de silencio: auto-ejecutar tras 800ms de pausa
+              _silenceTimer?.cancel();
+              _silenceTimer = Timer(const Duration(milliseconds: 800), () {
+                if (!_isProcessing && _recognizedText.length > 2) {
+                  _executeAICommand(_recognizedText);
+                }
+              });
+            }
+
+            if (result.finalResult && words.length > 1) {
+              _silenceTimer?.cancel();
+              _executeAICommand(words);
             }
           },
         );
@@ -100,13 +123,27 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
     }
   }
 
+  void _onSilenceTimeout() {
+    if (!_isProcessing &&
+        _recognizedText.isNotEmpty &&
+        !_recognizedText.startsWith("Escuchando") &&
+        _recognizedText.trim().length > 1) {
+      _executeAICommand(_recognizedText);
+    }
+  }
+
   void _playBeep() {
     HapticFeedback.mediumImpact();
     SystemSound.play(SystemSoundType.click);
   }
 
   void _executeAICommand(String text) async {
-    if (_isProcessing || text.trim().isEmpty) return;
+    final clean = text.trim();
+    if (_isProcessing || clean.isEmpty || clean.startsWith("Escuchando") || clean.length < 2) {
+      return;
+    }
+
+    _silenceTimer?.cancel();
 
     setState(() {
       _isProcessing = true;
@@ -117,24 +154,26 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       await _speech.stop();
     } catch (_) {}
 
-    // Llamada al Cerebro de IA AICuratorService
+    _playBeep();
+
+    // Invocación al Cerebro de IA
     final result = await AICuratorService.interpretVoiceCommand(
-      userVoicePrompt: text,
+      userVoicePrompt: clean,
       availableItems: widget.channels,
       currentTab: widget.currentSection,
     );
 
-    // Hablar la respuesta en voz alta
+    // Hablar confirmación en voz alta si aplica
     if (result.speechResponse.isNotEmpty) {
       _tts.speak(result.speechResponse);
     }
 
     if (!mounted) return;
 
-    // Cerrar el modal inmediatamente
+    // Cerrar el modal
     Navigator.of(context).pop();
 
-    // Ejecutar la acción
+    // Ejecutar acción inmediata
     switch (result.action) {
       case AIActionType.playChannel:
         if (result.targetItem != null) {
@@ -165,6 +204,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
   @override
   void dispose() {
+    _silenceTimer?.cancel();
     _animController.dispose();
     _speech.stop();
     super.dispose();
@@ -172,10 +212,10 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
-    // Detección 100% infalible de sección
+    // Normalización 100% infalible de sección
     final currentTabLower = widget.currentSection.toLowerCase().trim();
-    final bool isMovies = currentTabLower == 'movies' || currentTabLower.contains('peli');
-    final bool isSeries = currentTabLower == 'series' || currentTabLower.contains('seri');
+    final bool isMovies = currentTabLower.contains('peli') || currentTabLower == 'movies' || currentTabLower == '1';
+    final bool isSeries = currentTabLower.contains('seri') || currentTabLower == 'series' || currentTabLower == '2';
 
     return Container(
       padding: const EdgeInsets.only(top: 12, bottom: 24, left: 20, right: 20),
@@ -255,7 +295,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           ),
           const SizedBox(height: 16),
 
-          // Sugerencias Dinámicas Reales
+          // Título de Sugerencias Dinámicas
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -275,6 +315,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           ),
           const SizedBox(height: 10),
 
+          // Chips Dinámicos según la sección activa
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -288,14 +329,14 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                 : (isSeries
                     ? [
                         _buildSuggestionChip("🎬 Series de Drama", "Series de Drama"),
-                        _buildSuggestionChip("🔥 Estrenos y Temporadas", "Temporada"),
+                        _buildSuggestionChip("🔥 Estrenos y Temporadas", "Temporadas"),
                         _buildSuggestionChip("📺 Ir a Canales en Vivo", "En Vivo"),
                       ]
                     : [
-                        _buildSuggestionChip("⚽ ESPN Deportes", "ESPN"),
+                        _buildSuggestionChip("⚽ Deportes en Vivo", "Deportes"),
                         _buildSuggestionChip("📰 Canales de Noticias", "Noticias"),
+                        _buildSuggestionChip("🎵 Música en Directo", "Música"),
                         _buildSuggestionChip("📅 Guía de Canales (EPG)", "Guía"),
-                        _buildSuggestionChip("🍿 Ir a Películas", "Películas"),
                       ]),
           ),
           const SizedBox(height: 20),
