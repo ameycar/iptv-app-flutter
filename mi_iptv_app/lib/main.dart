@@ -139,7 +139,13 @@ class _HomeScreenState extends State<HomeScreen> {
   String _selectedCategory = 'Todos';
   String _selectedSection = 'En Vivo'; // 'En Vivo', 'Películas', 'Series'
   
+  // MOTOR DE TRIPLE BUFFER TIVIMATE (CANAL ACTUAL + CANAL SIGUIENTE + CANAL ANTERIOR)
   VideoPlayerController? _videoPlayerController;
+  VideoPlayerController? _preloadNextController;
+  VideoPlayerController? _preloadPrevController;
+  String? _preloadedNextUrl;
+  String? _preloadedPrevUrl;
+
   bool _isVideoLoading = false;
   bool _hasVideoError = false;
   bool _isFullScreenMode = false;
@@ -202,6 +208,74 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {});
   }
 
+  // PRECARGA EN SEGUNDO PLANO ESTILO TIVIMATE (CANAL SIGUIENTE Y ANTERIOR)
+  void _warmUpAdjacentChannels() {
+    if (_filteredChannels.length < 2) return;
+
+    final currentCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+        ? _channels[_selectedChannelIndex]
+        : null;
+    if (currentCh == null) return;
+
+    final currentList = _filteredChannels;
+    int curIdx = currentList.indexOf(currentCh);
+    if (curIdx == -1) return;
+
+    final nextIdx = (curIdx + 1) % currentList.length;
+    final prevIdx = (curIdx - 1 < 0) ? currentList.length - 1 : curIdx - 1;
+
+    final nextUrl = currentList[nextIdx].streamUrl.trim();
+    final prevUrl = currentList[prevIdx].streamUrl.trim();
+
+    // Precargar canal siguiente si no está listo
+    if (nextUrl.isNotEmpty && nextUrl != _preloadedNextUrl) {
+      _preloadNextController?.dispose();
+      _preloadNextController = null;
+      _preloadedNextUrl = nextUrl;
+
+      try {
+        final uri = Uri.parse(Uri.encodeFull(nextUrl));
+        final controller = VideoPlayerController.networkUrl(
+          uri,
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+        controller.initialize().then((_) {
+          if (mounted && _preloadedNextUrl == nextUrl) {
+            controller.setVolume(0.0);
+            controller.pause();
+            _preloadNextController = controller;
+          } else {
+            controller.dispose();
+          }
+        }).catchError((_) {});
+      } catch (_) {}
+    }
+
+    // Precargar canal anterior
+    if (prevUrl.isNotEmpty && prevUrl != _preloadedPrevUrl && prevUrl != nextUrl) {
+      _preloadPrevController?.dispose();
+      _preloadPrevController = null;
+      _preloadedPrevUrl = prevUrl;
+
+      try {
+        final uri = Uri.parse(Uri.encodeFull(prevUrl));
+        final controller = VideoPlayerController.networkUrl(
+          uri,
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+        controller.initialize().then((_) {
+          if (mounted && _preloadedPrevUrl == prevUrl) {
+            controller.setVolume(0.0);
+            controller.pause();
+            _preloadPrevController = controller;
+          } else {
+            controller.dispose();
+          }
+        }).catchError((_) {});
+      } catch (_) {}
+    }
+  }
+
   void _initializeVideo(String rawUrl) async {
     if (!mounted) return;
     final url = rawUrl.trim();
@@ -250,6 +324,9 @@ class _HomeScreenState extends State<HomeScreen> {
           _isVideoLoading = false;
           _hasVideoError = false;
         });
+
+        // Iniciar precarga de canales adyacentes estilo decodificador
+        _warmUpAdjacentChannels();
       } else {
         await controller.dispose();
       }
@@ -264,6 +341,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // ZAPPING INSTANTÁNEO AL SIGUIENTE CANAL (< 50 ms)
   void _nextChannel() {
     final currentList = _filteredChannels;
     if (currentList.isEmpty) return;
@@ -273,9 +351,41 @@ class _HomeScreenState extends State<HomeScreen> {
     if (currentCh == null) return;
     int curIdxInFiltered = currentList.indexOf(currentCh);
     int nextIdx = (curIdxInFiltered + 1) % currentList.length;
-    _changeChannel(currentList[nextIdx]);
+    final nextCh = currentList[nextIdx];
+
+    // ¿Ya está en el buffer caliente de precarga? ¡CAMBIO INSTANTÁNEO EN 0 MS!
+    if (_preloadNextController != null &&
+        _preloadNextController!.value.isInitialized &&
+        _preloadedNextUrl == nextCh.streamUrl.trim()) {
+      
+      final old = _videoPlayerController;
+      _videoPlayerController = _preloadNextController;
+      _preloadNextController = null;
+      _preloadedNextUrl = null;
+
+      _videoPlayerController!.setVolume(_currentVolume);
+      _videoPlayerController!.play();
+      _videoPlayerController!.setLooping(true);
+
+      old?.dispose();
+
+      int realIndex = _channels.indexOf(nextCh);
+      setState(() {
+        _selectedChannelIndex = realIndex != -1 ? realIndex : _selectedChannelIndex;
+        _showOsd = true;
+        _isVideoLoading = false;
+        _hasVideoError = false;
+      });
+
+      _triggerOsdTimer();
+      _warmUpAdjacentChannels(); // Precargar de inmediato el que sigue
+      return;
+    }
+
+    _changeChannel(nextCh);
   }
 
+  // ZAPPING INSTANTÁNEO AL CANAL ANTERIOR (< 50 ms)
   void _previousChannel() {
     final currentList = _filteredChannels;
     if (currentList.isEmpty) return;
@@ -285,7 +395,38 @@ class _HomeScreenState extends State<HomeScreen> {
     if (currentCh == null) return;
     int curIdxInFiltered = currentList.indexOf(currentCh);
     int prevIdx = (curIdxInFiltered - 1 < 0) ? currentList.length - 1 : curIdxInFiltered - 1;
-    _changeChannel(currentList[prevIdx]);
+    final prevCh = currentList[prevIdx];
+
+    // ¿Ya está en el buffer caliente de precarga? ¡CAMBIO INSTANTÁNEO EN 0 MS!
+    if (_preloadPrevController != null &&
+        _preloadPrevController!.value.isInitialized &&
+        _preloadedPrevUrl == prevCh.streamUrl.trim()) {
+      
+      final old = _videoPlayerController;
+      _videoPlayerController = _preloadPrevController;
+      _preloadPrevController = null;
+      _preloadedPrevUrl = null;
+
+      _videoPlayerController!.setVolume(_currentVolume);
+      _videoPlayerController!.play();
+      _videoPlayerController!.setLooping(true);
+
+      old?.dispose();
+
+      int realIndex = _channels.indexOf(prevCh);
+      setState(() {
+        _selectedChannelIndex = realIndex != -1 ? realIndex : _selectedChannelIndex;
+        _showOsd = true;
+        _isVideoLoading = false;
+        _hasVideoError = false;
+      });
+
+      _triggerOsdTimer();
+      _warmUpAdjacentChannels();
+      return;
+    }
+
+    _changeChannel(prevCh);
   }
 
   void _changeChannel(ChannelModel ch) async {
@@ -348,7 +489,7 @@ class _HomeScreenState extends State<HomeScreen> {
       currentChannel: _channels.isNotEmpty && _selectedChannelIndex < _channels.length
           ? _channels[_selectedChannelIndex]
           : null,
-      currentSection: _selectedSection, // AHORA SÍ PASA LA SECCIÓN REAL (Películas, Series o En Vivo)
+      currentSection: _selectedSection, // ENVÍO DE SECCIÓN REAL ('En Vivo', 'Películas' o 'Series')
       onChannelSelected: (item) {
         if (item is ChannelModel) {
           if (item.isLive && _selectedSection != 'En Vivo') {
@@ -1847,6 +1988,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _clockTimer?.cancel();
     _videoPlayerController?.dispose();
+    _preloadNextController?.dispose();
+    _preloadPrevController?.dispose();
     _searchController.dispose();
     super.dispose();
   }
