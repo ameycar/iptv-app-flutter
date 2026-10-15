@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/voice_assistant_service.dart';
+import '../services/voice_nlp_service.dart';
 
 class AlexaVoiceSheet extends StatefulWidget {
   final List<dynamic> channels;
@@ -53,8 +54,8 @@ class AlexaVoiceSheet extends StatefulWidget {
 
 class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProviderStateMixin {
   final VoiceAssistantService _voiceService = VoiceAssistantService();
-  String _recognizedText = "Escuchando... Di lo que deseas ver";
-  String _statusMessage = "ASISTENTE INTELIGENTE AMEYCAR";
+  String _recognizedText = "Escuchando... Di: 'ESPN', 'Guía', o una película";
+  String _statusMessage = "MICRÓFONO ACTIVO";
   bool _isProcessing = false;
   late AnimationController _animController;
 
@@ -66,11 +67,6 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
 
-    // Saludo personalizado si ya se conoce el nombre del usuario
-    if (_voiceService.userName.isNotEmpty) {
-      _statusMessage = "HOLA ${_voiceService.userName.toUpperCase()} • AMEYCAR AI";
-    }
-
     _startListening();
   }
 
@@ -79,265 +75,174 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
     setState(() {
       _recognizedText = "Escuchando tu voz... Habla ahora";
-      _statusMessage = _voiceService.userName.isNotEmpty
-          ? "ESCUCHANDO A ${_voiceService.userName.toUpperCase()}"
-          : "MICRÓFONO ACTIVO";
+      _statusMessage = "MICRÓFONO ACTIVO";
       _isProcessing = false;
     });
 
-    try {
-      _voiceService.startListening(
-        onWordsRecognized: (words) {
-          if (mounted && !_isProcessing) {
-            setState(() {
-              _recognizedText = words;
-            });
-          }
-        },
-        onListeningComplete: () {
-          if (mounted && !_isProcessing) {
-            _handleCommandExecution();
-          }
-        },
-      );
-    } catch (e) {
-      if (mounted) {
+    _voiceService.listen(
+      onResult: (text, isFinal) {
+        if (!mounted) return;
         setState(() {
-          _statusMessage = "TOCA EL MICRÓFONO PARA REINTENTAR";
+          _recognizedText = text;
         });
-      }
-    }
+      },
+      onListeningComplete: () {
+        if (mounted && _recognizedText.isNotEmpty && !_recognizedText.startsWith("Escuchando")) {
+          _handleCommandExecution(_recognizedText);
+        }
+      },
+    );
   }
 
-  Future<void> _handleCommandExecution([String? explicitQuery]) async {
-    if (_isProcessing) return;
-
-    final queryToProcess = explicitQuery ?? _recognizedText;
-
-    // Validación de texto reconocido
-    if (queryToProcess.isEmpty ||
-        queryToProcess.startsWith("Escuchando") ||
-        queryToProcess == "...") {
-      setState(() {
-        _statusMessage = "NO SE DETECTÓ NINGÚN COMANDO";
-      });
-      return;
-    }
+  void _handleCommandExecution(String command) async {
+    if (_isProcessing || command.trim().isEmpty) return;
 
     setState(() {
       _isProcessing = true;
-      _statusMessage = "PROCESANDO CON INTELIGENCIA ARTIFICIAL...";
+      _statusMessage = "EJECUTANDO ORDEN...";
     });
 
-    // 1. Liberar inmediatamente el micrófono
-    try {
-      _voiceService.stopListening();
-    } catch (_) {}
+    await _voiceService.stop();
 
-    try {
-      // 2. Procesar con el cerebro de IA contextual
-      final result = _voiceService.processVoiceCommand(
-        query: queryToProcess,
-        channels: widget.channels,
-        currentChannel: widget.currentChannel,
-        currentSection: widget.currentSection,
-      );
+    // Procesa el comando con la IA inteligente
+    final result = await _voiceService.processVoiceCommand(
+      command,
+      widget.channels,
+      currentChannel: widget.currentChannel,
+      contextSection: widget.currentSection,
+    );
 
-      // 3. Responder por voz en segundo plano SIN bloquear la ejecución
-      // (Sin 'await' para que no congele la aplicación si el audio tarda)
-      if (result.spokenResponse.isNotEmpty) {
-        _voiceService
-            .speak(result.spokenResponse)
-            .timeout(const Duration(milliseconds: 1500), onTimeout: () {})
-            .catchError((_) {});
-      }
+    // Hablar la respuesta en segundo plano (sin bloquear)
+    _voiceService.speak(result.spokenResponse);
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      // 4. Ejecución de la acción según la intención detectada
-      if (result.actionType == 'CHANNEL' && result.targetChannel != null) {
-        final channelToPlay = result.targetChannel;
-        setState(() {
-          _statusMessage = "SINTONIZANDO CANAL...";
-        });
+    // 1. Cerrar el modal de voz de inmediato
+    Navigator.of(context).pop();
 
-        await Future.delayed(const Duration(milliseconds: 250));
-        if (!mounted) return;
+    // 2. Ejecutar la acción según la intención detectada
+    switch (result.type) {
+      case VoiceIntentType.playChannel:
+        if (result.targetChannel != null) {
+          widget.onChannelSelected(result.targetChannel);
+        }
+        break;
 
-        Navigator.pop(context);
-        widget.onChannelSelected(channelToPlay);
-      } else if (result.actionType == 'SECTION' && result.targetSection.isNotEmpty) {
-        setState(() {
-          _statusMessage = "ABRIENDO ${result.targetSection}...";
-        });
-        await Future.delayed(const Duration(milliseconds: 250));
-        if (!mounted) return;
-
-        Navigator.pop(context);
-        widget.onNavigateSection?.call(result.targetSection);
-      } else if (result.actionType == 'EPG') {
-        setState(() {
-          _statusMessage = "ABRIENDO GUÍA EPG...";
-        });
-        await Future.delayed(const Duration(milliseconds: 250));
-        if (!mounted) return;
-
-        Navigator.pop(context);
+      case VoiceIntentType.openEPG:
         widget.onOpenEpg?.call();
-      } else if (result.actionType == 'SEARCH') {
-        setState(() {
-          _statusMessage = "BUSCANDO CONTENIDO...";
-        });
-        await Future.delayed(const Duration(milliseconds: 250));
-        if (!mounted) return;
+        break;
 
-        Navigator.pop(context);
+      case VoiceIntentType.switchTab:
+        if (result.targetTab != null) {
+          widget.onNavigateSection?.call(result.targetTab!);
+        }
+        break;
+
+      case VoiceIntentType.searchContent:
+        if (widget.onSearch != null && result.searchQuery != null) {
+          widget.onSearch!(result.searchQuery!, widget.currentSection);
+        } else if (result.targetChannel != null) {
+          widget.onChannelSelected(result.targetChannel);
+        }
+        break;
+
+      case VoiceIntentType.unknown:
+      default:
+        // Si no está seguro, buscar en la sección actual
         if (widget.onSearch != null) {
-          widget.onSearch!(result.searchQuery ?? queryToProcess, widget.currentSection);
-        } else {
-          widget.onNavigateSection?.call(result.targetSection);
+          widget.onSearch!(command, widget.currentSection);
         }
-      } else {
-        // Mensaje conversacional o nombre guardado
-        setState(() {
-          _isProcessing = false;
-          _statusMessage = _voiceService.userName.isNotEmpty
-              ? "¡HOLA ${_voiceService.userName.toUpperCase()}!"
-              : "LISTO";
-        });
-        await Future.delayed(const Duration(milliseconds: 1000));
-        if (mounted) {
-          Navigator.pop(context);
-        }
-      }
-    } catch (e) {
-      // 5. Plan de respaldo si falla processVoiceCommand:
-      // Busca directamente el canal por nombre para que NUNCA se quede congelado
-      dynamic matchedChannel;
-      final q = queryToProcess.toLowerCase().trim();
-      for (final ch in widget.channels) {
-        try {
-          final name = (ch.name ?? '').toString().toLowerCase();
-          if (name.contains(q) || q.contains(name)) {
-            matchedChannel = ch;
-            break;
-          }
-        } catch (_) {}
-      }
-
-      if (matchedChannel != null && mounted) {
-        Navigator.pop(context);
-        widget.onChannelSelected(matchedChannel);
-      } else {
-        if (mounted) {
-          setState(() {
-            _isProcessing = false;
-            _statusMessage = "COMANDO NO RECONOCIDO";
-          });
-          await Future.delayed(const Duration(milliseconds: 1000));
-          if (mounted) {
-            Navigator.pop(context);
-          }
-        }
-      }
+        break;
     }
   }
 
   @override
   void dispose() {
     _animController.dispose();
-    try {
-      _voiceService.stopListening();
-    } catch (_) {}
+    _voiceService.stop();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Obtenemos sugerencias dinámicas adaptadas a la sección actual
-    final suggestions = _voiceService.getSuggestionsForContext(widget.currentSection);
+    final bool isMovies = widget.currentSection.toUpperCase().contains('PELI');
+    final bool isSeries = widget.currentSection.toUpperCase().contains('SERI');
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 26),
-      decoration: BoxDecoration(
-        color: const Color(0xFF070A10).withOpacity(0.98),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5), width: 1.5),
+      padding: const EdgeInsets.only(top: 12, bottom: 24, left: 20, right: 20),
+      decoration: const BoxDecoration(
+        color: Color(0xFF0D121D),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        border: Border(
+          top: BorderSide(color: Color(0xFF1E293B), width: 1.5),
+        ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF00E5FF).withOpacity(0.25),
-            blurRadius: 25,
-            spreadRadius: 4,
+            color: Color(0x6600E5FF),
+            blurRadius: 30,
+            spreadRadius: -5,
           )
         ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Barra superior de arrastre
+          // Tirador superior
           Container(
             width: 44,
-            height: 4,
+            height: 5,
             decoration: BoxDecoration(
               color: Colors.white24,
-              borderRadius: BorderRadius.circular(2),
+              borderRadius: BorderRadius.circular(10),
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 20),
 
-          // Botón / Animación de micrófono central interactivo
-          GestureDetector(
-            onTap: () {
-              if (!_isProcessing) {
-                _startListening();
-              }
-            },
-            child: AnimatedBuilder(
-              animation: _animController,
-              builder: (context, child) {
-                double scale = 1.0 + (_animController.value * 0.18);
-                return Transform.scale(
-                  scale: _isProcessing ? 1.0 : scale,
-                  child: Container(
-                    width: 76,
-                    height: 76,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const RadialGradient(
-                        colors: [
-                          Color(0xFF00E5FF),
-                          Color(0xFF0072FF),
-                          Color(0xFF7B2CBF),
-                        ],
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF00E5FF).withOpacity(0.6),
-                          blurRadius: 20 * scale,
-                          spreadRadius: 3,
-                        )
-                      ],
-                    ),
-                    child: Icon(
-                      _isProcessing ? Icons.auto_awesome : Icons.mic,
-                      color: Colors.black,
-                      size: 36,
-                    ),
+          // Botón del Micrófono con Pulso Neón
+          AnimatedBuilder(
+            animation: _animController,
+            builder: (context, child) {
+              return Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const RadialGradient(
+                    colors: [Color(0xFF00E5FF), Color(0xFF9D00FF)],
                   ),
-                );
-              },
-            ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _isProcessing
+                          ? const Color(0xFF9D00FF).withOpacity(0.8)
+                          : const Color(0xFF00E5FF).withOpacity(0.4 + (_animController.value * 0.4)),
+                      blurRadius: 15 + (_animController.value * 20),
+                      spreadRadius: 2 + (_animController.value * 4),
+                    ),
+                  ],
+                ),
+                child: IconButton(
+                  icon: Icon(
+                    _isProcessing ? Icons.auto_awesome : Icons.mic,
+                    size: 40,
+                    color: Colors.white,
+                  ),
+                  onPressed: () {
+                    if (_isProcessing) return;
+                    _startListening();
+                  },
+                ),
+              );
+            },
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
 
-          // Estado del asistente
+          // Estado del Asistente
           Text(
             _statusMessage,
-            textAlign: TextAlign.center,
             style: const TextStyle(
               color: Color(0xFF00E5FF),
-              fontWeight: FontWeight.w900,
               fontSize: 12,
+              fontWeight: FontWeight.bold,
               letterSpacing: 1.5,
             ),
           ),
@@ -346,88 +251,113 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           // Cuadro de texto reconocido
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
-              color: const Color(0xFF131B2E),
+              color: const Color(0xFF161F30),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white12),
+              border: Border.all(color: const Color(0xFF1E2D4A)),
             ),
             child: Text(
-              "\"$_recognizedText\"",
+              '"$_recognizedText"',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 15,
+                fontSize: 16,
                 fontWeight: FontWeight.w600,
-                height: 1.3,
               ),
             ),
           ),
           const SizedBox(height: 16),
 
-          // Indicador de sección activa para sugerencias inteligentes
+          // Sugerencias Dinámicas basadas en la pestaña activa
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                widget.currentSection.toUpperCase().contains('PELICULA')
-                    ? Icons.movie_outlined
-                    : widget.currentSection.toUpperCase().contains('SERIE')
-                        ? Icons.tv_outlined
-                        : Icons.live_tv_outlined,
-                color: const Color(0xFF00E5FF),
+                isMovies ? Icons.movie : (isSeries ? Icons.tv : Icons.live_tv),
                 size: 14,
+                color: const Color(0xFF00E5FF),
               ),
               const SizedBox(width: 6),
               Text(
-                "Sugerencias para ${widget.currentSection}:",
+                isMovies
+                    ? "Sugerencias para PELÍCULAS:"
+                    : (isSeries ? "Sugerencias para SERIES:" : "Sugerencias para EN VIVO:"),
                 style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 11,
+                  color: Colors.white60,
+                  fontSize: 12,
                   fontWeight: FontWeight.w500,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
 
-          // Sugerencias rápidas (chips) dinámicas y contextuales
+          // Botones de Sugerencia
           Wrap(
             spacing: 8,
             runSpacing: 8,
             alignment: WrapAlignment.center,
-            children: suggestions.map((item) {
-              final label = item['label'] ?? '';
-              final query = item['query'] ?? label;
-              return _buildChip(label, query);
-            }).toList(),
+            children: isMovies
+                ? [
+                    _buildSuggestionChip("🍿 Películas de Acción", "Películas de Acción"),
+                    _buildSuggestionChip("⭐ Más Populares", "Populares"),
+                    _buildSuggestionChip("📺 Ver Canales en Vivo", "En Vivo"),
+                  ]
+                : (isSeries
+                    ? [
+                        _buildSuggestionChip("🎬 Series de Drama", "Series de Drama"),
+                        _buildSuggestionChip("🔥 Nuevos Episodios", "Nuevos"),
+                        _buildSuggestionChip("📺 Ver Canales en Vivo", "En Vivo"),
+                      ]
+                    : [
+                        _buildSuggestionChip("⚽ ESPN Deportes", "ESPN"),
+                        _buildSuggestionChip("📰 Canales de Noticias", "Noticias"),
+                        _buildSuggestionChip("📅 Guía de Canales (EPG)", "Guía"),
+                        _buildSuggestionChip("🍿 Ir a Películas", "Películas"),
+                      ]),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 20),
 
-          // Botones inferiores de Cancelar / Ejecutar
+          // Botones Inferiores: Cancelar y Ejecutar
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              TextButton.icon(
-                onPressed: () {
-                  try {
-                    _voiceService.stopListening();
-                  } catch (_) {}
-                  Navigator.pop(context);
-                },
-                icon: const Icon(Icons.close, color: Colors.white60),
-                label: const Text("Cancelar", style: TextStyle(color: Colors.white60)),
-              ),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00E5FF),
-                  foregroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              Expanded(
+                child: TextButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close, color: Colors.white60),
+                  label: const Text(
+                    "Cancelar",
+                    style: TextStyle(color: Colors.white60, fontSize: 15),
+                  ),
                 ),
-                onPressed: _isProcessing ? null : () => _handleCommandExecution(),
-                icon: const Icon(Icons.check, size: 20),
-                label: const Text("Ejecutar", style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00E5FF),
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () {
+                    if (_recognizedText.isNotEmpty && !_recognizedText.startsWith("Escuchando")) {
+                      _handleCommandExecution(_recognizedText);
+                    }
+                  },
+                  icon: const Icon(Icons.check, color: Colors.black),
+                  label: const Text(
+                    "Ejecutar",
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
@@ -436,22 +366,16 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
     );
   }
 
-  Widget _buildChip(String label, String query) {
+  Widget _buildSuggestionChip(String label, String command) {
     return InkWell(
+      onTap: () => _handleCommandExecution(command),
       borderRadius: BorderRadius.circular(20),
-      onTap: () {
-        if (_isProcessing) return;
-        setState(() {
-          _recognizedText = query;
-        });
-        _handleCommandExecution(query);
-      },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: const Color(0xFF1E293B),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.35)),
+          border: Border.all(color: const Color(0xFF334155)),
         ),
         child: Text(
           label,
