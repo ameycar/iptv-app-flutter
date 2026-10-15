@@ -134,77 +134,111 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       _voiceService.stopListening();
     } catch (_) {}
 
-    // 2. Procesar con el cerebro de IA contextual
-    final result = _voiceService.processVoiceCommand(
-      query: queryToProcess,
-      channels: widget.channels,
-      currentChannel: widget.currentChannel,
-      currentSection: widget.currentSection,
-    );
+    try {
+      // 2. Procesar con el cerebro de IA contextual
+      final result = _voiceService.processVoiceCommand(
+        query: queryToProcess,
+        channels: widget.channels,
+        currentChannel: widget.currentChannel,
+        currentSection: widget.currentSection,
+      );
 
-    // 3. Responder por voz con el sintetizador natural
-    if (result.spokenResponse.isNotEmpty) {
-      try {
-        await _voiceService.speak(result.spokenResponse);
-      } catch (_) {}
-    }
-
-    if (!mounted) return;
-
-    // 4. Ejecución de la acción según la intención detectada
-    if (result.actionType == 'CHANNEL' && result.targetChannel != null) {
-      final channelToPlay = result.targetChannel;
-      setState(() {
-        _statusMessage = "SINTONIZANDO CANAL...";
-      });
-
-      await Future.delayed(const Duration(milliseconds: 350));
-      if (!mounted) return;
-
-      Navigator.pop(context);
-      widget.onChannelSelected(channelToPlay);
-    } else if (result.actionType == 'SECTION' && result.targetSection.isNotEmpty) {
-      setState(() {
-        _statusMessage = "ABRIENDO ${result.targetSection}...";
-      });
-      await Future.delayed(const Duration(milliseconds: 350));
-      if (!mounted) return;
-
-      widget.onNavigateSection?.call(result.targetSection);
-      Navigator.pop(context);
-    } else if (result.actionType == 'EPG') {
-      setState(() {
-        _statusMessage = "ABRIENDO GUÍA EPG...";
-      });
-      await Future.delayed(const Duration(milliseconds: 300));
-      if (!mounted) return;
-
-      widget.onOpenEpg?.call();
-      Navigator.pop(context);
-    } else if (result.actionType == 'SEARCH') {
-      setState(() {
-        _statusMessage = "BUSCANDO CONTENIDO...";
-      });
-      await Future.delayed(const Duration(milliseconds: 350));
-      if (!mounted) return;
-
-      if (widget.onSearch != null) {
-        widget.onSearch!(result.searchQuery ?? queryToProcess, widget.currentSection);
-      } else {
-        widget.onNavigateSection?.call(result.targetSection);
+      // 3. Responder por voz en segundo plano SIN bloquear la ejecución
+      // (Sin 'await' para que no congele la aplicación si el audio tarda)
+      if (result.spokenResponse.isNotEmpty) {
+        _voiceService
+            .speak(result.spokenResponse)
+            .timeout(const Duration(milliseconds: 1500), onTimeout: () {})
+            .catchError((_) {});
       }
-      Navigator.pop(context);
-    } else {
-      // Mensaje conversacional o nombre guardado
-      setState(() {
-        _isProcessing = false;
-        _statusMessage = _voiceService.userName.isNotEmpty
-            ? "¡HOLA ${_voiceService.userName.toUpperCase()}!"
-            : "LISTO";
-      });
-      await Future.delayed(const Duration(milliseconds: 1400));
-      if (mounted) {
+
+      if (!mounted) return;
+
+      // 4. Ejecución de la acción según la intención detectada
+      if (result.actionType == 'CHANNEL' && result.targetChannel != null) {
+        final channelToPlay = result.targetChannel;
+        setState(() {
+          _statusMessage = "SINTONIZANDO CANAL...";
+        });
+
+        await Future.delayed(const Duration(milliseconds: 250));
+        if (!mounted) return;
+
         Navigator.pop(context);
+        widget.onChannelSelected(channelToPlay);
+      } else if (result.actionType == 'SECTION' && result.targetSection.isNotEmpty) {
+        setState(() {
+          _statusMessage = "ABRIENDO ${result.targetSection}...";
+        });
+        await Future.delayed(const Duration(milliseconds: 250));
+        if (!mounted) return;
+
+        Navigator.pop(context);
+        widget.onNavigateSection?.call(result.targetSection);
+      } else if (result.actionType == 'EPG') {
+        setState(() {
+          _statusMessage = "ABRIENDO GUÍA EPG...";
+        });
+        await Future.delayed(const Duration(milliseconds: 250));
+        if (!mounted) return;
+
+        Navigator.pop(context);
+        widget.onOpenEpg?.call();
+      } else if (result.actionType == 'SEARCH') {
+        setState(() {
+          _statusMessage = "BUSCANDO CONTENIDO...";
+        });
+        await Future.delayed(const Duration(milliseconds: 250));
+        if (!mounted) return;
+
+        Navigator.pop(context);
+        if (widget.onSearch != null) {
+          widget.onSearch!(result.searchQuery ?? queryToProcess, widget.currentSection);
+        } else {
+          widget.onNavigateSection?.call(result.targetSection);
+        }
+      } else {
+        // Mensaje conversacional o nombre guardado
+        setState(() {
+          _isProcessing = false;
+          _statusMessage = _voiceService.userName.isNotEmpty
+              ? "¡HOLA ${_voiceService.userName.toUpperCase()}!"
+              : "LISTO";
+        });
+        await Future.delayed(const Duration(milliseconds: 1000));
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      }
+    } catch (e) {
+      // 5. Plan de respaldo si falla processVoiceCommand:
+      // Busca directamente el canal por nombre para que NUNCA se quede congelado
+      dynamic matchedChannel;
+      final q = queryToProcess.toLowerCase().trim();
+      for (final ch in widget.channels) {
+        try {
+          final name = (ch.name ?? '').toString().toLowerCase();
+          if (name.contains(q) || q.contains(name)) {
+            matchedChannel = ch;
+            break;
+          }
+        } catch (_) {}
+      }
+
+      if (matchedChannel != null && mounted) {
+        Navigator.pop(context);
+        widget.onChannelSelected(matchedChannel);
+      } else {
+        if (mounted) {
+          setState(() {
+            _isProcessing = false;
+            _statusMessage = "COMANDO NO RECONOCIDO";
+          });
+          await Future.delayed(const Duration(milliseconds: 1000));
+          if (mounted) {
+            Navigator.pop(context);
+          }
+        }
       }
     }
   }
