@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
-import '../services/voice_assistant_service.dart';
-import '../services/voice_nlp_service.dart';
+import 'package:flutter/services.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:flutter_tts/flutter_tts.dart';
+import '../models/playlist_item.dart';
+import '../services/ai_curator_service.dart';
 
 class AlexaVoiceSheet extends StatefulWidget {
-  final List<dynamic> channels;
-  final dynamic currentChannel;
-  final String currentSection; // 'LIVE', 'PELICULAS', 'SERIES'
-  final Function(dynamic channel) onChannelSelected;
+  final List<PlaylistItem> channels;
+  final String currentSection; // 'live', 'movies', 'series'
+  final Function(PlaylistItem item) onChannelSelected;
   final VoidCallback? onOpenEpg;
   final Function(String section)? onNavigateSection;
   final Function(String query, String section)? onSearch;
@@ -14,8 +16,7 @@ class AlexaVoiceSheet extends StatefulWidget {
   const AlexaVoiceSheet({
     super.key,
     required this.channels,
-    this.currentChannel,
-    this.currentSection = 'LIVE',
+    this.currentSection = 'live',
     required this.onChannelSelected,
     this.onOpenEpg,
     this.onNavigateSection,
@@ -24,10 +25,9 @@ class AlexaVoiceSheet extends StatefulWidget {
 
   static void show(
     BuildContext context, {
-    required List<dynamic> channels,
-    dynamic currentChannel,
-    String currentSection = 'LIVE',
-    required Function(dynamic channel) onChannelSelected,
+    required List<PlaylistItem> channels,
+    required String currentSection,
+    required Function(PlaylistItem item) onChannelSelected,
     VoidCallback? onOpenEpg,
     Function(String section)? onNavigateSection,
     Function(String query, String section)? onSearch,
@@ -38,7 +38,6 @@ class AlexaVoiceSheet extends StatefulWidget {
       backgroundColor: Colors.transparent,
       builder: (ctx) => AlexaVoiceSheet(
         channels: channels,
-        currentChannel: currentChannel,
         currentSection: currentSection,
         onChannelSelected: onChannelSelected,
         onOpenEpg: onOpenEpg,
@@ -53,8 +52,10 @@ class AlexaVoiceSheet extends StatefulWidget {
 }
 
 class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProviderStateMixin {
-  final VoiceAssistantService _voiceService = VoiceAssistantService();
-  String _recognizedText = "Escuchando... Di: 'ESPN', 'Guía', o una película";
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  final FlutterTts _tts = FlutterTts();
+
+  String _recognizedText = "Escuchando tu voz... Habla ahora";
   String _statusMessage = "MICRÓFONO ACTIVO";
   bool _isProcessing = false;
   late AnimationController _animController;
@@ -67,91 +68,97 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
 
-    _startListening();
+    _initVoiceAndListen();
   }
 
-  void _startListening() {
-    if (_isProcessing) return;
+  Future<void> _initVoiceAndListen() async {
+    try {
+      await _tts.setLanguage("es-ES");
+      await _tts.setSpeechRate(0.55);
 
-    setState(() {
-      _recognizedText = "Escuchando tu voz... Habla ahora";
-      _statusMessage = "MICRÓFONO ACTIVO";
-      _isProcessing = false;
-    });
-
-    _voiceService.listen(
-      onResult: (text, isFinal) {
-        if (!mounted) return;
-        setState(() {
-          _recognizedText = text;
-        });
-      },
-      onListeningComplete: () {
-        if (mounted && _recognizedText.isNotEmpty && !_recognizedText.startsWith("Escuchando")) {
-          _handleCommandExecution(_recognizedText);
-        }
-      },
-    );
+      final available = await _speech.initialize();
+      if (available) {
+        _playBeep();
+        _speech.listen(
+          localeId: 'es_ES',
+          listenFor: const Duration(seconds: 8),
+          pauseFor: const Duration(seconds: 2),
+          onResult: (result) {
+            if (!mounted) return;
+            setState(() {
+              _recognizedText = result.recognizedWords;
+            });
+            if (result.finalResult && result.recognizedWords.isNotEmpty) {
+              _playBeep();
+              _executeAICommand(result.recognizedWords);
+            }
+          },
+        );
+      }
+    } catch (e) {
+      print("Error STT: $e");
+    }
   }
 
-  void _handleCommandExecution(String command) async {
-    if (_isProcessing || command.trim().isEmpty) return;
+  void _playBeep() {
+    HapticFeedback.mediumImpact();
+    SystemSound.play(SystemSoundType.click);
+  }
+
+  void _executeAICommand(String text) async {
+    if (_isProcessing || text.trim().isEmpty) return;
 
     setState(() {
       _isProcessing = true;
-      _statusMessage = "EJECUTANDO ORDEN...";
+      _statusMessage = "PROCESANDO CON INTELIGENCIA ARTIFICIAL...";
     });
 
-    await _voiceService.stop();
+    try {
+      await _speech.stop();
+    } catch (_) {}
 
-    // Procesa el comando con la IA inteligente
-    final result = await _voiceService.processVoiceCommand(
-      command,
-      widget.channels,
-      currentChannel: widget.currentChannel,
-      contextSection: widget.currentSection,
+    // Llamada al Cerebro de IA AICuratorService
+    final result = await AICuratorService.interpretVoiceCommand(
+      userVoicePrompt: text,
+      availableItems: widget.channels,
+      currentTab: widget.currentSection,
     );
 
-    // Hablar la respuesta en segundo plano (sin bloquear)
-    _voiceService.speak(result.spokenResponse);
+    // Hablar la respuesta en voz alta
+    if (result.speechResponse.isNotEmpty) {
+      _tts.speak(result.speechResponse);
+    }
 
     if (!mounted) return;
 
-    // 1. Cerrar el modal de voz de inmediato
+    // Cerrar el modal inmediatamente
     Navigator.of(context).pop();
 
-    // 2. Ejecutar la acción según la intención detectada
-    switch (result.type) {
-      case VoiceIntentType.playChannel:
-        if (result.targetChannel != null) {
-          widget.onChannelSelected(result.targetChannel);
+    // Ejecutar la acción
+    switch (result.action) {
+      case AIActionType.playChannel:
+        if (result.targetItem != null) {
+          widget.onChannelSelected(result.targetItem!);
         }
         break;
 
-      case VoiceIntentType.openEPG:
+      case AIActionType.openEPG:
         widget.onOpenEpg?.call();
         break;
 
-      case VoiceIntentType.switchTab:
+      case AIActionType.switchTab:
         if (result.targetTab != null) {
           widget.onNavigateSection?.call(result.targetTab!);
         }
         break;
 
-      case VoiceIntentType.searchContent:
+      case AIActionType.searchContent:
         if (widget.onSearch != null && result.searchQuery != null) {
-          widget.onSearch!(result.searchQuery!, widget.currentSection);
-        } else if (result.targetChannel != null) {
-          widget.onChannelSelected(result.targetChannel);
+          widget.onSearch!(result.searchQuery!, result.targetTab ?? widget.currentSection);
         }
         break;
 
-      case VoiceIntentType.unknown:
-      default:
-        // Si no está seguro, buscar en la sección actual
-        if (widget.onSearch != null) {
-          widget.onSearch!(command, widget.currentSection);
-        }
+      case AIActionType.speakOnly:
         break;
     }
   }
@@ -159,46 +166,38 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
   @override
   void dispose() {
     _animController.dispose();
-    _voiceService.stop();
+    _speech.stop();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final bool isMovies = widget.currentSection.toUpperCase().contains('PELI');
-    final bool isSeries = widget.currentSection.toUpperCase().contains('SERI');
+    // Detección 100% infalible de sección
+    final currentTabLower = widget.currentSection.toLowerCase().trim();
+    final bool isMovies = currentTabLower == 'movies' || currentTabLower.contains('peli');
+    final bool isSeries = currentTabLower == 'series' || currentTabLower.contains('seri');
 
     return Container(
       padding: const EdgeInsets.only(top: 12, bottom: 24, left: 20, right: 20),
       decoration: const BoxDecoration(
         color: Color(0xFF0D121D),
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        border: Border(
-          top: BorderSide(color: Color(0xFF1E293B), width: 1.5),
-        ),
+        border: Border(top: BorderSide(color: Color(0xFF1E293B), width: 1.5)),
         boxShadow: [
-          BoxShadow(
-            color: Color(0x6600E5FF),
-            blurRadius: 30,
-            spreadRadius: -5,
-          )
+          BoxShadow(color: Color(0x6600E5FF), blurRadius: 30, spreadRadius: -5)
         ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Tirador superior
           Container(
             width: 44,
             height: 5,
-            decoration: BoxDecoration(
-              color: Colors.white24,
-              borderRadius: BorderRadius.circular(10),
-            ),
+            decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(10)),
           ),
           const SizedBox(height: 20),
 
-          // Botón del Micrófono con Pulso Neón
+          // Botón Micrófono Neón
           AnimatedBuilder(
             animation: _animController,
             builder: (context, child) {
@@ -207,9 +206,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                 height: 80,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: const RadialGradient(
-                    colors: [Color(0xFF00E5FF), Color(0xFF9D00FF)],
-                  ),
+                  gradient: const RadialGradient(colors: [Color(0xFF00E5FF), Color(0xFF9D00FF)]),
                   boxShadow: [
                     BoxShadow(
                       color: _isProcessing
@@ -221,14 +218,9 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                   ],
                 ),
                 child: IconButton(
-                  icon: Icon(
-                    _isProcessing ? Icons.auto_awesome : Icons.mic,
-                    size: 40,
-                    color: Colors.white,
-                  ),
+                  icon: Icon(_isProcessing ? Icons.auto_awesome : Icons.mic, size: 40, color: Colors.white),
                   onPressed: () {
-                    if (_isProcessing) return;
-                    _startListening();
+                    if (!_isProcessing) _initVoiceAndListen();
                   },
                 ),
               );
@@ -236,7 +228,6 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           ),
           const SizedBox(height: 14),
 
-          // Estado del Asistente
           Text(
             _statusMessage,
             style: const TextStyle(
@@ -248,7 +239,6 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           ),
           const SizedBox(height: 12),
 
-          // Cuadro de texto reconocido
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -260,40 +250,31 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             child: Text(
               '"$_recognizedText"',
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
             ),
           ),
           const SizedBox(height: 16),
 
-          // Sugerencias Dinámicas basadas en la pestaña activa
+          // Sugerencias Dinámicas Reales
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                isMovies ? Icons.movie : (isSeries ? Icons.tv : Icons.live_tv),
-                size: 14,
+                isMovies ? Icons.movie_filter : (isSeries ? Icons.tv_rounded : Icons.live_tv),
+                size: 16,
                 color: const Color(0xFF00E5FF),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
               Text(
                 isMovies
                     ? "Sugerencias para PELÍCULAS:"
                     : (isSeries ? "Sugerencias para SERIES:" : "Sugerencias para EN VIVO:"),
-                style: const TextStyle(
-                  color: Colors.white60,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
               ),
             ],
           ),
           const SizedBox(height: 10),
 
-          // Botones de Sugerencia
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -301,14 +282,14 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             children: isMovies
                 ? [
                     _buildSuggestionChip("🍿 Películas de Acción", "Películas de Acción"),
-                    _buildSuggestionChip("⭐ Más Populares", "Populares"),
-                    _buildSuggestionChip("📺 Ver Canales en Vivo", "En Vivo"),
+                    _buildSuggestionChip("⭐ Comedias", "Comedia"),
+                    _buildSuggestionChip("📺 Ir a Canales en Vivo", "En Vivo"),
                   ]
                 : (isSeries
                     ? [
                         _buildSuggestionChip("🎬 Series de Drama", "Series de Drama"),
-                        _buildSuggestionChip("🔥 Nuevos Episodios", "Nuevos"),
-                        _buildSuggestionChip("📺 Ver Canales en Vivo", "En Vivo"),
+                        _buildSuggestionChip("🔥 Estrenos y Temporadas", "Temporada"),
+                        _buildSuggestionChip("📺 Ir a Canales en Vivo", "En Vivo"),
                       ]
                     : [
                         _buildSuggestionChip("⚽ ESPN Deportes", "ESPN"),
@@ -319,17 +300,14 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           ),
           const SizedBox(height: 20),
 
-          // Botones Inferiores: Cancelar y Ejecutar
+          // Botones Cancelar y Ejecutar
           Row(
             children: [
               Expanded(
                 child: TextButton.icon(
                   onPressed: () => Navigator.of(context).pop(),
                   icon: const Icon(Icons.close, color: Colors.white60),
-                  label: const Text(
-                    "Cancelar",
-                    style: TextStyle(color: Colors.white60, fontSize: 15),
-                  ),
+                  label: const Text("Cancelar", style: TextStyle(color: Colors.white60, fontSize: 15)),
                 ),
               ),
               const SizedBox(width: 12),
@@ -339,23 +317,17 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                     backgroundColor: const Color(0xFF00E5FF),
                     foregroundColor: Colors.black,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () {
                     if (_recognizedText.isNotEmpty && !_recognizedText.startsWith("Escuchando")) {
-                      _handleCommandExecution(_recognizedText);
+                      _executeAICommand(_recognizedText);
                     }
                   },
                   icon: const Icon(Icons.check, color: Colors.black),
                   label: const Text(
                     "Ejecutar",
-                    style: TextStyle(
-                      color: Colors.black,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
+                    style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15),
                   ),
                 ),
               ),
@@ -368,7 +340,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
   Widget _buildSuggestionChip(String label, String command) {
     return InkWell(
-      onTap: () => _handleCommandExecution(command),
+      onTap: () => _executeAICommand(command),
       borderRadius: BorderRadius.circular(20),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -377,14 +349,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: const Color(0xFF334155)),
         ),
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
+        child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
       ),
     );
   }

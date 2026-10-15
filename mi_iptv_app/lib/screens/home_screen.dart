@@ -80,19 +80,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     AlexaVoiceSheet.show(
       context,
       channels: _channels,
-      currentSection: _activeTab == 'movies'
-          ? 'PELICULAS'
-          : _activeTab == 'series'
-              ? 'SERIES'
-              : 'LIVE',
+      currentSection: _activeTab, // Pasa exactamente 'live', 'movies' o 'series'
       onChannelSelected: (channel) {
         _playChannel(channel);
       },
       onNavigateSection: (section) {
         setState(() {
-          if (section.toUpperCase().contains('PELI')) {
+          final s = section.toLowerCase();
+          if (s.contains('peli') || s == 'movies') {
             _activeTab = 'movies';
-          } else if (section.toUpperCase().contains('SERIE')) {
+          } else if (s.contains('seri') || s == 'series') {
             _activeTab = 'series';
           } else {
             _activeTab = 'live';
@@ -105,9 +102,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _isSearching = true;
           _searchFilter = query;
           _searchController.text = query;
-          if (section.toUpperCase().contains('PELI')) _activeTab = 'movies';
-          else if (section.toUpperCase().contains('SERIE')) _activeTab = 'series';
-          else _activeTab = 'live';
+          final s = section.toLowerCase();
+          if (s.contains('peli') || s == 'movies') {
+            _activeTab = 'movies';
+          } else if (s.contains('seri') || s == 'series') {
+            _activeTab = 'series';
+          } else {
+            _activeTab = 'live';
+          }
         });
       },
       onOpenEpg: () {
@@ -120,7 +122,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   void _playChannel(PlaylistItem channel) {
     setState(() {
-      _pipChannel = null; // Cierra el mini-reproductor al abrir en pantalla completa
+      _pipChannel = null;
     });
     Navigator.push(
       context,
@@ -185,7 +187,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return list;
   }
 
-  // Generador dinámico de guía según la hora y canal
   Widget _buildDynamicEPGBar() {
     if (_channels.isEmpty || _activeTab != 'live') return const SizedBox.shrink();
 
@@ -263,7 +264,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  // Mini-reproductor flotante para multitarea (PiP)
   Widget _buildFloatingMiniPlayer() {
     if (_pipChannel == null) return const SizedBox.shrink();
 
@@ -497,7 +497,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ),
               ),
 
-              // Barra de EPG interactiva y dinámica
+              // Barra de EPG
               _buildDynamicEPGBar(),
 
               // Filtro por categorías horizontales
@@ -532,7 +532,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ),
                 ),
 
-              // Lista o Cuadrícula de Canales
+              // Contenido Principal
               Expanded(
                 child: _channels.isEmpty
                     ? Center(
@@ -571,7 +571,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ],
           ),
 
-          // Mini-Player Flotante en segundo plano (PiP)
           _buildFloatingMiniPlayer(),
         ],
       ),
