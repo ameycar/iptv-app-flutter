@@ -8,6 +8,7 @@ import '../services/ai_curator_service.dart';
 
 class AlexaVoiceSheet extends StatefulWidget {
   final List<PlaylistItem> channels;
+  final PlaylistItem? currentChannel; // Canal actualmente en reproducción
   final String currentSection; // 'live', 'movies', 'series' o 'en vivo', 'peliculas', etc.
   final Function(PlaylistItem item) onChannelSelected;
   final VoidCallback? onOpenEpg;
@@ -17,6 +18,7 @@ class AlexaVoiceSheet extends StatefulWidget {
   const AlexaVoiceSheet({
     super.key,
     required this.channels,
+    this.currentChannel,
     this.currentSection = 'live',
     required this.onChannelSelected,
     this.onOpenEpg,
@@ -27,7 +29,8 @@ class AlexaVoiceSheet extends StatefulWidget {
   static void show(
     BuildContext context, {
     required List<PlaylistItem> channels,
-    required String currentSection,
+    PlaylistItem? currentChannel,
+    String currentSection = 'live',
     required Function(PlaylistItem item) onChannelSelected,
     VoidCallback? onOpenEpg,
     Function(String section)? onNavigateSection,
@@ -39,6 +42,7 @@ class AlexaVoiceSheet extends StatefulWidget {
       backgroundColor: Colors.transparent,
       builder: (ctx) => AlexaVoiceSheet(
         channels: channels,
+        currentChannel: currentChannel,
         currentSection: currentSection,
         onChannelSelected: onChannelSelected,
         onOpenEpg: onOpenEpg,
