@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import '../models/playlist_item.dart';
 
 enum AIActionType {
   playChannel,
@@ -14,9 +13,9 @@ enum AIActionType {
 class AICurationResult {
   final AIActionType action;
   final String speechResponse;
-  final PlaylistItem? targetItem;
+  final dynamic targetItem;
   final String? searchQuery;
-  final String? targetTab; // 'live', 'movies', 'series'
+  final String? targetTab;
 
   AICurationResult({
     required this.action,
@@ -28,10 +27,8 @@ class AICurationResult {
 }
 
 class AICuratorService {
-  // Clave Gemini opcional: el motor local resuelve el 100% de canales y categorías en < 10ms
   static const String _geminiApiKey = "";
 
-  /// Normaliza texto quitando tildes y caracteres especiales
   static String normalize(String text) {
     var str = text.toLowerCase().trim();
     str = str.replaceAll(RegExp(r'[áàäâ]'), 'a');
@@ -43,11 +40,10 @@ class AICuratorService {
     return str.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
-  /// Limpia nombres de canales M3U de etiquetas basura
   static String cleanChannelName(String rawName) {
     String cleaned = rawName;
     final patterns = [
-      RegExp(r'(\[|\().*?(\]|\))'), // Quita [ES], (FHD), [4K], etc.
+      RegExp(r'(\[|\().*?(\]|\))'),
       RegExp(r'^[a-z]{2,4}\s*[:|\-]\s*', caseSensitive: false),
       RegExp(r'\|\s*[a-z]{2,5}\s*\|', caseSensitive: false),
       RegExp(r'\b(fhd|hd|sd|4k|2k|uhd|hevc|h265|1080p|720p|50fps|60fps|raw|vip|backup)\b', caseSensitive: false),
@@ -62,11 +58,10 @@ class AICuratorService {
     return normalize(cleaned);
   }
 
-  /// PROCESADOR INTELIGENTE DE COMANDOS DE VOZ EN LENGUAJE NATURAL
   static Future<AICurationResult> interpretVoiceCommand({
     required String userVoicePrompt,
-    required List<PlaylistItem> availableItems,
-    required String currentTab, // 'live', 'movies', 'series' o 'en vivo', 'peliculas', etc.
+    required List<dynamic> availableItems,
+    required String currentTab,
   }) async {
     final rawPrompt = userVoicePrompt.trim();
     final cleanPrompt = normalize(rawPrompt);
@@ -78,7 +73,6 @@ class AICuratorService {
       );
     }
 
-    // Normalizar pestaña actual de forma infalible
     final tabLower = currentTab.toLowerCase().trim();
     final String activeSection = (tabLower.contains('peli') || tabLower == 'movies' || tabLower == '1')
         ? 'movies'
@@ -86,11 +80,7 @@ class AICuratorService {
             ? 'series'
             : 'live';
 
-    // ========================================================================
-    // 1. NAVEGACIÓN Y ACCIONES DEL SISTEMA
-    // ========================================================================
-
-    // A) Guía de canales / EPG
+    // 1. Acciones de navegación
     if (cleanPrompt.contains('guia') ||
         cleanPrompt.contains('epg') ||
         cleanPrompt.contains('programacion') ||
@@ -103,7 +93,6 @@ class AICuratorService {
       );
     }
 
-    // B) Cambio a Películas
     if (cleanPrompt == 'peliculas' ||
         cleanPrompt.contains('ir a peliculas') ||
         cleanPrompt.contains('ver peliculas') ||
@@ -115,7 +104,6 @@ class AICuratorService {
       );
     }
 
-    // C) Cambio a Series
     if (cleanPrompt == 'series' ||
         cleanPrompt.contains('ir a series') ||
         cleanPrompt.contains('ver series') ||
@@ -127,7 +115,6 @@ class AICuratorService {
       );
     }
 
-    // D) Cambio a Canales en Vivo
     if (cleanPrompt == 'en vivo' ||
         cleanPrompt.contains('ir a en vivo') ||
         cleanPrompt.contains('ver canales') ||
@@ -140,9 +127,7 @@ class AICuratorService {
       );
     }
 
-    // ========================================================================
-    // 2. CONTEXTO VOD: SI EL USUARIO ESTÁ EN PELÍCULAS O SERIES
-    // ========================================================================
+    // 2. Si estamos en Películas o Series
     if (activeSection == 'movies' || activeSection == 'series') {
       final isRequestingLive = cleanPrompt.startsWith('canal') ||
           cleanPrompt.contains('en vivo') ||
@@ -166,16 +151,13 @@ class AICuratorService {
       }
     }
 
-    // ========================================================================
-    // 3. EXTRACCIÓN DE PARÁMETROS: CALIDAD Y LIMPIEZA
-    // ========================================================================
+    // 3. Extracción de Calidad
     final bool wantsHd = cleanPrompt.contains('hd') ||
         cleanPrompt.contains('fhd') ||
         cleanPrompt.contains('alta definicion') ||
         cleanPrompt.contains('1080');
     final bool wants4k = cleanPrompt.contains('4k') || cleanPrompt.contains('uhd');
 
-    // Quitar verbos y frases de cortesía
     String targetQuery = cleanPrompt
         .replaceAll(RegExp(r'^(pon|ponme|coloca|colocame|sintoniza|reproduce|cambia a|cambia al|quiero ver|vamos a ver|busca|buscar)\s+'), '')
         .replaceAll(RegExp(r'^(el canal|un canal|canal de|canal|el partido de|el partido|partido de|partido)\s+'), '')
@@ -185,20 +167,19 @@ class AICuratorService {
 
     if (targetQuery.isEmpty) targetQuery = cleanPrompt;
 
-    // ========================================================================
-    // 4. BÚSQUEDA SEMÁNTICA POR CATEGORÍAS (MÚSICA, DEPORTES, NOTICIAS, ETC.)
-    // ========================================================================
+    // 4. Mapeo semántico de categorías
     final isMusicIntent = targetQuery.contains('musica') || targetQuery.contains('musical') || targetQuery.contains('cancion');
     final isSportsIntent = targetQuery.contains('deporte') || targetQuery.contains('futbol') || targetQuery.contains('soccer');
     final isNewsIntent = targetQuery.contains('noticia') || targetQuery.contains('informativo') || targetQuery.contains('noticiero');
     final isKidsIntent = targetQuery.contains('infantil') || targetQuery.contains('nino') || targetQuery.contains('dibujito');
 
-    PlaylistItem? bestCategoryMatch;
+    dynamic bestCategoryMatch;
 
     if (isMusicIntent || isSportsIntent || isNewsIntent || isKidsIntent) {
       for (final item in availableItems) {
-        final cat = normalize(item.category);
-        final chName = normalize(item.name);
+        final cat = normalize((item.category ?? '').toString());
+        final chName = normalize((item.name ?? '').toString());
+        final rawOriginal = (item.originalName ?? item.name ?? '').toString().toUpperCase();
 
         bool matches = false;
         if (isMusicIntent && (cat.contains('music') || chName.contains('htv') || chName.contains('mtv') || chName.contains('vh1'))) {
@@ -212,8 +193,7 @@ class AICuratorService {
         }
 
         if (matches) {
-          // Si pidió HD, priorizar el que contenga HD en el nombre original
-          if ((wantsHd || wants4k) && (item.originalName.toUpperCase().contains('HD') || item.originalName.toUpperCase().contains('FHD'))) {
+          if ((wantsHd || wants4k) && (rawOriginal.contains('HD') || rawOriginal.contains('FHD'))) {
             bestCategoryMatch = item;
             break;
           }
@@ -222,38 +202,31 @@ class AICuratorService {
       }
 
       if (bestCategoryMatch != null) {
+        final name = (bestCategoryMatch.name ?? 'Canal').toString();
         return AICurationResult(
           action: AIActionType.playChannel,
           targetItem: bestCategoryMatch,
-          speechResponse: "Sintonizando ${bestCategoryMatch.name}.",
+          speechResponse: "Sintonizando $name.",
         );
       }
     }
 
-    // ========================================================================
-    // 5. BÚSQUEDA DIRECTA Y DIFUSA EN CANALES (< 5 ms)
-    // ========================================================================
-    PlaylistItem? bestMatch;
+    // 5. Búsqueda directa y difusa en la lista
+    dynamic bestMatch;
     double highestScore = 0.0;
 
     for (final item in availableItems) {
-      final cleanName = cleanChannelName(item.name);
-      final rawUpper = item.originalName.toUpperCase();
+      final cleanName = cleanChannelName((item.name ?? '').toString());
+      final rawUpper = (item.originalName ?? item.name ?? '').toString().toUpperCase();
       double score = 0.0;
 
-      // Coincidencia exacta
       if (cleanName == targetQuery) {
         score = 1.0;
-      }
-      // Coincidencia por prefijo (ej: "espn" hace match con "espn 2")
-      else if (cleanName.startsWith(targetQuery) || targetQuery.startsWith(cleanName)) {
+      } else if (cleanName.startsWith(targetQuery) || targetQuery.startsWith(cleanName)) {
         score = 0.95;
-      }
-      // Coincidencia contenida
-      else if (cleanName.contains(targetQuery) || targetQuery.contains(cleanName)) {
+      } else if (cleanName.contains(targetQuery) || targetQuery.contains(cleanName)) {
         score = 0.85;
       } else {
-        // Coincidencia por tokens
         final queryTokens = targetQuery.split(' ');
         int matchedTokens = 0;
         for (final token in queryTokens) {
@@ -266,7 +239,6 @@ class AICuratorService {
         }
       }
 
-      // Bonus si el usuario pidió HD/4K y el canal lo incluye
       if (wantsHd && (rawUpper.contains('HD') || rawUpper.contains('1080') || rawUpper.contains('FHD'))) {
         score += 0.08;
       }
@@ -281,16 +253,15 @@ class AICuratorService {
     }
 
     if (bestMatch != null && highestScore >= 0.55) {
+      final name = (bestMatch.name ?? 'Canal').toString();
       return AICurationResult(
         action: AIActionType.playChannel,
         targetItem: bestMatch,
-        speechResponse: "Sintonizando ${bestMatch.name}.",
+        speechResponse: "Sintonizando $name.",
       );
     }
 
-    // ========================================================================
-    // 6. GEMINI EN LA NUBE (Opcional, si hay API Key)
-    // ========================================================================
+    // 6. Gemini Cloud opcional
     if (_geminiApiKey.isNotEmpty) {
       try {
         final geminiResult = await _queryGeminiAI(rawPrompt, activeSection, availableItems);
@@ -300,9 +271,7 @@ class AICuratorService {
       }
     }
 
-    // ========================================================================
-    // 7. FALLBACK SEGURO: BÚSQUEDA GENERAL
-    // ========================================================================
+    // 7. Fallback seguro
     return AICurationResult(
       action: AIActionType.searchContent,
       searchQuery: targetQuery,
@@ -311,13 +280,12 @@ class AICuratorService {
     );
   }
 
-  /// Conexión HTTP nativa con Google Gemini REST API
   static Future<AICurationResult?> _queryGeminiAI(
     String prompt,
     String currentTab,
-    List<PlaylistItem> items,
+    List<dynamic> items,
   ) async {
-    final sampleTitles = items.take(40).map((e) => cleanChannelName(e.name)).join(', ');
+    final sampleTitles = items.take(40).map((e) => cleanChannelName((e.name ?? '').toString())).join(', ');
     final systemPrompt = """
 Eres el asistente de voz IA de la app AMEYCAR TV.
 Pestaña actual: $currentTab.
@@ -365,7 +333,7 @@ Responde ESTRICTAMENTE con un JSON sin formato markdown:
         return AICurationResult(action: AIActionType.switchTab, targetTab: tab, speechResponse: speech);
       } else if (actionStr == 'play') {
         final match = items.firstWhere(
-          (i) => cleanChannelName(i.name).contains(cleanChannelName(target)),
+          (i) => cleanChannelName((i.name ?? '').toString()).contains(cleanChannelName(target)),
           orElse: () => items.first,
         );
         return AICurationResult(action: AIActionType.playChannel, targetItem: match, speechResponse: speech);

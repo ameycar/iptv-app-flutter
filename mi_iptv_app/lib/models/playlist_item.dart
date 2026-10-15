@@ -17,6 +17,9 @@ class PlaylistItem {
     this.isLive = true,
   });
 
+  bool get isMovie => !isLive && (category.toLowerCase().contains('peli') || category.toLowerCase().contains('movie'));
+  bool get isSeries => !isLive && (category.toLowerCase().contains('seri'));
+
   Map<String, dynamic> toMap() {
     return {
       'id': id,

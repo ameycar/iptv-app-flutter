@@ -3,14 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
-import '../models/playlist_item.dart';
 import '../services/ai_curator_service.dart';
 
 class AlexaVoiceSheet extends StatefulWidget {
-  final List<PlaylistItem> channels;
-  final PlaylistItem? currentChannel; // Canal actualmente en reproducción
-  final String currentSection; // 'live', 'movies', 'series' o 'en vivo', 'peliculas', etc.
-  final Function(PlaylistItem item) onChannelSelected;
+  final List<dynamic> channels;
+  final dynamic currentChannel; // Compatible con ChannelModel y PlaylistItem
+  final String currentSection;
+  final Function(dynamic item) onChannelSelected;
   final VoidCallback? onOpenEpg;
   final Function(String section)? onNavigateSection;
   final Function(String query, String section)? onSearch;
@@ -28,10 +27,10 @@ class AlexaVoiceSheet extends StatefulWidget {
 
   static void show(
     BuildContext context, {
-    required List<PlaylistItem> channels,
-    PlaylistItem? currentChannel,
+    required List<dynamic> channels,
+    dynamic currentChannel,
     String currentSection = 'live',
-    required Function(PlaylistItem item) onChannelSelected,
+    required Function(dynamic item) onChannelSelected,
     VoidCallback? onOpenEpg,
     Function(String section)? onNavigateSection,
     Function(String query, String section)? onSearch,
@@ -106,7 +105,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                 _recognizedText = words;
               });
 
-              // Reiniciar temporizador de silencio: auto-ejecutar tras 800ms de pausa
+              // Auto-ejecución tras 800ms de silencio
               _silenceTimer?.cancel();
               _silenceTimer = Timer(const Duration(milliseconds: 800), () {
                 if (!_isProcessing && _recognizedText.length > 2) {
@@ -167,21 +166,18 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       currentTab: widget.currentSection,
     );
 
-    // Hablar confirmación en voz alta si aplica
     if (result.speechResponse.isNotEmpty) {
       _tts.speak(result.speechResponse);
     }
 
     if (!mounted) return;
 
-    // Cerrar el modal
     Navigator.of(context).pop();
 
-    // Ejecutar acción inmediata
     switch (result.action) {
       case AIActionType.playChannel:
         if (result.targetItem != null) {
-          widget.onChannelSelected(result.targetItem!);
+          widget.onChannelSelected(result.targetItem);
         }
         break;
 
@@ -216,7 +212,6 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
-    // Normalización 100% infalible de sección
     final currentTabLower = widget.currentSection.toLowerCase().trim();
     final bool isMovies = currentTabLower.contains('peli') || currentTabLower == 'movies' || currentTabLower == '1';
     final bool isSeries = currentTabLower.contains('seri') || currentTabLower == 'series' || currentTabLower == '2';
@@ -319,7 +314,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           ),
           const SizedBox(height: 10),
 
-          // Chips Dinámicos según la sección activa
+          // Chips Dinámicos según la sección
           Wrap(
             spacing: 8,
             runSpacing: 8,
