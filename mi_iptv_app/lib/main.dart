@@ -348,6 +348,7 @@ class _HomeScreenState extends State<HomeScreen> {
       currentChannel: _channels.isNotEmpty && _selectedChannelIndex < _channels.length
           ? _channels[_selectedChannelIndex]
           : null,
+      currentSection: _selectedSection, // AHORA SÍ PASA LA SECCIÓN REAL (Películas, Series o En Vivo)
       onChannelSelected: (item) {
         if (item is ChannelModel) {
           if (item.isLive && _selectedSection != 'En Vivo') {
@@ -358,7 +359,7 @@ class _HomeScreenState extends State<HomeScreen> {
             setState(() => _selectedSection = 'Series');
           }
           
-          Future.delayed(const Duration(milliseconds: 300), () {
+          Future.delayed(const Duration(milliseconds: 200), () {
             if (mounted) {
               _changeChannel(item);
               if (item.isMovie || item.isSeries) {
@@ -379,6 +380,14 @@ class _HomeScreenState extends State<HomeScreen> {
           _selectedSection = section;
           _searchQuery = '';
           _searchController.clear();
+        });
+      },
+      onSearch: (query, section) {
+        setState(() {
+          _selectedSection = section;
+          _searchQuery = query;
+          _searchController.text = query;
+          _isSearching = true;
         });
       },
     );
@@ -1194,7 +1203,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ? _buildActiveSearchBar()
           : Row(
               children: [
-                // LOGO Y BADGES (ANCHO FIJO ASEGURADO)
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1238,7 +1246,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 const Spacer(),
 
-                // ICONO GUÍA EPG CON BADGE DE NOTIFICACIÓN DIRECTO (0 PÍXELES EXTRA DE ANCHO)
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
