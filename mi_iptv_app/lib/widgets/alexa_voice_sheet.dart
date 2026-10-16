@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../services/ai_curator_service.dart';
 
@@ -9,6 +10,7 @@ class AlexaVoiceSheet extends StatefulWidget {
   final dynamic currentChannel;
   final Function(dynamic item) onChannelSelected;
   final VoidCallback? onOpenEpg;
+  final Function(String section)? onSectionChange;
   final Function(String section)? onNavigateSection;
   final Function(String category)? onCategorySelected;
 
@@ -19,18 +21,20 @@ class AlexaVoiceSheet extends StatefulWidget {
     this.currentChannel,
     required this.onChannelSelected,
     this.onOpenEpg,
+    this.onSectionChange,
     this.onNavigateSection,
     this.onCategorySelected,
   });
 
-  // Firma exacta que llama main.dart (context posicional + onOpenEpg + onNavigateSection)
-  static void show(
-    BuildContext context, {
+  // Firma exacta que llama tu main.dart: context con nombre + onSectionChange
+  static void show({
+    required BuildContext context,
     required List<dynamic> channels,
     String currentSection = 'En Vivo',
     dynamic currentChannel,
     required Function(dynamic item) onChannelSelected,
     VoidCallback? onOpenEpg,
+    Function(String section)? onSectionChange,
     Function(String section)? onNavigateSection,
     Function(String category)? onCategorySelected,
   }) {
@@ -44,6 +48,7 @@ class AlexaVoiceSheet extends StatefulWidget {
         currentChannel: currentChannel,
         onChannelSelected: onChannelSelected,
         onOpenEpg: onOpenEpg,
+        onSectionChange: onSectionChange,
         onNavigateSection: onNavigateSection,
         onCategorySelected: onCategorySelected,
       ),
@@ -166,6 +171,13 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       _aiStatus = 'SINTONIZANDO AL INSTANTE...';
     });
 
+    final lower = clean.toLowerCase();
+    if (lower.contains('guia') || lower.contains('guía') || lower.contains('epg') || lower.contains('programacion')) {
+      Navigator.of(context).pop();
+      widget.onOpenEpg?.call();
+      return;
+    }
+
     final result = await AICuratorService.interpretVoiceCommand(
       userVoicePrompt: clean,
       channels: widget.channels,
@@ -191,6 +203,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       case AIActionType.switchTab:
         if (result.targetSection != null) {
           Navigator.of(context).pop();
+          widget.onSectionChange?.call(result.targetSection!);
           widget.onNavigateSection?.call(result.targetSection!);
         }
         break;
@@ -298,7 +311,6 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             ),
             const SizedBox(height: 14),
 
-            // Cuadro de texto con botón Enviar (>) activo y Tecla Enter
             Container(
               decoration: BoxDecoration(
                 color: const Color(0xFF161F36),
