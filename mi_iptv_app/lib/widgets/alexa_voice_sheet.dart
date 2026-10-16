@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../services/ai_curator_service.dart';
 
@@ -56,7 +57,6 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
   String _aiStatus = 'Escuchando tu voz... Habla ahora';
   bool _isProcessing = false;
   late TextEditingController _textController;
-  Timer? _silenceTimer;
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
@@ -76,10 +76,11 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
-    _initSpeech();
+    // Inicializar micrófono de forma segura SIN cerrar el modal automáticamente
+    _initSpeechSafely();
   }
 
-  void _initSpeech() async {
+  void _initSpeechSafely() async {
     try {
       bool available = await _speech.initialize(
         onStatus: (status) {
@@ -87,81 +88,82 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           if (status == 'listening') {
             setState(() {
               _isListening = true;
-              if (!_isProcessing) _aiStatus = 'Escuchando tu voz... Habla ahora';
+              if (!_isProcessing) _aiStatus = 'MICRÓFONO ACTIVO';
             });
           } else if (status == 'notListening' || status == 'done') {
-            setState(() => _isListening = false);
-            if (_recognizedText.trim().isNotEmpty && !_isProcessing) {
-              _executeAICommand(_recognizedText);
-            }
+            // NUNCA cerrar la pantalla aquí: solo actualizamos el ícono
+            setState(() {
+              _isListening = false;
+              if (!_isProcessing && _recognizedText.isEmpty && _textController.text.isEmpty) {
+                _aiStatus = 'Escribe o presiona el micrófono para hablar';
+              }
+            });
           }
         },
         onError: (err) {
           if (!mounted) return;
           setState(() {
             _isListening = false;
-            _aiStatus = 'Escribe lo que deseas ver o pulsa el micrófono';
+            _aiStatus = 'Escribe o presiona el micrófono para hablar';
           });
         },
       );
 
       if (available && mounted) {
         _startListening();
-      } else {
-        setState(() => _aiStatus = 'Escribe o presiona el botón para hablar');
+      } else if (mounted) {
+        setState(() => _aiStatus = 'Escribe o presiona el micrófono para hablar');
       }
     } catch (_) {
-      if (mounted) setState(() => _aiStatus = 'Escribe lo que deseas ver');
+      if (mounted) {
+        setState(() => _aiStatus = 'Escribe lo que deseas ver');
+      }
     }
   }
 
   void _startListening() async {
-    _recognizedText = '';
-    _textController.clear();
-    setState(() {
-      _isListening = true;
-      _isProcessing = false;
-      _aiStatus = 'Escuchando tu voz... Habla ahora';
-    });
-
     try {
+      _recognizedText = '';
+      setState(() {
+        _isListening = true;
+        _isProcessing = false;
+        _aiStatus = 'Escuchando tu voz... Habla ahora';
+      });
+
       await _speech.listen(
         localeId: 'es_ES',
-        listenMode: stt.ListenMode.confirmation,
+        listenMode: stt.ListenMode.dictation,
+        cancelOnError: false,
+        partialResults: true,
         onResult: (result) {
           if (!mounted) return;
           setState(() {
             _recognizedText = result.recognizedWords;
             _textController.text = _recognizedText;
           });
-
-          _silenceTimer?.cancel();
-          _silenceTimer = Timer(const Duration(milliseconds: 700), () {
-            if (_recognizedText.trim().isNotEmpty && !_isProcessing) {
-              _executeAICommand(_recognizedText);
-            }
-          });
         },
       );
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) setState(() => _isListening = false);
+    }
   }
 
   void _stopListening() async {
-    _silenceTimer?.cancel();
-    await _speech.stop();
-    setState(() => _isListening = false);
+    try {
+      await _speech.stop();
+    } catch (_) {}
+    if (mounted) setState(() => _isListening = false);
   }
 
   void _executeAICommand(String query) async {
     final clean = query.trim();
     if (clean.isEmpty) return;
 
-    _silenceTimer?.cancel();
-    _speech.stop();
+    // Detener la escucha para procesar
+    _stopListening();
 
     setState(() {
       _isProcessing = true;
-      _isListening = false;
       _aiStatus = 'SINTONIZANDO AL INSTANTE...';
     });
 
@@ -176,7 +178,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
     if (result['action'] == 'play_channel') {
       final channel = result['item'];
-      // Cierre inmediato del modal y sintonización sin esperas
+      // Cerrar SOLO cuando realmente sintoniza
       Navigator.of(context).pop();
       widget.onChannelSelected(channel);
     } else if (result['action'] == 'filter_category') {
@@ -192,18 +194,19 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
         widget.onSectionChange!(target);
       }
     } else {
-      // Si no encuentra coincidencia exacta, NO se congela: avisa y permite reintentar
+      // Si no encuentra nada, NO SE CIERRA. Te avisa en pantalla:
       setState(() {
         _isProcessing = false;
-        _aiStatus = 'No encontré "$clean". Prueba con otro nombre o canal.';
+        _aiStatus = 'No encontré "$clean". Prueba con otro nombre.';
       });
     }
   }
 
   @override
   void dispose() {
-    _silenceTimer?.cancel();
-    _speech.stop();
+    try {
+      _speech.stop();
+    } catch (_) {}
     _pulseController.dispose();
     _textController.dispose();
     super.dispose();
@@ -229,7 +232,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Barra superior de arrastre
+            // Barra superior gris
             Center(
               child: Container(
                 width: 44,
@@ -242,7 +245,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             ),
             const SizedBox(height: 16),
 
-            // Botón Micrófono Neón con Pulsación
+            // Botón central con Micrófono y Pulsación Neón
             GestureDetector(
               onTap: () {
                 if (_isListening) {
@@ -264,13 +267,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                           : [const Color(0xFF1E2942), const Color(0xFF2A3B5C)],
                     ),
                     boxShadow: _isListening
-                        ? [
-                            const BoxShadow(
-                              color: Color(0x6600E5FF),
-                              blurRadius: 18,
-                              spreadRadius: 4,
-                            )
-                          ]
+                        ? [const BoxShadow(color: Color(0x6600E5FF), blurRadius: 18, spreadRadius: 4)]
                         : [],
                   ),
                   child: Icon(
@@ -298,7 +295,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             ),
             const SizedBox(height: 14),
 
-            // Campo de Texto con Botón de Enviar (>) Activo y Tecla Enter
+            // Cuadro de texto con botón Enviar (>) funcional y Tecla Enter
             Container(
               decoration: BoxDecoration(
                 color: const Color(0xFF161F36),
@@ -316,12 +313,10 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                       style: const TextStyle(color: Colors.white, fontSize: 15),
                       textInputAction: TextInputAction.search,
                       onSubmitted: (val) {
-                        if (val.trim().isNotEmpty) {
-                          _executeAICommand(val);
-                        }
+                        if (val.trim().isNotEmpty) _executeAICommand(val);
                       },
                       decoration: const InputDecoration(
-                        hintText: 'Ej: espn 2, hbo, música, partido en vivo...',
+                        hintText: 'Ej: espn 2, hbo, música, béisbol...',
                         hintStyle: TextStyle(color: Colors.white30, fontSize: 14),
                         border: InputBorder.none,
                       ),
@@ -340,7 +335,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             ),
             const SizedBox(height: 16),
 
-            // Sugerencias según la sección activa
+            // Sugerencias según la pestaña actual
             Row(
               children: [
                 Icon(
@@ -364,21 +359,20 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
               runSpacing: 8,
               children: isMovies
                   ? [
-                      _buildChip('🍿 Acción', 'película de acción'),
-                      _buildChip('⭐ Estrenos', 'estrenos'),
-                      _buildChip('😂 Comedia', 'comedia'),
-                      _buildChip('📺 Ir a En Vivo', 'en vivo'),
+                      _buildChip('🍿 Películas de Acción', 'película de acción'),
+                      _buildChip('⭐ Comedias', 'comedia'),
+                      _buildChip('📺 Ir a Canales en Vivo', 'en vivo'),
                     ]
                   : (isSeries
                       ? [
                           _buildChip('🔥 Series Populares', 'series'),
                           _buildChip('🔍 Drama', 'drama'),
-                          _buildChip('📺 Ir a En Vivo', 'en vivo'),
+                          _buildChip('📺 Ir a Canales en Vivo', 'en vivo'),
                         ]
                       : [
-                          _buildChip('⚽ Deportes', 'deportes'),
-                          _buildChip('📰 Noticias', 'noticias'),
-                          _buildChip('🎵 Música', 'música'),
+                          _buildChip('⚽ Deportes en Vivo', 'deportes'),
+                          _buildChip('📰 Canales de Noticias', 'noticias'),
+                          _buildChip('🎵 Música en Directo', 'música'),
                           _buildChip('🎬 Ver Películas', 'peliculas'),
                         ]),
             ),
