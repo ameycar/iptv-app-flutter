@@ -1,189 +1,98 @@
 class EpgProgram {
   final String title;
-  final String description;
-  final DateTime startTime;
-  final DateTime endTime;
-  final String category;
+  final String subtitle;
+  final String timeRange;
+  final String nextTitle;
 
-  EpgProgram({
+  const EpgProgram({
     required this.title,
-    required this.description,
-    required this.startTime,
-    required this.endTime,
-    required this.category,
+    required this.subtitle,
+    required this.timeRange,
+    required this.nextTitle,
   });
-
-  String get timeFormatted {
-    final startH = startTime.hour.toString().padLeft(2, '0');
-    final startM = startTime.minute.toString().padLeft(2, '0');
-    final endH = endTime.hour.toString().padLeft(2, '0');
-    final endM = endTime.minute.toString().padLeft(2, '0');
-    return '$startH:$startM - $endH:$endM';
-  }
-
-  double get progress {
-    final now = DateTime.now();
-    if (now.isBefore(startTime)) return 0.0;
-    if (now.isAfter(endTime)) return 1.0;
-    final total = endTime.difference(startTime).inSeconds;
-    final elapsed = now.difference(startTime).inSeconds;
-    if (total <= 0) return 0.5;
-    return (elapsed / total).clamp(0.0, 1.0);
-  }
-
-  int get remainingMinutes {
-    final now = DateTime.now();
-    if (now.isAfter(endTime)) return 0;
-    return endTime.difference(now).inMinutes;
-  }
 }
 
 class EpgService {
-  static final Map<String, List<EpgProgram>> _cache = {};
-
-  static List<EpgProgram> getScheduleForChannel(String channelName, String category) {
+  /// Retorna un programa realista, coherente con el nombre del canal y la hora actual
+  static EpgProgram getProgramForChannel(dynamic channel) {
+    final name = _getChannelName(channel).toLowerCase();
     final now = DateTime.now();
-    final cacheKey = '$channelName-${now.year}-${now.month}-${now.day}-${now.hour}';
-    if (_cache.containsKey(cacheKey)) {
-      return _cache[cacheKey]!;
-    }
+    final currentHour = now.hour;
+    final timeStr = '${currentHour.toString().padLeft(2, '0')}:00 - ${(currentHour + 1).toString().padLeft(2, '0')}:00';
 
-    final lowerName = channelName.toLowerCase();
-    final lowerCat = category.toLowerCase();
-    final dynamicTitles = _getSpecificTitlesForChannel(lowerName, lowerCat, now);
-
-    List<EpgProgram> schedule = [];
-    DateTime slotStart = DateTime(now.year, now.month, now.day, now.hour, (now.minute >= 30 ? 30 : 0));
-
-    for (int i = 0; i < dynamicTitles.length; i++) {
-      DateTime slotEnd = slotStart.add(const Duration(minutes: 60));
-      final title = dynamicTitles[i];
-      
-      schedule.add(
-        EpgProgram(
-          title: title,
-          description: "Emisión de $title en directo por $channelName en alta definición.",
-          startTime: slotStart,
-          endTime: slotEnd,
-          category: category.isNotEmpty ? category : "General",
-        ),
+    // 1. Canales de Béisbol o ESPN 3 (como en tu captura)
+    if (name.contains('espn 3') || name.contains('espn3') || name.contains('mlb') || name.contains('beisbol') || name.contains('baseball')) {
+      return EpgProgram(
+        title: 'Béisbol de Grandes Ligas MLB: Playoffs en Directo',
+        subtitle: 'Cobertura en vivo de la Serie de Campeonato • Entrada por Entrada',
+        timeRange: timeStr,
+        nextTitle: 'A continuación: SportsCenter Noche / Resumen de Béisbol',
       );
-      slotStart = slotEnd;
     }
 
-    _cache[cacheKey] = schedule;
-    return schedule;
-  }
+    // 2. Canales de Fútbol / Deportes Generales (ESPN, ESPN 2, TyC, Fox Sports)
+    if (name.contains('espn 2') || name.contains('espn2')) {
+      return EpgProgram(
+        title: 'Fútbol en Vivo: Liga Continental de Clubes',
+        subtitle: 'Transmisión estelar con relatos y comentarios oficiales',
+        timeRange: timeStr,
+        nextTitle: 'A continuación: Equipo F / Debate Deportivo',
+      );
+    }
+    if (name.contains('espn') || name.contains('fox sports') || name.contains('tyc') || name.contains('directv sports') || name.contains('dsports')) {
+      return EpgProgram(
+        title: 'SportsCenter: Edición Central en Directo',
+        subtitle: 'Goles, jugadas destacadas y entrevistas exclusivas de la jornada',
+        timeRange: timeStr,
+        nextTitle: 'A continuación: Fútbol Total en Vivo',
+      );
+    }
 
-  static EpgProgram getCurrentProgram(String channelName, String category) {
-    final list = getScheduleForChannel(channelName, category);
-    final now = DateTime.now();
-    return list.firstWhere(
-      (p) => now.isAfter(p.startTime) && now.isBefore(p.endTime),
-      orElse: () => list.first,
+    // 3. Canales de Películas y Series (HBO, TNT, Cinecanal, Star, etc.)
+    if (name.contains('hbo') || name.contains('tnt') || name.contains('cine') || name.contains('movie') || name.contains('star')) {
+      return EpgProgram(
+        title: 'Cine Estelar: Película de Acción en HD',
+        subtitle: 'Transmisión con audio original y doblaje en español latino',
+        timeRange: timeStr,
+        nextTitle: 'A continuación: Función de Medianoche',
+      );
+    }
+
+    // 4. Canales de Noticias (CNN, TN, C5N, 1+1, etc.)
+    if (name.contains('1+1') || name.contains('cnn') || name.contains('noticia') || name.contains('news') || name.contains('tn')) {
+      return EpgProgram(
+        title: 'Noticiero Internacional: Cobertura en Vivo',
+        subtitle: 'Resumen informativo con los principales acontecimientos del mundo',
+        timeRange: timeStr,
+        nextTitle: 'A continuación: Análisis Político y Económico',
+      );
+    }
+
+    // 5. Canales de Música (HTV, MTV, Quiero, etc.)
+    if (name.contains('htv') || name.contains('mtv') || name.contains('musica') || name.contains('music')) {
+      return EpgProgram(
+        title: 'Los Éxitos del Momento: Top 20 en Directo',
+        subtitle: 'Videoclips oficiales sin pausas comerciales',
+        timeRange: timeStr,
+        nextTitle: 'A continuación: Especial Musical de Colección',
+      );
+    }
+
+    // 6. Genérico Coherente (usa el nombre real del canal para personalizarlo)
+    final displayName = _getChannelName(channel);
+    return EpgProgram(
+      title: 'Transmisión Especial: $displayName',
+      subtitle: 'Programación regular en emisión continua de alta calidad',
+      timeRange: timeStr,
+      nextTitle: 'A continuación: Continuidad de Programación',
     );
   }
 
-  static EpgProgram getNextProgram(String channelName, String category) {
-    final list = getScheduleForChannel(channelName, category);
-    final current = getCurrentProgram(channelName, category);
-    final idx = list.indexOf(current);
-    if (idx != -1 && idx + 1 < list.length) {
-      return list[idx + 1];
-    }
-    return list.last;
-  }
-
-  static List<EpgProgram> getUpcomingPrograms(String channelName, String category) {
-    final list = getScheduleForChannel(channelName, category);
-    final now = DateTime.now();
-    return list.where((p) => p.endTime.isAfter(now)).toList();
-  }
-
-  /// CADA CANAL TIENE SU PROGRAMACIÓN PROPIA Y DIFERENTE
-  static List<String> _getSpecificTitlesForChannel(String name, String cat, DateTime now) {
-    final hour = now.hour;
-
-    // ESPN 3: BÉISBOL DE GRANDES LIGAS (MLB), COLLEGE Y DEPORTES AMERICANOS
-    if (name.contains("espn 3") || name.contains("espn3")) {
-      return [
-        "Béisbol MLB en Vivo: Postemporada / Juego de Campeonato",
-        "MLB Extra Inning: Highlights y Todos los Home Runs",
-        "Béisbol en Directo: Partido de la Serie Mundial",
-        "College Football NCAA en Exclusiva",
-        "SportsCenter ESPN 3: Edición Béisbol y Más",
-        "Béisbol Clásico: Grandes Momentos de la MLB",
-      ];
-    }
-
-    // ESPN 2: FÚTBOL INTERNACIONAL, TENIS Y SERIE A
-    if (name.contains("espn 2") || name.contains("espn2")) {
-      return [
-        "Fútbol Internacional: Serie A Italiana / LaLiga en Vivo",
-        "Tenis ATP Masters 1000: Semifinales en Directo",
-        "SportsCenter 2: El Minuto a Minuto del Fútbol Europeo",
-        "Equipo F: Debate Táctico de la Jornada",
-        "Resumen de la Champions League: Goles del Día",
-        "Tenis Night Sessions: Lo Mejor de la Fecha",
-      ];
-    }
-
-    // ESPN 5 O ESPN EXTRA: RUGBY, POLIDEPORTIVO Y FÓRMULA 1
-    if (name.contains("espn 5") || name.contains("espn5") || name.contains("extra")) {
-      return [
-        "Fórmula 1 en Vivo: Clasificación y Cámara a Bordo",
-        "Rugby Internacional: Torneo de las 6 Naciones",
-        "SportsCenter Extra: Lo Mejor del Deporte Motor",
-        "Ciclismo UCI World Tour: Etapa de Montaña",
-        "Paddock F1: Entrevistas a los Pilotos",
-        "Lo Mejor de la NBA: Jugadas Espectaculares",
-      ];
-    }
-
-    // ESPN PRINCIPAL / FOX SPORTS: FÚTBOL CONTINENTAL Y LIBERTADORES
-    if (name.contains("espn") || name.contains("fox") || name.contains("tyc")) {
-      return [
-        "Fútbol en Vivo: Copa Continental / Liga Profesional",
-        "SportsCenter Central: Todos los Goles y Polémica",
-        "Debate Deportivo Central en Directo",
-        "Copa Libertadores: Previa Especial y Alineaciones",
-        "El Show del Gol: Resumen de Todos los Partidos",
-        "SportsCenter Noche: Edición Estelar de Cierre",
-      ];
-    }
-
-    // HTV: VIDEOS DE MÚSICA URBANA, POP Y RANKINGS
-    if (name.contains("htv") || name.contains("music") || name.contains("mtv")) {
-      return [
-        "HTV Hot Ranking: Los 21 Videos Más Votados",
-        "Especial Urbano: Reggaetón y Trap Latino",
-        "En la Mira: Estrenos Musicales de la Semana",
-        "Pausa HTV: Entrevistas a Estrellas Latinas",
-        "Noche Latina: Los Mejores Videoclips en HD",
-        "Hits Inolvidables del Pop y Reggaetón",
-      ];
-    }
-
-    // NOTICIAS (24H, CNN, DW, ETC.)
-    if (name.contains("notic") || name.contains("24h") || name.contains("cnn")) {
-      return [
-        "El Noticiero Central: Minuto a Minuto del Mundo",
-        "Mesa de Debate Político y Economía",
-        "Noticias Internacionales: Cobertura Especial",
-        "Entrevistas en Vivo a Figuras del Día",
-        "Resumen Informativo de Cierre",
-        "Alerta de Última Hora Global",
-      ];
-    }
-
-    // CANALES GENERALES / SERIES
-    return [
-      "Transmisión Estelar en Calidad 1080p",
-      "Magacín de Entretenimiento de la Tarde",
-      "Gran Película de Acción y Aventuras",
-      "Documentales del Planeta y Ciencia",
-      "Show Central de la Noche en Directo",
-      "Cine de Medianoche: Estreno Exclusivo",
-    ];
+  static String _getChannelName(dynamic item) {
+    if (item == null) return 'Canal en Vivo';
+    try { return (item.name ?? '').toString(); } catch (_) {}
+    try { return (item.title ?? '').toString(); } catch (_) {}
+    try { return (item['name'] ?? item['title'] ?? '').toString(); } catch (_) {}
+    return 'Canal en Vivo';
   }
 }
