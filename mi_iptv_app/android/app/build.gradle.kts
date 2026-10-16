@@ -5,45 +5,36 @@ plugins {
 }
 
 android {
-    ndkVersion = "27.0.12077973"
-    namespace = "com.example.mi_iptv_app"
+    namespace = "com.ameycartv.iptv"
     compileSdk = 36
+    ndkVersion = "26.1.10909125"
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
 
     defaultConfig {
-        applicationId = "com.example.mi_iptv_app"
+        applicationId = "com.ameycartv.iptv"
         minSdk = 21
         targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
     }
 
-    compileOptions {
-        // 1. Habilitar Core Library Desugaring
-        isCoreLibraryDesugaringEnabled = true
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             isShrinkResources = false
+            signingConfig = signingConfigs.getByName("debug")
         }
-    }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
 flutter {
     source = "../.."
-}
-
-// 2. Dependencia requerida para desugaring
-dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
