@@ -2,34 +2,36 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:flutter_tts/flutter_tts.dart';
+import '../models/playlist_item.dart';
 import '../services/ai_curator_service.dart';
 
 class AlexaVoiceSheet extends StatefulWidget {
-  final List<dynamic> channels;
-  final String currentSection;
-  final dynamic currentChannel;
-  final Function(dynamic item) onChannelSelected;
-  final Function(String category)? onCategorySelected;
-  final Function(String section)? onSectionChange;
+  final List<PlaylistItem> channels;
+  final String currentSection; // 'live', 'movies', 'series' o 'en vivo', 'peliculas', etc.
+  final Function(PlaylistItem item) onChannelSelected;
+  final VoidCallback? onOpenEpg;
+  final Function(String section)? onNavigateSection;
+  final Function(String query, String section)? onSearch;
 
   const AlexaVoiceSheet({
     super.key,
     required this.channels,
-    this.currentSection = 'En Vivo',
-    this.currentChannel,
+    this.currentSection = 'live',
     required this.onChannelSelected,
-    this.onCategorySelected,
-    this.onSectionChange,
+    this.onOpenEpg,
+    this.onNavigateSection,
+    this.onSearch,
   });
 
-  static void show({
-    required BuildContext context,
-    required List<dynamic> channels,
-    String currentSection = 'En Vivo',
-    dynamic currentChannel,
-    required Function(dynamic item) onChannelSelected,
-    Function(String category)? onCategorySelected,
-    Function(String section)? onSectionChange,
+  static void show(
+    BuildContext context, {
+    required List<PlaylistItem> channels,
+    required String currentSection,
+    required Function(PlaylistItem item) onChannelSelected,
+    VoidCallback? onOpenEpg,
+    Function(String section)? onNavigateSection,
+    Function(String query, String section)? onSearch,
   }) {
     showModalBottomSheet(
       context: context,
@@ -38,10 +40,10 @@ class AlexaVoiceSheet extends StatefulWidget {
       builder: (ctx) => AlexaVoiceSheet(
         channels: channels,
         currentSection: currentSection,
-        currentChannel: currentChannel,
         onChannelSelected: onChannelSelected,
-        onCategorySelected: onCategorySelected,
-        onSectionChange: onSectionChange,
+        onOpenEpg: onOpenEpg,
+        onNavigateSection: onNavigateSection,
+        onSearch: onSearch,
       ),
     );
   }
@@ -51,382 +53,345 @@ class AlexaVoiceSheet extends StatefulWidget {
 }
 
 class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProviderStateMixin {
-  late stt.SpeechToText _speech;
-  bool _isListening = false;
-  String _recognizedText = '';
-  String _aiStatus = 'Escuchando tu voz... Habla ahora';
-  bool _isProcessing = false;
-  late TextEditingController _textController;
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  final FlutterTts _tts = FlutterTts();
 
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
+  String _recognizedText = "Escuchando tu voz... Habla ahora";
+  String _statusMessage = "MICRÓFONO ACTIVO";
+  bool _isProcessing = false;
+  late AnimationController _animController;
+  Timer? _silenceTimer;
 
   @override
   void initState() {
     super.initState();
-    _speech = stt.SpeechToText();
-    _textController = TextEditingController();
-
-    _pulseController = AnimationController(
+    _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1000),
+      duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
 
-    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.25).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
-
-    // Inicializar micrófono de forma segura SIN cerrar el modal automáticamente
-    _initSpeechSafely();
+    _initVoiceAndListen();
   }
 
-  void _initSpeechSafely() async {
+  Future<void> _initVoiceAndListen() async {
     try {
-      bool available = await _speech.initialize(
+      await _tts.setLanguage("es-ES");
+      await _tts.setSpeechRate(0.55);
+
+      final available = await _speech.initialize(
+        onError: (e) => print("STT Error: $e"),
         onStatus: (status) {
-          if (!mounted) return;
-          if (status == 'listening') {
-            setState(() {
-              _isListening = true;
-              if (!_isProcessing) _aiStatus = 'MICRÓFONO ACTIVO';
-            });
-          } else if (status == 'notListening' || status == 'done') {
-            // NUNCA cerrar la pantalla aquí: solo actualizamos el ícono
-            setState(() {
-              _isListening = false;
-              if (!_isProcessing && _recognizedText.isEmpty && _textController.text.isEmpty) {
-                _aiStatus = 'Escribe o presiona el micrófono para hablar';
-              }
-            });
+          if (status == "done" || status == "notListening") {
+            _onSilenceTimeout();
           }
         },
-        onError: (err) {
-          if (!mounted) return;
-          setState(() {
-            _isListening = false;
-            _aiStatus = 'Escribe o presiona el micrófono para hablar';
-          });
-        },
       );
 
-      if (available && mounted) {
-        _startListening();
-      } else if (mounted) {
-        setState(() => _aiStatus = 'Escribe o presiona el micrófono para hablar');
+      if (available) {
+        _playBeep();
+        _speech.listen(
+          localeId: 'es_ES',
+          listenFor: const Duration(seconds: 10),
+          pauseFor: const Duration(milliseconds: 1500),
+          partialResults: true,
+          onResult: (result) {
+            if (!mounted) return;
+            final words = result.recognizedWords.trim();
+            if (words.isNotEmpty) {
+              setState(() {
+                _recognizedText = words;
+              });
+
+              // Reiniciar temporizador de silencio: auto-ejecutar 800ms tras dejar de hablar
+              _silenceTimer?.cancel();
+              _silenceTimer = Timer(const Duration(milliseconds: 800), () {
+                if (!_isProcessing && _recognizedText.length > 2) {
+                  _executeAICommand(_recognizedText);
+                }
+              });
+            }
+
+            if (result.finalResult && words.length > 1) {
+              _silenceTimer?.cancel();
+              _executeAICommand(words);
+            }
+          },
+        );
       }
-    } catch (_) {
-      if (mounted) {
-        setState(() => _aiStatus = 'Escribe lo que deseas ver');
-      }
+    } catch (e) {
+      print("Error STT: $e");
     }
   }
 
-  void _startListening() async {
-    try {
-      _recognizedText = '';
-      setState(() {
-        _isListening = true;
-        _isProcessing = false;
-        _aiStatus = 'Escuchando tu voz... Habla ahora';
-      });
-
-      await _speech.listen(
-        localeId: 'es_ES',
-        listenMode: stt.ListenMode.dictation,
-        cancelOnError: false,
-        partialResults: true,
-        onResult: (result) {
-          if (!mounted) return;
-          setState(() {
-            _recognizedText = result.recognizedWords;
-            _textController.text = _recognizedText;
-          });
-        },
-      );
-    } catch (_) {
-      if (mounted) setState(() => _isListening = false);
+  void _onSilenceTimeout() {
+    if (!_isProcessing &&
+        _recognizedText.isNotEmpty &&
+        !_recognizedText.startsWith("Escuchando") &&
+        _recognizedText.trim().length > 1) {
+      _executeAICommand(_recognizedText);
     }
   }
 
-  void _stopListening() async {
-    try {
-      await _speech.stop();
-    } catch (_) {}
-    if (mounted) setState(() => _isListening = false);
+  void _playBeep() {
+    HapticFeedback.mediumImpact();
+    SystemSound.play(SystemSoundType.click);
   }
 
-  void _executeAICommand(String query) async {
-    final clean = query.trim();
-    if (clean.isEmpty) return;
+  void _executeAICommand(String text) async {
+    final clean = text.trim();
+    if (_isProcessing || clean.isEmpty || clean.startsWith("Escuchando") || clean.length < 2) {
+      return;
+    }
 
-    // Detener la escucha para procesar
-    _stopListening();
+    _silenceTimer?.cancel();
 
     setState(() {
       _isProcessing = true;
-      _aiStatus = 'SINTONIZANDO AL INSTANTE...';
+      _statusMessage = "PROCESANDO CON INTELIGENCIA ARTIFICIAL...";
     });
 
+    try {
+      await _speech.stop();
+    } catch (_) {}
+
+    _playBeep();
+
+    // Invocación al Cerebro de IA
     final result = await AICuratorService.interpretVoiceCommand(
-      command: clean,
-      channels: widget.channels,
-      currentSection: widget.currentSection,
-      currentChannel: widget.currentChannel,
+      userVoicePrompt: clean,
+      availableItems: widget.channels,
+      currentTab: widget.currentSection,
     );
+
+    // Hablar confirmación en voz alta si aplica
+    if (result.speechResponse.isNotEmpty) {
+      _tts.speak(result.speechResponse);
+    }
 
     if (!mounted) return;
 
-    if (result['action'] == 'play_channel') {
-      final channel = result['item'];
-      // Cerrar SOLO cuando realmente sintoniza
-      Navigator.of(context).pop();
-      widget.onChannelSelected(channel);
-    } else if (result['action'] == 'filter_category') {
-      final cat = result['category'].toString();
-      Navigator.of(context).pop();
-      if (widget.onCategorySelected != null) {
-        widget.onCategorySelected!(cat);
-      }
-    } else if (result['action'] == 'navigate_section') {
-      final target = result['target'].toString();
-      Navigator.of(context).pop();
-      if (widget.onSectionChange != null) {
-        widget.onSectionChange!(target);
-      }
-    } else {
-      // Si no encuentra nada, NO SE CIERRA. Te avisa en pantalla:
-      setState(() {
-        _isProcessing = false;
-        _aiStatus = 'No encontré "$clean". Prueba con otro nombre.';
-      });
+    // Cerrar el modal
+    Navigator.of(context).pop();
+
+    // Ejecutar acción inmediata
+    switch (result.action) {
+      case AIActionType.playChannel:
+        if (result.targetItem != null) {
+          widget.onChannelSelected(result.targetItem!);
+        }
+        break;
+
+      case AIActionType.openEPG:
+        widget.onOpenEpg?.call();
+        break;
+
+      case AIActionType.switchTab:
+        if (result.targetTab != null) {
+          widget.onNavigateSection?.call(result.targetTab!);
+        }
+        break;
+
+      case AIActionType.searchContent:
+        if (widget.onSearch != null && result.searchQuery != null) {
+          widget.onSearch!(result.searchQuery!, result.targetTab ?? widget.currentSection);
+        }
+        break;
+
+      case AIActionType.speakOnly:
+        break;
     }
   }
 
   @override
   void dispose() {
-    try {
-      _speech.stop();
-    } catch (_) {}
-    _pulseController.dispose();
-    _textController.dispose();
+    _silenceTimer?.cancel();
+    _animController.dispose();
+    _speech.stop();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final isMovies = widget.currentSection.toLowerCase().contains('pel') ||
-                     widget.currentSection.toLowerCase().contains('mov');
-    final isSeries = widget.currentSection.toLowerCase().contains('ser');
+    // Normalización 100% infalible de sección
+    final currentTabLower = widget.currentSection.toLowerCase().trim();
+    final bool isMovies = currentTabLower.contains('peli') || currentTabLower == 'movies' || currentTabLower == '1';
+    final bool isSeries = currentTabLower.contains('seri') || currentTabLower == 'series' || currentTabLower == '2';
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF0F1424),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          boxShadow: [
-            BoxShadow(color: Color(0x8000E5FF), blurRadius: 20, spreadRadius: -2)
-          ],
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Barra superior gris
-            Center(
-              child: Container(
-                width: 44,
-                height: 4,
+    return Container(
+      padding: const EdgeInsets.only(top: 12, bottom: 24, left: 20, right: 20),
+      decoration: const BoxDecoration(
+        color: Color(0xFF0D121D),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        border: Border(top: BorderSide(color: Color(0xFF1E293B), width: 1.5)),
+        boxShadow: [
+          BoxShadow(color: Color(0x6600E5FF), blurRadius: 30, spreadRadius: -5)
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 44,
+            height: 5,
+            decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(10)),
+          ),
+          const SizedBox(height: 20),
+
+          // Botón Micrófono Neón
+          AnimatedBuilder(
+            animation: _animController,
+            builder: (context, child) {
+              return Container(
+                width: 80,
+                height: 80,
                 decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Botón central con Micrófono y Pulsación Neón
-            GestureDetector(
-              onTap: () {
-                if (_isListening) {
-                  _stopListening();
-                } else {
-                  _startListening();
-                }
-              },
-              child: ScaleTransition(
-                scale: _isListening ? _pulseAnimation : const AlwaysStoppedAnimation(1.0),
-                child: Container(
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: _isListening
-                          ? [const Color(0xFF00E5FF), const Color(0xFFBD00FF)]
-                          : [const Color(0xFF1E2942), const Color(0xFF2A3B5C)],
+                  shape: BoxShape.circle,
+                  gradient: const RadialGradient(colors: [Color(0xFF00E5FF), Color(0xFF9D00FF)]),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _isProcessing
+                          ? const Color(0xFF9D00FF).withOpacity(0.8)
+                          : const Color(0xFF00E5FF).withOpacity(0.4 + (_animController.value * 0.4)),
+                      blurRadius: 15 + (_animController.value * 20),
+                      spreadRadius: 2 + (_animController.value * 4),
                     ),
-                    boxShadow: _isListening
-                        ? [const BoxShadow(color: Color(0x6600E5FF), blurRadius: 18, spreadRadius: 4)]
-                        : [],
-                  ),
-                  child: Icon(
-                    _isListening ? Icons.mic : Icons.mic_none_rounded,
-                    color: Colors.white,
-                    size: 34,
-                  ),
+                  ],
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
+                child: IconButton(
+                  icon: Icon(_isProcessing ? Icons.auto_awesome : Icons.mic, size: 40, color: Colors.white),
+                  onPressed: () {
+                    if (!_isProcessing) _initVoiceAndListen();
+                  },
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 14),
 
-            // Estado de la IA
-            Text(
-              _aiStatus,
+          Text(
+            _statusMessage,
+            style: const TextStyle(
+              color: Color(0xFF00E5FF),
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.5,
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF161F30),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFF1E2D4A)),
+            ),
+            child: Text(
+              '"$_recognizedText"',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: _isProcessing
-                    ? const Color(0xFF00E5FF)
-                    : (_aiStatus.contains('No encontré') ? Colors.orangeAccent : Colors.white70),
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.5,
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Título de Sugerencias Dinámicas
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                isMovies ? Icons.movie_filter : (isSeries ? Icons.tv_rounded : Icons.live_tv),
+                size: 16,
+                color: const Color(0xFF00E5FF),
               ),
-            ),
-            const SizedBox(height: 14),
+              const SizedBox(width: 8),
+              Text(
+                isMovies
+                    ? "Sugerencias para PELÍCULAS:"
+                    : (isSeries ? "Sugerencias para SERIES:" : "Sugerencias para EN VIVO:"),
+                style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
 
-            // Cuadro de texto con botón Enviar (>) funcional y Tecla Enter
-            Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFF161F36),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: _isProcessing ? const Color(0xFF00E5FF) : Colors.white12,
+          // Chips Dinámicos según la sección activa
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: isMovies
+                ? [
+                    _buildSuggestionChip("🍿 Películas de Acción", "Películas de Acción"),
+                    _buildSuggestionChip("⭐ Comedias", "Comedia"),
+                    _buildSuggestionChip("📺 Ir a Canales en Vivo", "En Vivo"),
+                  ]
+                : (isSeries
+                    ? [
+                        _buildSuggestionChip("🎬 Series de Drama", "Series de Drama"),
+                        _buildSuggestionChip("🔥 Estrenos y Temporadas", "Temporadas"),
+                        _buildSuggestionChip("📺 Ir a Canales en Vivo", "En Vivo"),
+                      ]
+                    : [
+                        _buildSuggestionChip("⚽ Deportes en Vivo", "Deportes"),
+                        _buildSuggestionChip("📰 Canales de Noticias", "Noticias"),
+                        _buildSuggestionChip("🎵 Música en Directo", "Música"),
+                        _buildSuggestionChip("📅 Guía de Canales (EPG)", "Guía"),
+                      ]),
+          ),
+          const SizedBox(height: 20),
+
+          // Botones Cancelar y Ejecutar
+          Row(
+            children: [
+              Expanded(
+                child: TextButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close, color: Colors.white60),
+                  label: const Text("Cancelar", style: TextStyle(color: Colors.white60, fontSize: 15)),
                 ),
               ),
-              child: Row(
-                children: [
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: TextField(
-                      controller: _textController,
-                      style: const TextStyle(color: Colors.white, fontSize: 15),
-                      textInputAction: TextInputAction.search,
-                      onSubmitted: (val) {
-                        if (val.trim().isNotEmpty) _executeAICommand(val);
-                      },
-                      decoration: const InputDecoration(
-                        hintText: 'Ej: espn 2, hbo, música, béisbol...',
-                        hintStyle: TextStyle(color: Colors.white30, fontSize: 14),
-                        border: InputBorder.none,
-                      ),
-                    ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00E5FF),
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.send_rounded, color: Color(0xFF00E5FF)),
-                    onPressed: () {
-                      if (_textController.text.trim().isNotEmpty) {
-                        _executeAICommand(_textController.text);
-                      }
-                    },
+                  onPressed: () {
+                    if (_recognizedText.isNotEmpty && !_recognizedText.startsWith("Escuchando")) {
+                      _executeAICommand(_recognizedText);
+                    }
+                  },
+                  icon: const Icon(Icons.check, color: Colors.black),
+                  label: const Text(
+                    "Ejecutar",
+                    style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15),
                   ),
-                ],
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-
-            // Sugerencias según la pestaña actual
-            Row(
-              children: [
-                Icon(
-                  isMovies ? Icons.movie_outlined : (isSeries ? Icons.tv : Icons.live_tv),
-                  color: const Color(0xFF00E5FF),
-                  size: 16,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  isMovies
-                      ? 'Sugerencias para PELÍCULAS:'
-                      : (isSeries ? 'Sugerencias para SERIES:' : 'Sugerencias para EN VIVO:'),
-                  style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: isMovies
-                  ? [
-                      _buildChip('🍿 Películas de Acción', 'película de acción'),
-                      _buildChip('⭐ Comedias', 'comedia'),
-                      _buildChip('📺 Ir a Canales en Vivo', 'en vivo'),
-                    ]
-                  : (isSeries
-                      ? [
-                          _buildChip('🔥 Series Populares', 'series'),
-                          _buildChip('🔍 Drama', 'drama'),
-                          _buildChip('📺 Ir a Canales en Vivo', 'en vivo'),
-                        ]
-                      : [
-                          _buildChip('⚽ Deportes en Vivo', 'deportes'),
-                          _buildChip('📰 Canales de Noticias', 'noticias'),
-                          _buildChip('🎵 Música en Directo', 'música'),
-                          _buildChip('🎬 Ver Películas', 'peliculas'),
-                        ]),
-            ),
-            const SizedBox(height: 20),
-
-            // Botones inferiores (Cancelar y Ejecutar)
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white60,
-                      side: const BorderSide(color: Colors.white24),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: const Text('Cancelar'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      if (_textController.text.trim().isNotEmpty) {
-                        _executeAICommand(_textController.text);
-                      } else if (_recognizedText.trim().isNotEmpty) {
-                        _executeAICommand(_recognizedText);
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00E5FF),
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: const Text('✓ Ejecutar', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildChip(String label, String command) {
-    return ActionChip(
-      label: Text(label, style: const TextStyle(color: Colors.white, fontSize: 11)),
-      backgroundColor: const Color(0xFF1E2942),
-      side: const BorderSide(color: Colors.white12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      onPressed: () => _executeAICommand(command),
+  Widget _buildSuggestionChip(String label, String command) {
+    return InkWell(
+      onTap: () => _executeAICommand(command),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFF334155)),
+        ),
+        child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+      ),
     );
   }
 }
