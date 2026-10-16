@@ -1,196 +1,167 @@
 import 'dart:math';
 
+/// Enum oficial que espera tu alexa_voice_sheet.dart
+enum AIActionType {
+  playChannel,
+  openEPG,
+  switchTab,
+  searchContent,
+  speakOnly,
+}
+
+/// Respuesta estructurada compatible tanto con .action como con ['action']
+class AICuratorResult {
+  final AIActionType action;
+  final dynamic item;
+  final String message;
+  final String? targetSection;
+  final String? category;
+
+  const AICuratorResult({
+    required this.action,
+    this.item,
+    this.message = '',
+    this.targetSection,
+    this.category,
+  });
+
+  // Compatibilidad por si se accede como Map result['action']
+  dynamic operator [](String key) {
+    switch (key) {
+      case 'action':
+        return action;
+      case 'item':
+        return item;
+      case 'message':
+        return message;
+      case 'targetSection':
+      case 'target':
+        return targetSection;
+      case 'category':
+        return category;
+      default:
+        return null;
+    }
+  }
+}
+
 class AICuratorService {
-  /// Interpreta cualquier instrucción de voz o texto en milésimas de segundo (< 5ms)
-  static Future<Map<String, dynamic>> interpretVoiceCommand({
-    required String command,
+  /// Interpreta la voz o texto usando el parámetro exacto 'userVoicePrompt'
+  static Future<AICuratorResult> interpretVoiceCommand({
+    required String userVoicePrompt,
     required List<dynamic> channels,
-    required String currentSection,
+    String currentSection = 'En Vivo',
     dynamic currentChannel,
   }) async {
-    if (command.trim().isEmpty || channels.isEmpty) {
-      return {'action': 'not_found', 'message': 'Por favor indica qué deseas ver.'};
+    final raw = userVoicePrompt.trim();
+    if (raw.isEmpty || channels.isEmpty) {
+      return const AICuratorResult(
+        action: AIActionType.speakOnly,
+        message: 'Por favor indica qué deseas ver.',
+      );
     }
 
-    final raw = command.toLowerCase().trim();
-    final clean = _cleanQuery(raw);
+    final clean = _cleanQuery(raw.toLowerCase());
 
-    // 1. Detección de navegación entre secciones (Live / Películas / Series)
-    if (_isMovieSectionRequest(clean)) {
-      return {'action': 'navigate_section', 'target': 'Películas'};
-    }
-    if (_isSeriesSectionRequest(clean)) {
-      return {'action': 'navigate_section', 'target': 'Series'};
-    }
-    if (_isLiveSectionRequest(clean)) {
-      return {'action': 'navigate_section', 'target': 'En Vivo'};
+    // 1. Detección de Guía EPG
+    if (clean.contains('guia') || clean.contains('guía') || clean.contains('epg') || clean.contains('programacion')) {
+      return const AICuratorResult(
+        action: AIActionType.openEPG,
+        message: 'Abriendo Guía EPG...',
+      );
     }
 
-    // 2. Búsqueda Ponderada de Canales / Contenido
+    // 2. Cambio de Pestañas / Secciones
+    if (clean == 'peliculas' || clean == 'películas' || clean.contains('ir a peliculas')) {
+      return const AICuratorResult(
+        action: AIActionType.switchTab,
+        targetSection: 'Películas',
+        message: 'Cambiando a Películas...',
+      );
+    }
+    if (clean == 'series' || clean.contains('ir a series')) {
+      return const AICuratorResult(
+        action: AIActionType.switchTab,
+        targetSection: 'Series',
+        message: 'Cambiando a Series...',
+      );
+    }
+    if (clean == 'en vivo' || clean == 'tv' || clean.contains('ir a vivo')) {
+      return const AICuratorResult(
+        action: AIActionType.switchTab,
+        targetSection: 'En Vivo',
+        message: 'Cambiando a TV en Vivo...',
+      );
+    }
+
+    // 3. Búsqueda Ponderada de Canales (ej: "espn 2")
     dynamic bestItem;
     double maxScore = 0.0;
 
-    for (final item in channels) {
-      final name = _extractName(item).toLowerCase();
-      final category = _extractCategory(item).toLowerCase();
+    for (final ch in channels) {
+      final name = _extractName(ch).toLowerCase();
+      final category = _extractCategory(ch).toLowerCase();
 
-      final score = _calculateMatchScore(
-        cleanQuery: clean,
-        rawQuery: raw,
-        itemName: name,
-        itemCategory: category,
-      );
-
+      final score = _calculateScore(clean, raw.toLowerCase(), name, category);
       if (score > maxScore) {
         maxScore = score;
-        bestItem = item;
+        bestItem = ch;
       }
     }
 
-    // Si el score supera el umbral de confianza (55%), sintonizamos al instante
-    if (bestItem != null && maxScore >= 55.0) {
-      return {
-        'action': 'play_channel',
-        'item': bestItem,
-        'name': _extractName(bestItem),
-        'score': maxScore,
-      };
+    // Si encontramos coincidencia suficiente
+    if (bestItem != null && maxScore >= 40.0) {
+      return AICuratorResult(
+        action: AIActionType.playChannel,
+        item: bestItem,
+        message: 'Sintonizando ${_extractName(bestItem)}...',
+      );
     }
 
-    // 3. Detección de Categorías
-    final categoryTarget = _detectCategoryFilter(clean);
-    if (categoryTarget != null) {
-      return {
-        'action': 'filter_category',
-        'category': categoryTarget,
-      };
-    }
-
-    // 4. Si hubo un resultado parcial con menor score pero razonable
-    if (bestItem != null && maxScore >= 35.0) {
-      return {
-        'action': 'play_channel',
-        'item': bestItem,
-        'name': _extractName(bestItem),
-        'score': maxScore,
-      };
-    }
-
-    return {
-      'action': 'not_found',
-      'message': 'No se encontró "$command" en tu catálogo actual.',
-    };
+    // 4. Búsqueda de contenido general
+    return AICuratorResult(
+      action: AIActionType.searchContent,
+      message: 'Buscando "$raw"...',
+    );
   }
 
-  /// Limpia palabras de parada habituales en comandos de voz
   static String _cleanQuery(String text) {
     var s = text.toLowerCase();
-    final stopWords = [
-      'quiero ver', 'colocame', 'colócame', 'ponme', 'sintonizame', 'sintonízame',
-      'sintoniza', 'canal de', 'canal', 'canales de', 'canales', 'por favor',
-      'el partido de', 'el partido', 'ver a', 'ver el', 'ver la', 'ver', 'pon',
-      'busca', 'reproduce', 'abrir', 'abre'
-    ];
-
-    for (final w in stopWords) {
+    for (final w in [
+      'quiero ver', 'colocame', 'colócame', 'ponme', 'sintoniza', 'canal de',
+      'canal', 'canales', 'por favor', 'ver el', 'ver la', 'ver', 'pon', 'busca'
+    ]) {
       s = s.replaceAll(w, ' ');
     }
-
-    // Normalizar números y variantes (espn dos -> espn 2)
-    s = s.replaceAll('uno', '1')
-         .replaceAll('dos', '2')
-         .replaceAll('tres', '3')
-         .replaceAll('cuatro', '4')
-         .replaceAll('cinco', '5')
-         .replaceAll('seis', '6');
-
-    // Quitar símbolos extraños
-    s = s.replaceAll(RegExp(r'[^\w\s\d]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
-    return s;
+    s = s.replaceAll('uno', '1').replaceAll('dos', '2').replaceAll('tres', '3').replaceAll('cuatro', '4').replaceAll('cinco', '5');
+    return s.replaceAll(RegExp(r'[^\w\s\d]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
-  /// Algoritmo de Coincidencia Ponderada
-  static double _calculateMatchScore({
-    required String cleanQuery,
-    required String rawQuery,
-    required String itemName,
-    required String itemCategory,
-  }) {
-    if (itemName.isEmpty) return 0.0;
+  static double _calculateScore(String clean, String raw, String name, String category) {
+    if (name.isEmpty) return 0.0;
 
-    // Normalizar nombres de canales (eliminar prefijos como "ES:", "AR |", etc.)
-    final normalizedItem = itemName
-        .replaceAll(RegExp(r'^[a-z]{2,3}\s*[:|]\s*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'\[.*?\]|\(.*?\)', caseSensitive: false), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+    final normName = name.replaceAll(RegExp(r'^[a-z]{2,3}\s*[:|]\s*', caseSensitive: false), '')
+                         .replaceAll(RegExp(r'\[.*?\]|\(.*?\)', caseSensitive: false), '')
+                         .trim();
 
-    // 1. Coincidencia exacta completa (Score: 100)
-    if (normalizedItem == cleanQuery || itemName == cleanQuery) return 100.0;
+    if (normName == clean || name == clean) return 100.0;
 
-    // 2. Variante sin espacios (ej: "espn2" vs "espn 2")
-    final noSpaceItem = normalizedItem.replaceAll(' ', '');
-    final noSpaceQuery = cleanQuery.replaceAll(' ', '');
-    if (noSpaceItem.contains(noSpaceQuery) || noSpaceQuery.contains(noSpaceItem)) {
-      return 95.0;
+    final noSpaceName = normName.replaceAll(' ', '');
+    final noSpaceClean = clean.replaceAll(' ', '');
+    if (noSpaceName.contains(noSpaceClean) || noSpaceClean.contains(noSpaceName)) return 95.0;
+    if (normName.contains(clean)) return 90.0;
+
+    final tokens = clean.split(' ').where((t) => t.length > 1).toList();
+    if (tokens.isEmpty) return 0.0;
+
+    int matches = 0;
+    for (final t in tokens) {
+      if (normName.contains(t) || noSpaceName.contains(t)) matches++;
     }
 
-    // 3. El nombre del canal contiene la búsqueda completa
-    if (normalizedItem.contains(cleanQuery)) {
-      return 90.0;
-    }
-
-    // 4. Tokenización y coincidencia de palabras clave
-    final queryTokens = cleanQuery.split(' ').where((t) => t.length > 1).toList();
-    if (queryTokens.isEmpty) return 0.0;
-
-    int matchedTokens = 0;
-    for (final token in queryTokens) {
-      if (normalizedItem.contains(token) || noSpaceItem.contains(token)) {
-        matchedTokens++;
-      }
-    }
-
-    double tokenScore = (matchedTokens / queryTokens.length) * 80.0;
-
-    // Bonus si coincide la categoría (ej: "música", "deportes")
-    if (itemCategory.isNotEmpty) {
-      for (final token in queryTokens) {
-        if (itemCategory.contains(token)) {
-          tokenScore += 25.0;
-          break;
-        }
-      }
-    }
-
-    // Bonus especial si la consulta pide HD/FHD/4K y el canal lo incluye
-    if ((rawQuery.contains('hd') || rawQuery.contains('1080') || rawQuery.contains('4k')) &&
-        (itemName.contains('hd') || itemName.contains('1080') || itemName.contains('4k') || itemName.contains('fhd'))) {
-      tokenScore += 10.0;
-    }
-
-    return min(tokenScore, 100.0);
-  }
-
-  static bool _isMovieSectionRequest(String q) {
-    return q == 'peliculas' || q == 'películas' || q.contains('ir a peliculas') || q.contains('seccion peliculas');
-  }
-
-  static bool _isSeriesSectionRequest(String q) {
-    return q == 'series' || q.contains('ir a series') || q.contains('seccion series');
-  }
-
-  static bool _isLiveSectionRequest(String q) {
-    return q == 'en vivo' || q == 'tv en vivo' || q == 'canales' || q.contains('ir a vivo');
-  }
-
-  static String? _detectCategoryFilter(String q) {
-    if (q.contains('deporte') || q.contains('futbol') || q.contains('beisbol')) return 'Deportes';
-    if (q.contains('noticia') || q.contains('informativo')) return 'Noticias';
-    if (q.contains('musica') || q.contains('música') || q.contains('musical')) return 'Música';
-    if (q.contains('cine') || q.contains('pelicula')) return 'Películas';
-    if (q.contains('infantil') || q.contains('dibujo') || q.contains('niño')) return 'Infantiles';
-    return null;
+    double score = (matches / tokens.length) * 80.0;
+    if (category.isNotEmpty && tokens.any((t) => category.contains(t))) score += 20.0;
+    return min(score, 100.0);
   }
 
   static String _extractName(dynamic item) {
