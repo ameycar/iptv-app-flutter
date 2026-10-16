@@ -58,289 +58,226 @@ class AICuratorService {
     return normalize(cleaned);
   }
 
+  static String _safeGetName(dynamic item) {
+    try {
+      if (item == null) return '';
+      return (item.name ?? '').toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static String _safeGetCategory(dynamic item) {
+    try {
+      if (item == null) return '';
+      return (item.groupCategory ?? item.category ?? '').toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
   static Future<AICurationResult> interpretVoiceCommand({
     required String userVoicePrompt,
     required List<dynamic> availableItems,
     required String currentTab,
   }) async {
-    final rawPrompt = userVoicePrompt.trim();
-    final cleanPrompt = normalize(rawPrompt);
+    try {
+      final rawPrompt = userVoicePrompt.trim();
+      final cleanPrompt = normalize(rawPrompt);
 
-    if (cleanPrompt.isEmpty || cleanPrompt.length < 2) {
-      return AICurationResult(
-        action: AIActionType.speakOnly,
-        speechResponse: "No logré escucharte con claridad. Intenta de nuevo.",
-      );
-    }
-
-    final tabLower = currentTab.toLowerCase().trim();
-    final String activeSection = (tabLower.contains('peli') || tabLower == 'movies' || tabLower == '1')
-        ? 'movies'
-        : (tabLower.contains('seri') || tabLower == 'series' || tabLower == '2')
-            ? 'series'
-            : 'live';
-
-    // 1. Acciones de navegación
-    if (cleanPrompt.contains('guia') ||
-        cleanPrompt.contains('epg') ||
-        cleanPrompt.contains('programacion') ||
-        cleanPrompt.contains('horario') ||
-        cleanPrompt.contains('que estan dando') ||
-        cleanPrompt.contains('que dan')) {
-      return AICurationResult(
-        action: AIActionType.openEPG,
-        speechResponse: "Abriendo la guía de programación.",
-      );
-    }
-
-    if (cleanPrompt == 'peliculas' ||
-        cleanPrompt.contains('ir a peliculas') ||
-        cleanPrompt.contains('ver peliculas') ||
-        cleanPrompt.contains('seccion de peliculas')) {
-      return AICurationResult(
-        action: AIActionType.switchTab,
-        targetTab: 'movies',
-        speechResponse: "Cambiando a Películas.",
-      );
-    }
-
-    if (cleanPrompt == 'series' ||
-        cleanPrompt.contains('ir a series') ||
-        cleanPrompt.contains('ver series') ||
-        cleanPrompt.contains('seccion de series')) {
-      return AICurationResult(
-        action: AIActionType.switchTab,
-        targetTab: 'series',
-        speechResponse: "Cambiando a Series.",
-      );
-    }
-
-    if (cleanPrompt == 'en vivo' ||
-        cleanPrompt.contains('ir a en vivo') ||
-        cleanPrompt.contains('ver canales') ||
-        cleanPrompt.contains('television en vivo') ||
-        cleanPrompt.contains('tele en vivo')) {
-      return AICurationResult(
-        action: AIActionType.switchTab,
-        targetTab: 'live',
-        speechResponse: "Cambiando a Canales en Vivo.",
-      );
-    }
-
-    // 2. Si estamos en Películas o Series
-    if (activeSection == 'movies' || activeSection == 'series') {
-      final isRequestingLive = cleanPrompt.startsWith('canal') ||
-          cleanPrompt.contains('en vivo') ||
-          cleanPrompt.contains('espn') ||
-          cleanPrompt.contains('fox sports') ||
-          cleanPrompt.contains('noticiero');
-
-      if (!isRequestingLive) {
-        String searchQuery = cleanPrompt
-            .replaceAll(RegExp(r'^(busca|buscar|encuentra|ver|quiero ver|pelicula|peliculas|serie|series|de)\s+'), '')
-            .trim();
-
-        if (searchQuery.isEmpty) searchQuery = cleanPrompt;
-
+      if (cleanPrompt.isEmpty || cleanPrompt.length < 2) {
         return AICurationResult(
-          action: AIActionType.searchContent,
-          searchQuery: searchQuery,
-          targetTab: activeSection,
-          speechResponse: "Buscando $searchQuery en ${activeSection == 'movies' ? 'Películas' : 'Series'}.",
+          action: AIActionType.speakOnly,
+          speechResponse: "No logré escucharte con claridad. Intenta de nuevo.",
         );
       }
-    }
 
-    // 3. Extracción de Calidad
-    final bool wantsHd = cleanPrompt.contains('hd') ||
-        cleanPrompt.contains('fhd') ||
-        cleanPrompt.contains('alta definicion') ||
-        cleanPrompt.contains('1080');
-    final bool wants4k = cleanPrompt.contains('4k') || cleanPrompt.contains('uhd');
+      final tabClean = normalize(currentTab);
+      final String activeSection = (tabClean.contains('peli') || tabClean == 'movies' || tabClean == '1')
+          ? 'movies'
+          : (tabClean.contains('seri') || tabClean == 'series' || tabClean == '2')
+              ? 'series'
+              : 'live';
 
-    String targetQuery = cleanPrompt
-        .replaceAll(RegExp(r'^(pon|ponme|coloca|colocame|sintoniza|reproduce|cambia a|cambia al|quiero ver|vamos a ver|busca|buscar)\s+'), '')
-        .replaceAll(RegExp(r'^(el canal|un canal|canal de|canal|el partido de|el partido|partido de|partido)\s+'), '')
-        .replaceAll(RegExp(r'\b(en hd|en fhd|en 4k|en alta definicion|hd|4k|fhd)\b'), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+      // 1. Acciones de interfaz
+      if (cleanPrompt.contains('guia') ||
+          cleanPrompt.contains('epg') ||
+          cleanPrompt.contains('programacion') ||
+          cleanPrompt.contains('horario') ||
+          cleanPrompt.contains('que estan dando') ||
+          cleanPrompt.contains('que dan')) {
+        return AICurationResult(
+          action: AIActionType.openEPG,
+          speechResponse: "Abriendo la guía de programación.",
+        );
+      }
 
-    if (targetQuery.isEmpty) targetQuery = cleanPrompt;
+      if (cleanPrompt == 'peliculas' ||
+          cleanPrompt.contains('ir a peliculas') ||
+          cleanPrompt.contains('ver peliculas') ||
+          cleanPrompt.contains('seccion de peliculas')) {
+        return AICurationResult(
+          action: AIActionType.switchTab,
+          targetTab: 'movies',
+          speechResponse: "Cambiando a Películas.",
+        );
+      }
 
-    // 4. Mapeo semántico de categorías
-    final isMusicIntent = targetQuery.contains('musica') || targetQuery.contains('musical') || targetQuery.contains('cancion');
-    final isSportsIntent = targetQuery.contains('deporte') || targetQuery.contains('futbol') || targetQuery.contains('soccer');
-    final isNewsIntent = targetQuery.contains('noticia') || targetQuery.contains('informativo') || targetQuery.contains('noticiero');
-    final isKidsIntent = targetQuery.contains('infantil') || targetQuery.contains('nino') || targetQuery.contains('dibujito');
+      if (cleanPrompt == 'series' ||
+          cleanPrompt.contains('ir a series') ||
+          cleanPrompt.contains('ver series') ||
+          cleanPrompt.contains('seccion de series')) {
+        return AICurationResult(
+          action: AIActionType.switchTab,
+          targetTab: 'series',
+          speechResponse: "Cambiando a Series.",
+        );
+      }
 
-    dynamic bestCategoryMatch;
+      if (cleanPrompt == 'en vivo' ||
+          cleanPrompt.contains('ir a en vivo') ||
+          cleanPrompt.contains('ver canales') ||
+          cleanPrompt.contains('television en vivo') ||
+          cleanPrompt.contains('tele en vivo')) {
+        return AICurationResult(
+          action: AIActionType.switchTab,
+          targetTab: 'live',
+          speechResponse: "Cambiando a Canales en Vivo.",
+        );
+      }
 
-    if (isMusicIntent || isSportsIntent || isNewsIntent || isKidsIntent) {
-      for (final item in availableItems) {
-        final cat = normalize((item.category ?? '').toString());
-        final chName = normalize((item.name ?? '').toString());
-        final rawOriginal = (item.originalName ?? item.name ?? '').toString().toUpperCase();
+      // 2. Si estamos en Películas o Series
+      if (activeSection == 'movies' || activeSection == 'series') {
+        final isRequestingLive = cleanPrompt.startsWith('canal') ||
+            cleanPrompt.contains('en vivo') ||
+            cleanPrompt.contains('espn') ||
+            cleanPrompt.contains('htv') ||
+            cleanPrompt.contains('noticiero');
 
-        bool matches = false;
-        if (isMusicIntent && (cat.contains('music') || chName.contains('htv') || chName.contains('mtv') || chName.contains('vh1'))) {
-          matches = true;
-        } else if (isSportsIntent && (cat.contains('deport') || cat.contains('sport') || chName.contains('espn') || chName.contains('fox'))) {
-          matches = true;
-        } else if (isNewsIntent && (cat.contains('noticia') || cat.contains('news') || chName.contains('24h') || chName.contains('cnn'))) {
-          matches = true;
-        } else if (isKidsIntent && (cat.contains('infantil') || cat.contains('kid') || chName.contains('disney') || chName.contains('cartoon'))) {
-          matches = true;
-        }
+        if (!isRequestingLive) {
+          String searchQuery = cleanPrompt
+              .replaceAll(RegExp(r'^(busca|buscar|encuentra|ver|quiero ver|pelicula|peliculas|serie|series|de)\s+'), '')
+              .trim();
 
-        if (matches) {
-          if ((wantsHd || wants4k) && (rawOriginal.contains('HD') || rawOriginal.contains('FHD'))) {
-            bestCategoryMatch = item;
-            break;
-          }
-          bestCategoryMatch ??= item;
+          if (searchQuery.isEmpty) searchQuery = cleanPrompt;
+
+          return AICurationResult(
+            action: AIActionType.searchContent,
+            searchQuery: searchQuery,
+            targetTab: activeSection,
+            speechResponse: "Buscando $searchQuery en ${activeSection == 'movies' ? 'Películas' : 'Series'}.",
+          );
         }
       }
 
-      if (bestCategoryMatch != null) {
-        final name = (bestCategoryMatch.name ?? 'Canal').toString();
+      // 3. Extracción de palabras clave (eliminar verbos, cortesías y calidades)
+      String targetQuery = cleanPrompt
+          .replaceAll(RegExp(r'^(pon|ponme|coloca|colocame|sintoniza|reproduce|cambia a|cambia al|quiero ver|vamos a ver|busca|buscar)\s+'), '')
+          .replaceAll(RegExp(r'^(el canal|un canal|canal de|canal|el partido de|el partido|partido de|partido)\s+'), '')
+          .replaceAll(RegExp(r'\b(canal de video|de video|canal|en vivo|en hd|en fhd|en 4k|alta definicion|hd|4k|fhd)\b'), '')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+
+      if (targetQuery.isEmpty) targetQuery = cleanPrompt;
+
+      // 4. Búsqueda directa por canal específico (ej: HTV, ESPN 2, ESPN 3, etc.)
+      dynamic bestMatch;
+      double highestScore = 0.0;
+
+      for (final item in availableItems) {
+        final rawName = _safeGetName(item);
+        final cleanName = cleanChannelName(rawName);
+
+        if (cleanName.isEmpty) continue;
+
+        double score = 0.0;
+
+        // Coincidencia exacta (ej: 'htv' == 'htv')
+        if (cleanName == targetQuery) {
+          score = 1.0;
+        }
+        // Coincidencia por prefijo (ej: 'espn' con 'espn 2')
+        else if (cleanName.startsWith(targetQuery) || targetQuery.startsWith(cleanName)) {
+          score = 0.95;
+        }
+        // Coincidencia contenida
+        else if (cleanName.contains(targetQuery) || targetQuery.contains(cleanName)) {
+          score = 0.85;
+        } else {
+          final queryTokens = targetQuery.split(' ');
+          int matchedTokens = 0;
+          for (final token in queryTokens) {
+            if (token.length >= 2 && cleanName.contains(token)) {
+              matchedTokens++;
+            }
+          }
+          if (queryTokens.isNotEmpty) {
+            score = (matchedTokens / queryTokens.length) * 0.8;
+          }
+        }
+
+        if (score > highestScore) {
+          highestScore = score;
+          bestMatch = item;
+        }
+      }
+
+      if (bestMatch != null && highestScore >= 0.5) {
+        final name = _safeGetName(bestMatch);
         return AICurationResult(
           action: AIActionType.playChannel,
-          targetItem: bestCategoryMatch,
+          targetItem: bestMatch,
           speechResponse: "Sintonizando $name.",
         );
       }
-    }
 
-    // 5. Búsqueda directa y difusa en la lista
-    dynamic bestMatch;
-    double highestScore = 0.0;
+      // 5. Búsqueda por categoría (Música, Deportes, Noticias, etc.)
+      final isMusic = targetQuery.contains('musica') || targetQuery.contains('cancion') || targetQuery.contains('video');
+      final isSports = targetQuery.contains('deporte') || targetQuery.contains('futbol') || targetQuery.contains('beisbol') || targetQuery.contains('baseball');
+      final isNews = targetQuery.contains('noticia') || targetQuery.contains('noticiero');
 
-    for (final item in availableItems) {
-      final cleanName = cleanChannelName((item.name ?? '').toString());
-      final rawUpper = (item.originalName ?? item.name ?? '').toString().toUpperCase();
-      double score = 0.0;
+      for (final item in availableItems) {
+        final cat = normalize(_safeGetCategory(item));
+        final chName = normalize(_safeGetName(item));
 
-      if (cleanName == targetQuery) {
-        score = 1.0;
-      } else if (cleanName.startsWith(targetQuery) || targetQuery.startsWith(cleanName)) {
-        score = 0.95;
-      } else if (cleanName.contains(targetQuery) || targetQuery.contains(cleanName)) {
-        score = 0.85;
-      } else {
-        final queryTokens = targetQuery.split(' ');
-        int matchedTokens = 0;
-        for (final token in queryTokens) {
-          if (token.length >= 2 && cleanName.contains(token)) {
-            matchedTokens++;
-          }
+        if (isMusic && (cat.contains('music') || chName.contains('htv') || chName.contains('mtv'))) {
+          return AICurationResult(
+            action: AIActionType.playChannel,
+            targetItem: item,
+            speechResponse: "Sintonizando ${_safeGetName(item)}.",
+          );
         }
-        if (queryTokens.isNotEmpty) {
-          score = (matchedTokens / queryTokens.length) * 0.8;
+        if (isSports && (cat.contains('deport') || chName.contains('espn') || chName.contains('fox'))) {
+          return AICurationResult(
+            action: AIActionType.playChannel,
+            targetItem: item,
+            speechResponse: "Sintonizando ${_safeGetName(item)}.",
+          );
+        }
+        if (isNews && (cat.contains('notic') || chName.contains('24h') || chName.contains('cnn'))) {
+          return AICurationResult(
+            action: AIActionType.playChannel,
+            targetItem: item,
+            speechResponse: "Sintonizando ${_safeGetName(item)}.",
+          );
         }
       }
 
-      if (wantsHd && (rawUpper.contains('HD') || rawUpper.contains('1080') || rawUpper.contains('FHD'))) {
-        score += 0.08;
-      }
-      if (wants4k && (rawUpper.contains('4K') || rawUpper.contains('UHD'))) {
-        score += 0.12;
-      }
-
-      if (score > highestScore) {
-        highestScore = score;
-        bestMatch = item;
-      }
-    }
-
-    if (bestMatch != null && highestScore >= 0.55) {
-      final name = (bestMatch.name ?? 'Canal').toString();
+      // 6. Fallback seguro de búsqueda
       return AICurationResult(
-        action: AIActionType.playChannel,
-        targetItem: bestMatch,
-        speechResponse: "Sintonizando $name.",
+        action: AIActionType.searchContent,
+        searchQuery: targetQuery,
+        targetTab: activeSection,
+        speechResponse: "Buscando $targetQuery.",
+      );
+    } catch (e) {
+      // Protección total: si algo falla, no congela la app
+      return AICurationResult(
+        action: AIActionType.searchContent,
+        searchQuery: userVoicePrompt,
+        targetTab: currentTab,
+        speechResponse: "Buscando $userVoicePrompt.",
       );
     }
-
-    // 6. Gemini Cloud opcional
-    if (_geminiApiKey.isNotEmpty) {
-      try {
-        final geminiResult = await _queryGeminiAI(rawPrompt, activeSection, availableItems);
-        if (geminiResult != null) return geminiResult;
-      } catch (e) {
-        print("Error Gemini Cloud: $e");
-      }
-    }
-
-    // 7. Fallback seguro
-    return AICurationResult(
-      action: AIActionType.searchContent,
-      searchQuery: targetQuery,
-      targetTab: activeSection,
-      speechResponse: "Buscando $targetQuery.",
-    );
-  }
-
-  static Future<AICurationResult?> _queryGeminiAI(
-    String prompt,
-    String currentTab,
-    List<dynamic> items,
-  ) async {
-    final sampleTitles = items.take(40).map((e) => cleanChannelName((e.name ?? '').toString())).join(', ');
-    final systemPrompt = """
-Eres el asistente de voz IA de la app AMEYCAR TV.
-Pestaña actual: $currentTab.
-Voz del usuario: "$prompt".
-Canales de muestra: [$sampleTitles].
-
-Responde ESTRICTAMENTE con un JSON sin formato markdown:
-{
-  "action": "play" | "search" | "epg" | "tab",
-  "target": "nombre o termino de busqueda",
-  "tab": "live" | "movies" | "series",
-  "speech": "frase corta estilo Alexa"
-}
-""";
-
-    final client = HttpClient();
-    final request = await client.postUrl(Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$_geminiApiKey',
-    ));
-    request.headers.set('Content-Type', 'application/json');
-    request.add(utf8.encode(jsonEncode({
-      "contents": [
-        {
-          "parts": [{"text": systemPrompt}]
-        }
-      ]
-    })));
-
-    final response = await request.close().timeout(const Duration(milliseconds: 1200));
-    if (response.statusCode == 200) {
-      final responseBody = await response.transform(utf8.decoder).join();
-      final json = jsonDecode(responseBody);
-      final rawText = json['candidates'][0]['content']['parts'][0]['text'] as String;
-      final cleanJsonText = rawText.replaceAll('```json', '').replaceAll('```', '').trim();
-      final data = jsonDecode(cleanJsonText);
-
-      final actionStr = data['action'] ?? 'search';
-      final speech = data['speech'] ?? "Entendido.";
-      final target = data['target'] ?? prompt;
-      final tab = data['tab'] ?? currentTab;
-
-      if (actionStr == 'epg') {
-        return AICurationResult(action: AIActionType.openEPG, speechResponse: speech);
-      } else if (actionStr == 'tab') {
-        return AICurationResult(action: AIActionType.switchTab, targetTab: tab, speechResponse: speech);
-      } else if (actionStr == 'play') {
-        final match = items.firstWhere(
-          (i) => cleanChannelName((i.name ?? '').toString()).contains(cleanChannelName(target)),
-          orElse: () => items.first,
-        );
-        return AICurationResult(action: AIActionType.playChannel, targetItem: match, speechResponse: speech);
-      } else {
-        return AICurationResult(action: AIActionType.searchContent, searchQuery: target, targetTab: tab, speechResponse: speech);
-      }
-    }
-    return null;
   }
 }

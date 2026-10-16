@@ -84,14 +84,9 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       final available = await _speech.initialize(
         onError: (e) {
           debugPrint("STT Error: $e");
-          if (mounted) {
-            setState(() {
-              _statusMessage = "TOCA PARA ESCRIBIR O REINTENTAR";
-            });
-          }
+          if (mounted) setState(() => _statusMessage = "ESCRIBE TU BÚSQUEDA ABAJO");
         },
         onStatus: (status) {
-          debugPrint("STT Status: $status");
           if (status == "done" || status == "notListening") {
             _onSilenceTimeout();
           }
@@ -100,7 +95,6 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
       if (available) {
         _playBeep();
-        
         final systemLoc = await _speech.systemLocale();
         String targetLocale = systemLoc?.localeId ?? 'es_419';
 
@@ -122,20 +116,20 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
               _silenceTimer?.cancel();
               _silenceTimer = Timer(const Duration(milliseconds: 750), () {
                 if (!_isProcessing && _recognizedText.length > 2) {
-                  _executeAICommand(_recognizedText);
+                  _executeCommand(_recognizedText);
                 }
               });
             }
 
             if (result.finalResult && words.length > 1) {
               _silenceTimer?.cancel();
-              _executeAICommand(words);
+              _executeCommand(words);
             }
           },
         );
       }
     } catch (e) {
-      debugPrint("Error STT general: $e");
+      debugPrint("Error STT: $e");
     }
   }
 
@@ -144,7 +138,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
         _recognizedText.isNotEmpty &&
         !_recognizedText.startsWith("Escuchando") &&
         _recognizedText.trim().length > 1) {
-      _executeAICommand(_recognizedText);
+      _executeCommand(_recognizedText);
     }
   }
 
@@ -153,34 +147,34 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
     SystemSound.play(SystemSoundType.click);
   }
 
-  void _executeAICommand(String text) async {
+  // EJECUCIÓN INMEDIATA SIN BLOQUEOS
+  void _executeCommand(String text) async {
     final clean = text.trim();
-    if (_isProcessing || clean.isEmpty || clean.startsWith("Escuchando") || clean.length < 2) {
+    if (_isProcessing || clean.isEmpty || clean.startsWith("Escuchando")) {
       return;
     }
 
     _silenceTimer?.cancel();
+    _speech.stop();
 
     setState(() {
       _isProcessing = true;
-      _statusMessage = "SINTONIZANDO AL INSTANTE...";
+      _statusMessage = "SINTONIZANDO...";
     });
 
-    // Detener micrófono en segundo plano sin bloquear el hilo
-    _speech.stop();
     _playBeep();
 
-    // Interpretar con el cerebro de IA
+    // 1. CERRAR EL MODAL PRIMERO PARA NO TRABAR LA INTERFAZ
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
+
+    // 2. INTERPRETAR Y EJECUTAR
     final result = await AICuratorService.interpretVoiceCommand(
       userVoicePrompt: clean,
       availableItems: widget.channels,
       currentTab: widget.currentSection,
     );
-
-    if (!mounted) return;
-
-    // CERRAR EL MODAL INMEDIATAMENTE SIN ESPERAS
-    Navigator.of(context).pop();
 
     if (result.speechResponse.isNotEmpty) {
       _tts.speak(result.speechResponse);
@@ -199,10 +193,10 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
       case AIActionType.switchTab:
         if (result.targetTab != null) {
-          final tabName = result.targetTab == 'movies' 
-              ? 'Películas' 
-              : result.targetTab == 'series' 
-                  ? 'Series' 
+          final tabName = result.targetTab == 'movies'
+              ? 'Películas'
+              : result.targetTab == 'series'
+                  ? 'Series'
                   : 'En Vivo';
           widget.onNavigateSection?.call(tabName);
         }
@@ -236,15 +230,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
-    // Normalización anti-tildes matemática infalible
-    final rawSec = widget.currentSection.toLowerCase().trim();
-    final cleanSec = rawSec
-        .replaceAll('í', 'i')
-        .replaceAll('é', 'e')
-        .replaceAll('á', 'a')
-        .replaceAll('ó', 'o')
-        .replaceAll('ú', 'u');
-
+    final cleanSec = widget.currentSection.toLowerCase().replaceAll('í', 'i').trim();
     final bool isMovies = cleanSec.contains('peli') || cleanSec == 'movies' || cleanSec == '1';
     final bool isSeries = cleanSec.contains('seri') || cleanSec == 'series' || cleanSec == '2';
 
@@ -320,14 +306,14 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           ),
           const SizedBox(height: 12),
 
-          // Caja de texto con dictado en vivo o escritura
+          // Caja de texto con botón Enviar activo
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             decoration: BoxDecoration(
               color: const Color(0xFF161F30),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF1E2D4A)),
+              border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.4)),
             ),
             child: Row(
               children: [
@@ -340,24 +326,25 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                       hintStyle: TextStyle(
                         color: _recognizedText.startsWith("Escuchando") ? Colors.white54 : Colors.white,
                         fontSize: 15,
-                        fontWeight: FontWeight.w600,
                       ),
                       border: InputBorder.none,
                       isDense: true,
                     ),
                     onSubmitted: (val) {
-                      if (val.trim().isNotEmpty) {
-                        _executeAICommand(val.trim());
-                      }
+                      if (val.trim().isNotEmpty) _executeCommand(val.trim());
                     },
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.send_rounded, color: Color(0xFF00E5FF), size: 20),
-                  tooltip: 'Buscar',
+                  icon: const Icon(Icons.send_rounded, color: Color(0xFF00E5FF), size: 22),
+                  tooltip: 'Enviar y Sintonizar',
                   onPressed: () {
-                    final txt = _textEditingController.text.trim();
-                    if (txt.isNotEmpty) _executeAICommand(txt);
+                    final txt = _textEditingController.text.trim().isNotEmpty
+                        ? _textEditingController.text.trim()
+                        : _recognizedText;
+                    if (txt.isNotEmpty && !txt.startsWith("Escuchando")) {
+                      _executeCommand(txt);
+                    }
                   },
                 ),
               ],
@@ -365,23 +352,12 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           ),
           const SizedBox(height: 14),
 
-          // TÍTULO 100% DINÁMICO (PELÍCULAS, SERIES O EN VIVO)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                isMovies ? Icons.movie_filter : (isSeries ? Icons.tv_rounded : Icons.live_tv),
-                size: 16,
-                color: const Color(0xFF00E5FF),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                isMovies
-                    ? "Sugerencias para PELÍCULAS:"
-                    : (isSeries ? "Sugerencias para SERIES:" : "Sugerencias para EN VIVO:"),
-                style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
-              ),
-            ],
+          // TÍTULO DINÁMICO
+          Text(
+            isMovies
+                ? "Sugerencias para PELÍCULAS:"
+                : (isSeries ? "Sugerencias para SERIES:" : "Sugerencias para EN VIVO:"),
+            style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 10),
 
@@ -392,21 +368,21 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             alignment: WrapAlignment.center,
             children: isMovies
                 ? [
-                    _buildSuggestionChip("🍿 Películas de Acción", "Películas de Acción"),
-                    _buildSuggestionChip("⭐ Comedias", "Comedia"),
-                    _buildSuggestionChip("📺 Ir a Canales en Vivo", "En Vivo"),
+                    _buildChip("🍿 Películas de Acción", "Películas de Acción"),
+                    _buildChip("⭐ Comedias", "Comedia"),
+                    _buildChip("📺 Ir a Canales en Vivo", "En Vivo"),
                   ]
                 : (isSeries
                     ? [
-                        _buildSuggestionChip("🎬 Series de Drama", "Series de Drama"),
-                        _buildSuggestionChip("🔥 Estrenos y Temporadas", "Temporadas"),
-                        _buildSuggestionChip("📺 Ir a Canales en Vivo", "En Vivo"),
+                        _buildChip("🎬 Series de Drama", "Series de Drama"),
+                        _buildChip("🔥 Estrenos y Temporadas", "Temporadas"),
+                        _buildChip("📺 Ir a Canales en Vivo", "En Vivo"),
                       ]
                     : [
-                        _buildSuggestionChip("⚽ Deportes en Vivo", "Deportes"),
-                        _buildSuggestionChip("📰 Canales de Noticias", "Noticias"),
-                        _buildSuggestionChip("🎵 Música en Directo", "Música"),
-                        _buildSuggestionChip("📅 Guía de Canales (EPG)", "Guía"),
+                        _buildChip("⚽ Deportes en Vivo", "Deportes"),
+                        _buildChip("🎵 HTV Música", "HTV"),
+                        _buildChip("📰 Canales de Noticias", "Noticias"),
+                        _buildChip("📅 Guía de Canales (EPG)", "Guía"),
                       ]),
           ),
           const SizedBox(height: 18),
@@ -435,7 +411,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                         ? _textEditingController.text.trim()
                         : _recognizedText;
                     if (txt.isNotEmpty && !txt.startsWith("Escuchando")) {
-                      _executeAICommand(txt);
+                      _executeCommand(txt);
                     }
                   },
                   icon: const Icon(Icons.check, color: Colors.black, size: 18),
@@ -452,9 +428,9 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
     );
   }
 
-  Widget _buildSuggestionChip(String label, String command) {
+  Widget _buildChip(String label, String command) {
     return InkWell(
-      onTap: () => _executeAICommand(command),
+      onTap: () => _executeCommand(command),
       borderRadius: BorderRadius.circular(20),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),

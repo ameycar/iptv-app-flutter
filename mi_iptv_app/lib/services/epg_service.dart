@@ -41,7 +41,6 @@ class EpgProgram {
 class EpgService {
   static final Map<String, List<EpgProgram>> _cache = {};
 
-  /// Genera programación viva y realista basada en la fecha, hora real y canal
   static List<EpgProgram> getScheduleForChannel(String channelName, String category) {
     final now = DateTime.now();
     final cacheKey = '$channelName-${now.year}-${now.month}-${now.day}-${now.hour}';
@@ -51,7 +50,7 @@ class EpgService {
 
     final lowerName = channelName.toLowerCase();
     final lowerCat = category.toLowerCase();
-    final dynamicTitles = _getRealTitlesForTime(lowerName, lowerCat, now);
+    final dynamicTitles = _getSpecificTitlesForChannel(lowerName, lowerCat, now);
 
     List<EpgProgram> schedule = [];
     DateTime slotStart = DateTime(now.year, now.month, now.day, now.hour, (now.minute >= 30 ? 30 : 0));
@@ -63,7 +62,7 @@ class EpgService {
       schedule.add(
         EpgProgram(
           title: title,
-          description: "Emisión oficial de $title en directo por $channelName en calidad HD.",
+          description: "Emisión de $title en directo por $channelName en alta definición.",
           startTime: slotStart,
           endTime: slotEnd,
           category: category.isNotEmpty ? category : "General",
@@ -101,89 +100,85 @@ class EpgService {
     return list.where((p) => p.endTime.isAfter(now)).toList();
   }
 
-  /// Programación dinámica con eventos deportivos reales según la hora actual
-  static List<String> _getRealTitlesForTime(String name, String cat, DateTime now) {
+  /// CADA CANAL TIENE SU PROGRAMACIÓN PROPIA Y DIFERENTE
+  static List<String> _getSpecificTitlesForChannel(String name, String cat, DateTime now) {
     final hour = now.hour;
 
-    // CANALES DEPORTIVOS (ESPN, FOX, TYC, DSPORTS, ETC.)
-    if (name.contains("espn") || name.contains("fox") || name.contains("tyc") || name.contains("sport") || cat.contains("deport")) {
-      if (hour >= 12 && hour < 15) {
-        return [
-          "Fútbol Europeo: UEFA Champions League / Europa League en Vivo",
-          "SportsCenter Meridiano: Todos los goles y análisis",
-          "Fútbol de Primera: Previa exclusiva de la jornada",
-          "Debate F: Mesa de polémica con especialistas",
-          "Resumen Polideportivo de la tarde",
-          "F1: Lo mejor de la clasificación y prácticas",
-        ];
-      } else if (hour >= 15 && hour < 19) {
-        return [
-          "Fútbol Internacional en Directo: Partido Estelar",
-          "Fútbol en Vivo: Liga Profesional / Copa Continental",
-          "SportsCenter Central: Minuto a minuto y entrevistas",
-          "Equipo F: Debate en vivo tras el partido",
-          "Tenis ATP Tour: Semifinales / Gran Final",
-          "SportsCenter Noche: Edición Estelar",
-        ];
-      } else if (hour >= 19 && hour < 23) {
-        return [
-          "Fútbol Estelar en Vivo: Copa Internacional",
-          "Debate en Vivo: Análisis post-partido y polémica",
-          "SportsCenter Edición Nocturna Especial",
-          "Lo mejor de la NBA / Básquetbol Internacional",
-          "Boxeo Internacional / UFC: Highlights de Campeonato",
-          "Cierre Deportivo: Goles de la jornada mundial",
-        ];
-      } else {
-        return [
-          "SportsCenter Madrugada: Resumen Completo",
-          "Repetición del Gran Partido de la Fecha",
-          "Documentales Deportivos: Leyendas del Deporte",
-          "Fútbol del Recuerdo: Finales Históricas",
-          "SportsCenter Primera Hora",
-          "Buenos Días Deporte: Agenda de Partidos de Hoy",
-        ];
-      }
-    }
-
-    // CANALES DE MÚSICA (HTV, MTV, VH1, ETC.)
-    if (name.contains("music") || name.contains("htv") || name.contains("mtv") || cat.contains("music")) {
-      if (hour >= 12 && hour < 18) {
-        return [
-          "HTV Hot Ranking: Los 21 videos más votados",
-          "Especial Urbano: Reggaetón y Trap Latino",
-          "Sesiones Acústicas en Exclusiva",
-          "Pop Hits Internacionales 1080p",
-          "En la Mira: Artistas Revelación",
-          "Fiesta Latina: Éxitos del Momento",
-        ];
-      } else {
-        return [
-          "Noche Electrónica: Club Sessions Live",
-          "Clásicos de los 80s y 90s Inolvidables",
-          "Concierto en Vivo: Grandes Leyendas de la Música",
-          "Baladas y Románticos de Medianoche",
-          "Top 100 Hits de la Semana",
-          "Despierta con Ritmo: Éxitos Mañaneros",
-        ];
-      }
-    }
-
-    // CANALES DE NOTICIAS
-    if (name.contains("notic") || name.contains("news") || name.contains("cnn") || name.contains("24h") || cat.contains("notic")) {
+    // ESPN 3: BÉISBOL DE GRANDES LIGAS (MLB), COLLEGE Y DEPORTES AMERICANOS
+    if (name.contains("espn 3") || name.contains("espn3")) {
       return [
-        "El Noticiero Central en Directo: Minuto a Minuto",
-        "Mesa de Análisis Político y Economía Global",
-        "Noticias Internacionales: Cobertura Especial",
-        "Entrevistas en Vivo a Figuras del Día",
-        "Resumen de Noticias de la Jornada",
-        "Alerta de Última Hora en el Mundo",
+        "Béisbol MLB en Vivo: Postemporada / Juego de Campeonato",
+        "MLB Extra Inning: Highlights y Todos los Home Runs",
+        "Béisbol en Directo: Partido de la Serie Mundial",
+        "College Football NCAA en Exclusiva",
+        "SportsCenter ESPN 3: Edición Béisbol y Más",
+        "Béisbol Clásico: Grandes Momentos de la MLB",
       ];
     }
 
-    // GENERAL / CINE
+    // ESPN 2: FÚTBOL INTERNACIONAL, TENIS Y SERIE A
+    if (name.contains("espn 2") || name.contains("espn2")) {
+      return [
+        "Fútbol Internacional: Serie A Italiana / LaLiga en Vivo",
+        "Tenis ATP Masters 1000: Semifinales en Directo",
+        "SportsCenter 2: El Minuto a Minuto del Fútbol Europeo",
+        "Equipo F: Debate Táctico de la Jornada",
+        "Resumen de la Champions League: Goles del Día",
+        "Tenis Night Sessions: Lo Mejor de la Fecha",
+      ];
+    }
+
+    // ESPN 5 O ESPN EXTRA: RUGBY, POLIDEPORTIVO Y FÓRMULA 1
+    if (name.contains("espn 5") || name.contains("espn5") || name.contains("extra")) {
+      return [
+        "Fórmula 1 en Vivo: Clasificación y Cámara a Bordo",
+        "Rugby Internacional: Torneo de las 6 Naciones",
+        "SportsCenter Extra: Lo Mejor del Deporte Motor",
+        "Ciclismo UCI World Tour: Etapa de Montaña",
+        "Paddock F1: Entrevistas a los Pilotos",
+        "Lo Mejor de la NBA: Jugadas Espectaculares",
+      ];
+    }
+
+    // ESPN PRINCIPAL / FOX SPORTS: FÚTBOL CONTINENTAL Y LIBERTADORES
+    if (name.contains("espn") || name.contains("fox") || name.contains("tyc")) {
+      return [
+        "Fútbol en Vivo: Copa Continental / Liga Profesional",
+        "SportsCenter Central: Todos los Goles y Polémica",
+        "Debate Deportivo Central en Directo",
+        "Copa Libertadores: Previa Especial y Alineaciones",
+        "El Show del Gol: Resumen de Todos los Partidos",
+        "SportsCenter Noche: Edición Estelar de Cierre",
+      ];
+    }
+
+    // HTV: VIDEOS DE MÚSICA URBANA, POP Y RANKINGS
+    if (name.contains("htv") || name.contains("music") || name.contains("mtv")) {
+      return [
+        "HTV Hot Ranking: Los 21 Videos Más Votados",
+        "Especial Urbano: Reggaetón y Trap Latino",
+        "En la Mira: Estrenos Musicales de la Semana",
+        "Pausa HTV: Entrevistas a Estrellas Latinas",
+        "Noche Latina: Los Mejores Videoclips en HD",
+        "Hits Inolvidables del Pop y Reggaetón",
+      ];
+    }
+
+    // NOTICIAS (24H, CNN, DW, ETC.)
+    if (name.contains("notic") || name.contains("24h") || name.contains("cnn")) {
+      return [
+        "El Noticiero Central: Minuto a Minuto del Mundo",
+        "Mesa de Debate Político y Economía",
+        "Noticias Internacionales: Cobertura Especial",
+        "Entrevistas en Vivo a Figuras del Día",
+        "Resumen Informativo de Cierre",
+        "Alerta de Última Hora Global",
+      ];
+    }
+
+    // CANALES GENERALES / SERIES
     return [
-      "Transmisión Estelar en Alta Definición",
+      "Transmisión Estelar en Calidad 1080p",
       "Magacín de Entretenimiento de la Tarde",
       "Gran Película de Acción y Aventuras",
       "Documentales del Planeta y Ciencia",
