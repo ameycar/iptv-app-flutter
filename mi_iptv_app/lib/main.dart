@@ -169,6 +169,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String _searchQuery = '';
 
   Timer? _clockTimer;
+  Timer? _zappingDebounceTimer;
+  Timer? _osdTimer;
   String _currentTime = '';
 
   @override
@@ -311,7 +313,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _changeChannel(currentList[prevIdx]);
   }
 
-  void _changeChannel(ChannelModel ch) async {
+  // ZAPPING ULTRARRÁPIDO: Cambia la UI al instante (0ms) y aplica debounce (300ms) al reproductor
+  void _changeChannel(ChannelModel ch) {
     int realIndex = _channels.indexOf(ch);
     if (realIndex == -1) {
       realIndex = _channels.indexWhere((c) =>
@@ -330,16 +333,21 @@ class _HomeScreenState extends State<HomeScreen> {
       _hasVideoError = false;
     });
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('last_played_channel_index', realIndex);
-
-    _initializeVideo(ch.streamUrl);
     _triggerOsdTimer();
+
+    _zappingDebounceTimer?.cancel();
+    _zappingDebounceTimer = Timer(const Duration(milliseconds: 300), () async {
+      if (!mounted) return;
+      _initializeVideo(ch.streamUrl);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('last_played_channel_index', realIndex);
+    });
   }
 
   void _triggerOsdTimer() {
+    _osdTimer?.cancel();
     setState(() => _showOsd = true);
-    Future.delayed(const Duration(seconds: 4), () {
+    _osdTimer = Timer(const Duration(seconds: 4), () {
       if (mounted) {
         setState(() => _showOsd = false);
       }
@@ -347,12 +355,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _toggleOsd() {
-    setState(() {
-      _showOsd = !_showOsd;
-      if (_showOsd) {
-        _triggerOsdTimer();
-      }
-    });
+    if (_showOsd) {
+      _osdTimer?.cancel();
+      setState(() => _showOsd = false);
+    } else {
+      _triggerOsdTimer();
+    }
   }
 
   void _startVoiceSearch() {
@@ -1484,8 +1492,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
                 onNext: _nextChannel,
                 onPrevious: _previousChannel,
-                onOpenEpg: () => _openEpgScheduleModal(activeChannel),
-                onToggleFullScreen: () => setState(() => _isFullScreenMode = true),
               ),
           ],
         ),
@@ -1794,8 +1800,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                   onNext: _nextChannel,
                   onPrevious: _previousChannel,
-                  onOpenEpg: () => _openEpgScheduleModal(activeChannel),
-                  onToggleFullScreen: () => setState(() => _isFullScreenMode = false),
                 ),
               ),
 
@@ -1835,6 +1839,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _zappingDebounceTimer?.cancel();
+    _osdTimer?.cancel();
     _videoPlayerController?.dispose();
     _searchController.dispose();
     super.dispose();
