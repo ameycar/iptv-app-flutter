@@ -15,6 +15,7 @@ import 'services/m3u_sanitizer_service.dart';
 import 'services/epg_service.dart';
 import 'widgets/alexa_voice_sheet.dart';
 import 'widgets/vod_grid_view.dart';
+import 'widgets/zapping_channel_overlay.dart';
 
 // SERVICIO NATIVO PARA ALARMAS Y RECORDATORIOS CON LA APP CERRADA
 class NotificationService {
@@ -175,7 +176,6 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _startClockTimer();
     _loadSavedChannels();
-    // Solicitar permisos de forma segura una vez que la UI ya está cargada
     WidgetsBinding.instance.addPostFrameCallback((_) {
       NotificationService.requestPermissionsSafely();
     });
@@ -1011,6 +1011,10 @@ class _HomeScreenState extends State<HomeScreen> {
           bindings: {
             const SingleActivator(LogicalKeyboardKey.arrowDown): _nextChannel,
             const SingleActivator(LogicalKeyboardKey.arrowUp): _previousChannel,
+            const SingleActivator(LogicalKeyboardKey.channelDown): _nextChannel,
+            const SingleActivator(LogicalKeyboardKey.channelUp): _previousChannel,
+            const SingleActivator(LogicalKeyboardKey.pageDown): _nextChannel,
+            const SingleActivator(LogicalKeyboardKey.pageUp): _previousChannel,
             const SingleActivator(LogicalKeyboardKey.select): () {
               setState(() => _isFullScreenMode = !_isFullScreenMode);
             },
@@ -1217,7 +1221,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ? _buildActiveSearchBar()
           : Row(
               children: [
-                // LOGO Y BADGES (ANCHO FIJO ASEGURADO)
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1261,7 +1264,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 const Spacer(),
 
-                // ICONO GUÍA EPG CON BADGE DE NOTIFICACIÓN DIRECTO
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
@@ -1462,57 +1464,29 @@ class _HomeScreenState extends State<HomeScreen> {
                           )
                         : const Center(child: Icon(Icons.tv_off, color: Colors.white38, size: 48)),
 
-            if (_showOsd)
-              Positioned(
-                bottom: 8,
-                left: 8,
-                right: 8,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      color: Colors.black.withOpacity(0.65),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              activeChannel != null ? '${activeChannel.number}. ${activeChannel.name}' : '',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          Row(
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.volume_down, color: Colors.white70, size: 18),
-                                onPressed: () => _adjustVolume(false),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.volume_up, color: Colors.white70, size: 18),
-                                onPressed: () => _adjustVolume(true),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.fullscreen, color: Colors.white70, size: 20),
-                                onPressed: () => setState(() => _isFullScreenMode = true),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.alarm_add, color: Color(0xFFFFB703), size: 20),
-                                onPressed: () {
-                                  if (activeChannel != null) _openEpgScheduleModal(activeChannel);
-                                },
-                              ),
-                            ],
-                          )
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              )
+            // MINI-OVERLAY DE ZAPPING PROFESIONAL (ESTILO TIVIMATE / DIRECTV)
+            if (_showOsd && activeChannel != null)
+              ZappingChannelOverlay(
+                channel: activeChannel,
+                channelIndex: _selectedChannelIndex,
+                totalChannels: _channels.length,
+                isPlaying: _videoPlayerController != null && _videoPlayerController!.value.isPlaying,
+                onPlayPause: () {
+                  if (_videoPlayerController != null) {
+                    setState(() {
+                      if (_videoPlayerController!.value.isPlaying) {
+                        _videoPlayerController!.pause();
+                      } else {
+                        _videoPlayerController!.play();
+                      }
+                    });
+                  }
+                },
+                onNext: _nextChannel,
+                onPrevious: _previousChannel,
+                onOpenEpg: () => _openEpgScheduleModal(activeChannel),
+                onToggleFullScreen: () => setState(() => _isFullScreenMode = true),
+              ),
           ],
         ),
       ),
@@ -1795,53 +1769,52 @@ class _HomeScreenState extends State<HomeScreen> {
                             )
                           : const CircularProgressIndicator(color: Color(0xFFC77DFF)),
             ),
+
+            // OVERLAY EN PANTALLA COMPLETA
+            if (_showOsd && activeChannel != null)
+              Positioned(
+                bottom: 16,
+                left: 16,
+                right: 16,
+                child: ZappingChannelOverlay(
+                  channel: activeChannel,
+                  channelIndex: _selectedChannelIndex,
+                  totalChannels: _channels.length,
+                  isPlaying: _videoPlayerController != null && _videoPlayerController!.value.isPlaying,
+                  onPlayPause: () {
+                    if (_videoPlayerController != null) {
+                      setState(() {
+                        if (_videoPlayerController!.value.isPlaying) {
+                          _videoPlayerController!.pause();
+                        } else {
+                          _videoPlayerController!.play();
+                        }
+                      });
+                    }
+                  },
+                  onNext: _nextChannel,
+                  onPrevious: _previousChannel,
+                  onOpenEpg: () => _openEpgScheduleModal(activeChannel),
+                  onToggleFullScreen: () => setState(() => _isFullScreenMode = false),
+                ),
+              ),
+
+            // BOTÓN SALIR DE PANTALLA COMPLETA
             if (_showOsd)
               Positioned(
-                bottom: 24,
-                left: 24,
+                top: 24,
                 right: 24,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                      color: Colors.black.withOpacity(0.75),
-                      child: Row(
-                        children: [
-                          _buildChannelLogo(activeChannel ?? _channels.first, true),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  activeChannel?.name ?? '',
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                                ),
-                                Text(
-                                  '${activeChannel?.groupCategory} • EN VIVO HLS  •  🕒 $_currentTime',
-                                  style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11),
-                                ),
-                              ],
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.calendar_month, color: Color(0xFF00E5FF), size: 24),
-                            tooltip: 'Guía EPG',
-                            onPressed: () {
-                              if (activeChannel != null) _openEpgScheduleModal(activeChannel);
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.fullscreen_exit, color: Colors.white, size: 26),
-                            onPressed: () => setState(() => _isFullScreenMode = false),
-                          ),
-                        ],
-                      ),
+                child: IconButton(
+                  icon: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white24),
                     ),
+                    child: const Icon(Icons.fullscreen_exit, color: Colors.white, size: 22),
                   ),
+                  onPressed: () => setState(() => _isFullScreenMode = false),
                 ),
               ),
           ],
