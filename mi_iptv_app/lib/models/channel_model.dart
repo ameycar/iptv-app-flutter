@@ -11,6 +11,8 @@ class ChannelModel {
   final String rating;
   final bool isValid;
   bool isFavorite;
+  final String tvgId;
+  final String countryFeed;
 
   ChannelModel({
     required this.id,
@@ -25,6 +27,8 @@ class ChannelModel {
     this.rating = 'HD',
     this.isValid = true,
     this.isFavorite = false,
+    this.tvgId = '',
+    this.countryFeed = '',
   });
 
   bool get isMovie => contentType == 'movie';
@@ -44,6 +48,8 @@ class ChannelModel {
     String? rating,
     bool? isValid,
     bool? isFavorite,
+    String? tvgId,
+    String? countryFeed,
   }) {
     return ChannelModel(
       id: id ?? this.id,
@@ -58,6 +64,8 @@ class ChannelModel {
       rating: rating ?? this.rating,
       isValid: isValid ?? this.isValid,
       isFavorite: isFavorite ?? this.isFavorite,
+      tvgId: tvgId ?? this.tvgId,
+      countryFeed: countryFeed ?? this.countryFeed,
     );
   }
 
@@ -74,6 +82,8 @@ class ChannelModel {
     'rating': rating,
     'isValid': isValid,
     'isFavorite': isFavorite,
+    'tvgId': tvgId,
+    'countryFeed': countryFeed,
   };
 
   factory ChannelModel.fromMap(Map<String, dynamic> map) {
@@ -90,6 +100,8 @@ class ChannelModel {
       rating: map['rating'] ?? 'HD',
       isValid: map['isValid'] ?? true,
       isFavorite: map['isFavorite'] ?? false,
+      tvgId: map['tvgId'] ?? '',
+      countryFeed: map['countryFeed'] ?? '',
     );
   }
 }
