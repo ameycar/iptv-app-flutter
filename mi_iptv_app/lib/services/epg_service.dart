@@ -329,7 +329,7 @@ class EpgService {
     _isFetchingSports = true;
     try {
       const endpoints = [
-        // Fútbol Europeo (los partidos matutinos de tus capturas como LaLiga y Serie A)
+        // Fútbol Europeo (LaLiga, Serie A, Premier League, Champions, LaLiga Hypermotion)
         'https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard?lang=es&region=pe',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/scoreboard?lang=es&region=pe',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?lang=es&region=pe',
@@ -454,7 +454,6 @@ class EpgService {
 
     void addSlot(String channelKey, _XmlTvSlot slot) {
       final list = updatedCache.putIfAbsent(channelKey, () => []);
-      // Evitar solapamiento si ya hay un partido EN VIVO ('🔴') en esa misma ventana
       final hasConflict = list.any((existing) =>
           slot.start.isBefore(existing.stop) &&
           slot.stop.isAfter(existing.start) &&
@@ -464,7 +463,6 @@ class EpgService {
       }
     }
 
-    // Ordenar dando prioridad a los partidos que están EN JUEGO ('in') ahora mismo
     matches.sort((a, b) {
       final aLive = a['state'] == 'in' ? 0 : (a['state'] == 'pre' ? 1 : 2);
       final bLive = b['state'] == 'in' ? 0 : (b['state'] == 'pre' ? 1 : 2);
@@ -509,11 +507,9 @@ class EpgService {
         addSlot('espn3', slot);
         addSlot('foxsports2', slot);
       } else {
-        // Reparto rotativo entre ESPN, ESPN 2, ESPN 3, DSports y Fox Sports para ligas europeas/Champions
         final targets = ['espn', 'espn2', 'espn3', 'dsports', 'foxsports'];
         final primary = targets[soccerCounter % targets.length];
         addSlot(primary, slot);
-        // Si está en vivo ahora mismo, asegurar cobertura en los canales hermanos vacíos
         if (m['state'] == 'in') {
           for (final t in targets) {
             addSlot(t, slot);
@@ -541,7 +537,6 @@ class EpgService {
       if (response.statusCode != 200) return 0;
 
       List<int> bytes = response.bodyBytes;
-      // Soporte nativo si el archivo viene comprimido en GZIP (.xml.gz)
       if (xmlUrl.toLowerCase().endsWith('.gz') ||
           (bytes.length > 2 && bytes[0] == 0x1f && bytes[1] == 0x8b)) {
         try {
@@ -559,7 +554,6 @@ class EpgService {
   static int parseXmlTvContent(String xmlContent) {
     int count = 0;
     try {
-      // 1. Mapear <channel id="ESPN2.ar"><display-name>ESPN 2</display-name></channel>
       final Map<String, String> channelIdToCanonical = {};
       final chanRegex = RegExp(
         r'<channel[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/channel>',
@@ -578,7 +572,6 @@ class EpgService {
         }
       }
 
-      // 2. Parsear bloques <programme start="..." stop="..." channel="...">
       final progRegex = RegExp(
         r'<programme[^>]*start="([^"]+)"[^>]*stop="([^"]+)"[^>]*channel="([^"]+)"[^>]*>([\s\S]*?)<\/programme>',
         caseSensitive: false,
@@ -609,10 +602,8 @@ class EpgService {
           desc: cleanDesc,
         );
 
-        // Indexar por Llave 1: tvg-id exacto (ej. "espn2sur.ar")
         _xmlTvCache.putIfAbsent(rawChannelId, () => []).add(slot);
 
-        // Indexar por Llave 2: nombre canónico limpio (ej. "espn2")
         final normalizedId = normalizeChannel(rawChannelId, explicitTvgId: rawChannelId);
         if (normalizedId.canonicalNameKey.isNotEmpty) {
           _xmlTvCache.putIfAbsent(normalizedId.canonicalNameKey, () => []).add(slot);
@@ -641,7 +632,6 @@ class EpgService {
       final minute = int.parse(digits.substring(10, 12));
       final second = digits.length >= 14 ? int.parse(digits.substring(12, 14)) : 0;
 
-      // Si incluye huso horario (ej. "-0300", "+0200"), convertir a UTC y luego a hora local del teléfono/TV
       if (parts.length > 1) {
         final tz = parts[1].trim();
         final tzMatch = RegExp(r'^([+-])(\d{2})(\d{2})$').firstMatch(tz);
@@ -683,7 +673,7 @@ class EpgService {
     final name = _getChannelName(channel);
     final cat = _getChannelCategory(channel);
     final tvgId = _getChannelTvgId(channel);
-    return getCurrentProgram(name, cat, tvgId: tvgId);
+    return getCurrentProgram(name, cat, tvgId);
   }
 
   /// Obtiene el programa EN VIVO actual para el canal según la hora exacta del reloj
@@ -858,7 +848,6 @@ class EpgService {
         ? (elapsedMinutes / totalMinutes).clamp(0.04, 0.96)
         : 0.0;
 
-    // Semilla diferenciada por canal y por país/feed para que Argentina y Colombia no repitan lo mismo
     final String seedKey = '${identity.brandKey}_${identity.countryFeed}';
     final int channelSeed = seedKey.codeUnits.fold<int>(0, (prev, elem) => prev + elem);
 
@@ -998,7 +987,6 @@ class EpgService {
         lowerCat.contains('sport') ||
         lowerCat.contains('futbol') ||
         lowerCat.contains('fútbol')) {
-      // Mañanas de Fútbol Europeo en directo (06:00 a 12:00 hora Latinoamérica)
       if (hour >= 6 && hour < 12) {
         final morningSoccer = [
           {
