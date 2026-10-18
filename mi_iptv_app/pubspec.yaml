@@ -15,9 +15,6 @@ dependencies:
   cloud_firestore: ^5.6.5
   video_player: ^2.9.2
   chewie: ^1.8.5
-  media_kit: ^1.1.11
-  media_kit_video: ^1.2.5
-  media_kit_libs_video: ^1.0.5
   http: ^1.2.0
   shared_preferences: ^2.3.2
   speech_to_text: ^7.0.0
