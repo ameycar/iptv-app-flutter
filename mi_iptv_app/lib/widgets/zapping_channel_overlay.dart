@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
+import '../services/epg_service.dart';
 
 class ZappingChannelOverlay extends StatefulWidget {
   final dynamic channel;
   final int channelIndex;
   final int totalChannels;
   final bool isPlaying;
+  final bool isFullScreen;
   final VoidCallback onPlayPause;
   final VoidCallback onNext;
   final VoidCallback onPrevious;
+  final VoidCallback? onOpenEpg;
+  final VoidCallback? onToggleFullScreen;
 
   const ZappingChannelOverlay({
     super.key,
@@ -15,9 +19,12 @@ class ZappingChannelOverlay extends StatefulWidget {
     this.channelIndex = 0,
     this.totalChannels = 0,
     required this.isPlaying,
+    this.isFullScreen = false,
     required this.onPlayPause,
     required this.onNext,
     required this.onPrevious,
+    this.onOpenEpg,
+    this.onToggleFullScreen,
   });
 
   @override
@@ -53,6 +60,16 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     return 'Canal en Vivo';
   }
 
+  String _getGroupCategory() {
+    try {
+      if (widget.channel.groupCategory != null &&
+          widget.channel.groupCategory.toString().isNotEmpty) {
+        return widget.channel.groupCategory.toString();
+      }
+    } catch (_) {}
+    return 'General';
+  }
+
   String _getLogoUrl() {
     try {
       if (widget.channel.logoUrl != null) {
@@ -62,76 +79,44 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     return '';
   }
 
-  String _getCurrentProgramTitle() {
+  String _getResolution() {
     try {
-      if (widget.channel.currentProgram != null &&
-          widget.channel.currentProgram.title != null) {
-        return widget.channel.currentProgram.title.toString();
+      if (widget.channel.resolution != null &&
+          widget.channel.resolution.toString().isNotEmpty) {
+        return widget.channel.resolution.toString();
       }
     } catch (_) {}
-    return 'Transmisión en Directo HD';
-  }
-
-  String _getNextProgramTitle() {
-    try {
-      if (widget.channel.nextProgram != null &&
-          widget.channel.nextProgram.title != null) {
-        return widget.channel.nextProgram.title.toString();
-      }
-    } catch (_) {}
-    return 'Continuidad de Programación';
-  }
-
-  double _getProgress() {
-    try {
-      if (widget.channel.currentProgram != null &&
-          widget.channel.currentProgram.progress != null) {
-        final val = (widget.channel.currentProgram.progress as num).toDouble();
-        return val.clamp(0.0, 1.0);
-      }
-    } catch (_) {}
-    return 0.45;
-  }
-
-  String _getTimeFormatted() {
-    try {
-      if (widget.channel.currentProgram != null &&
-          widget.channel.currentProgram.timeFormatted != null) {
-        return widget.channel.currentProgram.timeFormatted.toString();
-      }
-    } catch (_) {}
-    final now = DateTime.now();
-    final start = now.hour.toString().padLeft(2, '0');
-    final end = ((now.hour + 1) % 24).toString().padLeft(2, '0');
-    return '$start:00 - $end:00';
+    return 'FHD';
   }
 
   @override
   Widget build(BuildContext context) {
     final channelNumber = (widget.channelIndex + 1).toString().padLeft(3, '0');
     final channelName = _getChannelName();
+    final groupCat = _getGroupCategory();
     final logoUrl = _getLogoUrl();
-    final currentProgram = _getCurrentProgramTitle();
-    final nextProgram = _getNextProgramTitle();
-    final progress = _getProgress();
-    final timeStr = _getTimeFormatted();
+    final resolution = _getResolution();
+
+    // Sincronización directa con EpgService para coincidir con la tarjeta inferior y el modal
+    final currentProg = EpgService.getCurrentProgram(channelName, groupCat);
+    final nextProg = EpgService.getNextProgram(channelName, groupCat);
 
     return Align(
       alignment: Alignment.bottomCenter,
       child: Container(
         margin: const EdgeInsets.all(8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
           color: const Color(0xFF090D16).withValues(alpha: 0.92),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: const Color(0xFF00E5FF).withValues(alpha: 0.25),
+            color: const Color(0xFF00E5FF).withValues(alpha: 0.30),
             width: 1,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.6),
-              blurRadius: 16,
+              color: Colors.black.withValues(alpha: 0.65),
+              blurRadius: 14,
               offset: const Offset(0, 4),
             ),
           ],
@@ -140,12 +125,11 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Fila 1: Número CH, Logo, Nombre del Canal, Badge EN VIVO y Play/Pause
+            // Fila 1: Número CH, Logo, Nombre del Canal, Badge EN VIVO, Play/Pause y Pantalla Completa
             Row(
               children: [
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                   decoration: BoxDecoration(
                     color: const Color(0xFF00E5FF).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(6),
@@ -159,8 +143,8 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                     style: const TextStyle(
                       color: Color(0xFF00E5FF),
                       fontWeight: FontWeight.w900,
-                      fontSize: 12,
-                      letterSpacing: 1.0,
+                      fontSize: 11,
+                      letterSpacing: 0.8,
                     ),
                   ),
                 ),
@@ -168,8 +152,8 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),
                   child: Container(
-                    width: 32,
-                    height: 32,
+                    width: 28,
+                    height: 28,
                     color: const Color(0xFF131A29),
                     child: logoUrl.isNotEmpty
                         ? Image.network(
@@ -178,10 +162,10 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                             errorBuilder: (_, __, ___) => const Icon(
                               Icons.tv,
                               color: Colors.white54,
-                              size: 18,
+                              size: 16,
                             ),
                           )
-                        : const Icon(Icons.tv, color: Colors.white54, size: 18),
+                        : const Icon(Icons.tv, color: Colors.white54, size: 16),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -196,24 +180,22 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            letterSpacing: 0.5,
+                            fontSize: 13,
                           ),
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 5),
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 1),
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                         decoration: BoxDecoration(
                           color: Colors.white12,
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: const Text(
-                          'FHD',
-                          style: TextStyle(
+                        child: Text(
+                          resolution,
+                          style: const TextStyle(
                             color: Colors.white70,
-                            fontSize: 9,
+                            fontSize: 8.5,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -225,8 +207,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                   animation: _pulseController,
                   builder: (context, child) {
                     return Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
                         color: const Color(0xFFFF1744).withValues(
                           alpha: 0.2 + (_pulseController.value * 0.25),
@@ -243,14 +224,13 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(Icons.circle, color: Color(0xFFFF1744), size: 6),
-                          SizedBox(width: 4),
+                          SizedBox(width: 3),
                           Text(
                             'EN VIVO',
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 9,
+                              fontSize: 8.5,
                               fontWeight: FontWeight.w900,
-                              letterSpacing: 0.8,
                             ),
                           ),
                         ],
@@ -258,68 +238,88 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                     );
                   },
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 6),
                 IconButton(
                   icon: Icon(
                     widget.isPlaying
                         ? Icons.pause_circle_filled
                         : Icons.play_circle_filled,
                     color: const Color(0xFF00E5FF),
-                    size: 26,
+                    size: 24,
                   ),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                   onPressed: widget.onPlayPause,
                 ),
+                if (widget.onToggleFullScreen != null) ...[
+                  const SizedBox(width: 6),
+                  InkWell(
+                    onTap: widget.onToggleFullScreen,
+                    borderRadius: BorderRadius.circular(6),
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF7B2CBF).withValues(alpha: 0.35),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFC77DFF), width: 1),
+                      ),
+                      child: Icon(
+                        widget.isFullScreen
+                            ? Icons.fullscreen_exit
+                            : Icons.fullscreen,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
 
-            // Fila 2: Programa Actual y Horario
+            // Fila 2: Programa Actual Sincronizado y Horario
             Row(
               children: [
-                const Icon(Icons.play_arrow,
-                    color: Color(0xFF00E5FF), size: 14),
+                const Icon(Icons.play_arrow, color: Color(0xFF00E5FF), size: 14),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    currentProgram,
+                    currentProg.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 12,
+                      fontSize: 11.5,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  timeStr,
+                  currentProg.timeFormatted,
                   style: const TextStyle(
                     color: Colors.white54,
-                    fontSize: 11,
+                    fontSize: 10.5,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 5),
 
             // Barra de Progreso del Programa
             ClipRRect(
               borderRadius: BorderRadius.circular(3),
               child: LinearProgressIndicator(
-                value: progress,
+                value: currentProg.progress.clamp(0.0, 1.0),
                 backgroundColor: Colors.white12,
-                valueColor:
-                    const AlwaysStoppedAnimation<Color>(Color(0xFF00E5FF)),
+                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00E5FF)),
                 minHeight: 3,
               ),
             ),
             const SizedBox(height: 6),
 
-            // Fila 3: Siguiente Programa & Zapping Rápido CH- / CH+
+            // Fila 3: Siguiente Programa + Botón EPG + Botones CH- / CH+
             Row(
               children: [
                 Expanded(
@@ -335,7 +335,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                       ),
                       Expanded(
                         child: Text(
-                          nextProgram,
+                          nextProg.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -350,45 +350,68 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (widget.onOpenEpg != null) ...[
+                      InkWell(
+                        onTap: widget.onOpenEpg,
+                        borderRadius: BorderRadius.circular(6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF7B2CBF).withValues(alpha: 0.35),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: const Color(0xFFC77DFF).withValues(alpha: 0.6),
+                            ),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.calendar_month, color: Color(0xFFFFB703), size: 12),
+                              SizedBox(width: 3),
+                              Text(
+                                'EPG',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                    ],
                     InkWell(
                       onTap: widget.onPrevious,
                       borderRadius: BorderRadius.circular(6),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: Colors.white10,
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: const Row(
                           children: [
-                            Icon(Icons.skip_previous,
-                                color: Colors.white70, size: 14),
-                            Text(' CH-',
-                                style: TextStyle(
-                                    color: Colors.white70, fontSize: 10)),
+                            Icon(Icons.skip_previous, color: Colors.white70, size: 13),
+                            Text(' CH-', style: TextStyle(color: Colors.white70, fontSize: 9.5)),
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 5),
                     InkWell(
                       onTap: widget.onNext,
                       borderRadius: BorderRadius.circular(6),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: Colors.white10,
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: const Row(
                           children: [
-                            Text('CH+ ',
-                                style: TextStyle(
-                                    color: Colors.white70, fontSize: 10)),
-                            Icon(Icons.skip_next,
-                                color: Colors.white70, size: 14),
+                            Text('CH+ ', style: TextStyle(color: Colors.white70, fontSize: 9.5)),
+                            Icon(Icons.skip_next, color: Colors.white70, size: 13),
                           ],
                         ),
                       ),

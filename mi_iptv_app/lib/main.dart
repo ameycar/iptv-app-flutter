@@ -171,6 +171,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _clockTimer;
   Timer? _zappingDebounceTimer;
   Timer? _osdTimer;
+  int _videoLoadId = 0;
   String _currentTime = '';
 
   @override
@@ -227,9 +228,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // MOTOR DE VIDEO ASÍNCRONO SIN BLOQUEO (Elimina la demora al cambiar de canal)
   void _initializeVideo(String rawUrl) async {
     if (!mounted) return;
+    final int currentLoadId = ++_videoLoadId;
     final url = rawUrl.trim();
+
     if (url.isEmpty) {
       setState(() {
         _isVideoLoading = false;
@@ -243,14 +247,16 @@ class _HomeScreenState extends State<HomeScreen> {
       _hasVideoError = false;
     });
 
+    // Destruimos el reproductor anterior en segundo plano SIN frenar la carga del nuevo canal
     final oldController = _videoPlayerController;
     _videoPlayerController = null;
-
     if (oldController != null) {
-      try {
-        await oldController.pause();
-      } catch (_) {}
-      await oldController.dispose();
+      Future.microtask(() async {
+        try {
+          await oldController.pause();
+          await oldController.dispose();
+        } catch (_) {}
+      });
     }
 
     try {
@@ -266,21 +272,30 @@ class _HomeScreenState extends State<HomeScreen> {
 
       await controller.initialize();
 
+      // Si el usuario ya pasó a otro canal mientras este cargaba, descartamos este inmediatamente
+      if (!mounted || currentLoadId != _videoLoadId) {
+        Future.microtask(() async {
+          try {
+            await controller.dispose();
+          } catch (_) {}
+        });
+        return;
+      }
+
+      _videoPlayerController = controller;
+      await _videoPlayerController!.setVolume(_currentVolume);
+      await _videoPlayerController!.play();
+      await _videoPlayerController!.setLooping(true);
+
       if (mounted) {
-        _videoPlayerController = controller;
-        await _videoPlayerController!.setVolume(_currentVolume);
-        await _videoPlayerController!.play();
-        await _videoPlayerController!.setLooping(true);
         setState(() {
           _isVideoLoading = false;
           _hasVideoError = false;
         });
-      } else {
-        await controller.dispose();
       }
     } catch (e) {
       debugPrint('Error reproduciendo stream ($url): $e');
-      if (mounted) {
+      if (mounted && currentLoadId == _videoLoadId) {
         setState(() {
           _isVideoLoading = false;
           _hasVideoError = true;
@@ -298,7 +313,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (currentCh == null) return;
     int curIdxInFiltered = currentList.indexOf(currentCh);
     int nextIdx = (curIdxInFiltered + 1) % currentList.length;
-    _changeChannel(currentList[nextIdx]);
+    _changeChannel(currentList[nextIdx], instant: false);
   }
 
   void _previousChannel() {
@@ -310,11 +325,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (currentCh == null) return;
     int curIdxInFiltered = currentList.indexOf(currentCh);
     int prevIdx = (curIdxInFiltered - 1 < 0) ? currentList.length - 1 : curIdxInFiltered - 1;
-    _changeChannel(currentList[prevIdx]);
+    _changeChannel(currentList[prevIdx], instant: false);
   }
 
-  // ZAPPING ULTRARRÁPIDO: Cambia la UI al instante (0ms) y aplica debounce (300ms) al reproductor
-  void _changeChannel(ChannelModel ch) {
+  // ZAPPING INSTANTÁNEO: 0ms al tocar un canal y 80ms de protección en ráfagas CH+/CH-
+  void _changeChannel(ChannelModel ch, {bool instant = true}) {
     int realIndex = _channels.indexOf(ch);
     if (realIndex == -1) {
       realIndex = _channels.indexWhere((c) =>
@@ -334,14 +349,21 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     _triggerOsdTimer();
-
     _zappingDebounceTimer?.cancel();
-    _zappingDebounceTimer = Timer(const Duration(milliseconds: 300), () async {
-      if (!mounted) return;
+
+    if (instant) {
       _initializeVideo(ch.streamUrl);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('last_played_channel_index', realIndex);
-    });
+      SharedPreferences.getInstance().then(
+        (prefs) => prefs.setInt('last_played_channel_index', realIndex),
+      );
+    } else {
+      _zappingDebounceTimer = Timer(const Duration(milliseconds: 80), () async {
+        if (!mounted) return;
+        _initializeVideo(ch.streamUrl);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt('last_played_channel_index', realIndex);
+      });
+    }
   }
 
   void _triggerOsdTimer() {
@@ -389,9 +411,9 @@ class _HomeScreenState extends State<HomeScreen> {
             setState(() => _selectedSection = 'Series');
           }
           
-          Future.delayed(const Duration(milliseconds: 300), () {
+          Future.delayed(const Duration(milliseconds: 150), () {
             if (mounted) {
-              _changeChannel(item);
+              _changeChannel(item, instant: true);
               if (item.isMovie || item.isSeries) {
                 setState(() => _isFullScreenMode = true);
               }
@@ -1069,7 +1091,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 contentType: 'movie',
                 searchQuery: _searchQuery,
                 onPlayItem: (item) {
-                  _changeChannel(item);
+                  _changeChannel(item, instant: true);
                   setState(() => _isFullScreenMode = true);
                 },
               ),
@@ -1081,7 +1103,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 contentType: 'series',
                 searchQuery: _searchQuery,
                 onPlayItem: (item) {
-                  _changeChannel(item);
+                  _changeChannel(item, instant: true);
                   setState(() => _isFullScreenMode = true);
                 },
               ),
@@ -1195,7 +1217,7 @@ class _HomeScreenState extends State<HomeScreen> {
               contentType: 'movie',
               searchQuery: _searchQuery,
               onPlayItem: (item) {
-                _changeChannel(item);
+                _changeChannel(item, instant: true);
                 setState(() => _isFullScreenMode = true);
               },
             ),
@@ -1207,7 +1229,7 @@ class _HomeScreenState extends State<HomeScreen> {
               contentType: 'series',
               searchQuery: _searchQuery,
               onPlayItem: (item) {
-                _changeChannel(item);
+                _changeChannel(item, instant: true);
                 setState(() => _isFullScreenMode = true);
               },
             ),
@@ -1472,13 +1494,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           )
                         : const Center(child: Icon(Icons.tv_off, color: Colors.white38, size: 48)),
 
-            // MINI-OVERLAY DE ZAPPING PROFESIONAL (ESTILO TIVIMATE / DIRECTV)
+            // MINI-OVERLAY DE ZAPPING PROFESIONAL CON BOTÓN PANTALLA COMPLETA Y EPG
             if (_showOsd && activeChannel != null)
               ZappingChannelOverlay(
                 channel: activeChannel,
                 channelIndex: _selectedChannelIndex,
                 totalChannels: _channels.length,
                 isPlaying: _videoPlayerController != null && _videoPlayerController!.value.isPlaying,
+                isFullScreen: _isFullScreenMode,
                 onPlayPause: () {
                   if (_videoPlayerController != null) {
                     setState(() {
@@ -1492,6 +1515,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
                 onNext: _nextChannel,
                 onPrevious: _previousChannel,
+                onOpenEpg: () => _openEpgScheduleModal(activeChannel),
+                onToggleFullScreen: () => setState(() => _isFullScreenMode = true),
               ),
           ],
         ),
@@ -1519,18 +1544,23 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.live_tv, color: Colors.redAccent, size: 14),
-                    const SizedBox(width: 6),
-                    Text(
-                      currentProg.title,
-                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                Expanded(
+                  child: Row(
+                    children: [
+                      const Icon(Icons.live_tv, color: Colors.redAccent, size: 14),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          currentProg.title,
+                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+                const SizedBox(width: 8),
                 Text(
                   currentProg.timeFormatted,
                   style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11, fontWeight: FontWeight.bold),
@@ -1541,12 +1571,15 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'A continuación: ${nextProg.title}',
-                  style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                Expanded(
+                  child: Text(
+                    'A continuación: ${nextProg.title}',
+                    style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
+                const SizedBox(width: 8),
                 Text(
                   'Quedan ${currentProg.remainingMinutes} min',
                   style: const TextStyle(color: Colors.white54, fontSize: 10),
@@ -1642,7 +1675,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return Focus(
           onKey: (node, event) {
             if (event is RawKeyDownEvent && event.logicalKey == LogicalKeyboardKey.select) {
-              _changeChannel(channel);
+              _changeChannel(channel, instant: true);
               return KeyEventResult.handled;
             }
             return KeyEventResult.ignored;
@@ -1686,7 +1719,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   trailing: isSelected
                       ? const Icon(Icons.volume_up, color: Color(0xFFC77DFF), size: 18)
                       : null,
-                  onTap: () => _changeChannel(channel),
+                  onTap: () => _changeChannel(channel, instant: true),
                 ),
               );
             },
@@ -1787,6 +1820,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   channelIndex: _selectedChannelIndex,
                   totalChannels: _channels.length,
                   isPlaying: _videoPlayerController != null && _videoPlayerController!.value.isPlaying,
+                  isFullScreen: _isFullScreenMode,
                   onPlayPause: () {
                     if (_videoPlayerController != null) {
                       setState(() {
@@ -1800,10 +1834,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                   onNext: _nextChannel,
                   onPrevious: _previousChannel,
+                  onOpenEpg: () => _openEpgScheduleModal(activeChannel),
+                  onToggleFullScreen: () => setState(() => _isFullScreenMode = false),
                 ),
               ),
 
-            // BOTÓN SALIR DE PANTALLA COMPLETA
+            // BOTÓN SALIR DE PANTALLA COMPLETA SUPERIOR
             if (_showOsd)
               Positioned(
                 top: 24,
