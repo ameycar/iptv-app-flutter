@@ -162,6 +162,13 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showOsd = true;
   double _currentVolume = 1.0;
 
+  // MOTOR TURBO-ZAPPING (ESTILO TIVIMATE / DIRECTV)
+  final Map<String, VideoPlayerController> _prebufferedPool = {};
+  final Set<String> _prebufferingInProgress = {};
+  int _zappingToken = 0;
+  Timer? _zappingDebounceTimer;
+  Timer? _osdHideTimer;
+
   final Set<String> _activeAlarms = {};
 
   bool _isSearching = false;
@@ -169,9 +176,6 @@ class _HomeScreenState extends State<HomeScreen> {
   String _searchQuery = '';
 
   Timer? _clockTimer;
-  Timer? _zappingDebounceTimer;
-  Timer? _osdTimer;
-  int _videoLoadId = 0;
   String _currentTime = '';
 
   @override
@@ -228,11 +232,110 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // MOTOR DE VIDEO ASÍNCRONO SIN BLOQUEO (Elimina la demora al cambiar de canal)
+  // Liberación asíncrona en segundo plano (NUNCA bloquea el cambio de canal)
+  void _disposeControllerInBackground(VideoPlayerController? controller) {
+    if (controller == null) return;
+    Future.microtask(() async {
+      try {
+        await controller.pause();
+      } catch (_) {}
+      try {
+        await controller.dispose();
+      } catch (_) {}
+    });
+  }
+
+  Uri _parseStreamUri(String rawUrl) {
+    final url = rawUrl.trim();
+    Uri? targetUri = Uri.tryParse(url);
+    if (targetUri == null || !targetUri.hasScheme) {
+      targetUri = Uri.parse(Uri.encodeFull(url));
+    }
+    return targetUri;
+  }
+
+  // Pre-carga silenciosa de los canales adyacentes (CH+ y CH-) estilo TiviMate
+  void _warmUpAdjacentChannels() {
+    if (!mounted) return;
+    final list = _filteredChannels;
+    if (list.length <= 1) return;
+
+    final activeCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+        ? _channels[_selectedChannelIndex]
+        : null;
+    if (activeCh == null) return;
+
+    final curIdx = list.indexOf(activeCh);
+    if (curIdx == -1) return;
+
+    final nextIdx = (curIdx + 1) % list.length;
+    final prevIdx = (curIdx - 1 < 0) ? list.length - 1 : curIdx - 1;
+
+    final nextUrl = list[nextIdx].streamUrl.trim();
+    final prevUrl = list[prevIdx].streamUrl.trim();
+    final activeUrl = activeCh.streamUrl.trim();
+
+    final desiredUrls = <String>{
+      if (nextUrl.isNotEmpty && nextUrl != activeUrl) nextUrl,
+      if (prevUrl.isNotEmpty && prevUrl != activeUrl) prevUrl,
+    };
+
+    // 1. Limpiar del pool cualquier canal que ya no sea vecino inmediato
+    final existingKeys = _prebufferedPool.keys.toList();
+    for (final key in existingKeys) {
+      if (!desiredUrls.contains(key)) {
+        final oldPre = _prebufferedPool.remove(key);
+        _disposeControllerInBackground(oldPre);
+      }
+    }
+
+    // 2. Pre-inicializar en silencio CH+ y CH-
+    for (final targetUrl in desiredUrls) {
+      if (_prebufferedPool.containsKey(targetUrl) ||
+          _prebufferingInProgress.contains(targetUrl)) {
+        continue;
+      }
+
+      _prebufferingInProgress.add(targetUrl);
+      Future.microtask(() async {
+        try {
+          final uri = _parseStreamUri(targetUrl);
+          final preController = VideoPlayerController.networkUrl(
+            uri,
+            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+          );
+          await preController.initialize();
+          await preController.setVolume(0.0);
+          await preController.setLooping(true);
+          await preController.pause();
+
+          _prebufferingInProgress.remove(targetUrl);
+
+          if (!mounted) {
+            _disposeControllerInBackground(preController);
+            return;
+          }
+
+          final currentActive = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+              ? _channels[_selectedChannelIndex].streamUrl.trim()
+              : '';
+          if (targetUrl == currentActive) {
+            _disposeControllerInBackground(preController);
+            return;
+          }
+
+          _prebufferedPool[targetUrl] = preController;
+        } catch (_) {
+          _prebufferingInProgress.remove(targetUrl);
+        }
+      });
+    }
+  }
+
   void _initializeVideo(String rawUrl) async {
     if (!mounted) return;
-    final int currentLoadId = ++_videoLoadId;
     final url = rawUrl.trim();
+    final currentToken = ++_zappingToken;
 
     if (url.isEmpty) {
       setState(() {
@@ -242,29 +345,41 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    // RUTA ULTRARRÁPIDA (0.05s): ¿El canal ya está pre-cargado en nuestro Pool TiviMate?
+    final preloaded = _prebufferedPool.remove(url);
+    if (preloaded != null && preloaded.value.isInitialized) {
+      final oldController = _videoPlayerController;
+      _videoPlayerController = preloaded;
+      setState(() {
+        _isVideoLoading = false;
+        _hasVideoError = false;
+      });
+
+      _disposeControllerInBackground(oldController);
+
+      try {
+        await preloaded.setVolume(_currentVolume);
+        await preloaded.play();
+      } catch (_) {}
+
+      _warmUpAdjacentChannels();
+      return;
+    } else if (preloaded != null) {
+      _disposeControllerInBackground(preloaded);
+    }
+
+    // RUTA PARALELA NO BLOQUEANTE: Mostrar transición suave con logo y conectar de inmediato
     setState(() {
       _isVideoLoading = true;
       _hasVideoError = false;
     });
 
-    // Destruimos el reproductor anterior en segundo plano SIN frenar la carga del nuevo canal
     final oldController = _videoPlayerController;
     _videoPlayerController = null;
-    if (oldController != null) {
-      Future.microtask(() async {
-        try {
-          await oldController.pause();
-          await oldController.dispose();
-        } catch (_) {}
-      });
-    }
+    _disposeControllerInBackground(oldController);
 
     try {
-      Uri? targetUri = Uri.tryParse(url);
-      if (targetUri == null || !targetUri.hasScheme) {
-        targetUri = Uri.parse(Uri.encodeFull(url));
-      }
-
+      final targetUri = _parseStreamUri(url);
       final controller = VideoPlayerController.networkUrl(
         targetUri,
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
@@ -272,13 +387,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
       await controller.initialize();
 
-      // Si el usuario ya pasó a otro canal mientras este cargaba, descartamos este inmediatamente
-      if (!mounted || currentLoadId != _videoLoadId) {
-        Future.microtask(() async {
-          try {
-            await controller.dispose();
-          } catch (_) {}
-        });
+      if (!mounted || currentToken != _zappingToken) {
+        _disposeControllerInBackground(controller);
         return;
       }
 
@@ -287,15 +397,16 @@ class _HomeScreenState extends State<HomeScreen> {
       await _videoPlayerController!.play();
       await _videoPlayerController!.setLooping(true);
 
-      if (mounted) {
+      if (mounted && currentToken == _zappingToken) {
         setState(() {
           _isVideoLoading = false;
           _hasVideoError = false;
         });
+        _warmUpAdjacentChannels();
       }
     } catch (e) {
       debugPrint('Error reproduciendo stream ($url): $e');
-      if (mounted && currentLoadId == _videoLoadId) {
+      if (mounted && currentToken == _zappingToken) {
         setState(() {
           _isVideoLoading = false;
           _hasVideoError = true;
@@ -313,7 +424,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (currentCh == null) return;
     int curIdxInFiltered = currentList.indexOf(currentCh);
     int nextIdx = (curIdxInFiltered + 1) % currentList.length;
-    _changeChannel(currentList[nextIdx], instant: false);
+    _changeChannel(currentList[nextIdx]);
   }
 
   void _previousChannel() {
@@ -325,11 +436,10 @@ class _HomeScreenState extends State<HomeScreen> {
     if (currentCh == null) return;
     int curIdxInFiltered = currentList.indexOf(currentCh);
     int prevIdx = (curIdxInFiltered - 1 < 0) ? currentList.length - 1 : curIdxInFiltered - 1;
-    _changeChannel(currentList[prevIdx], instant: false);
+    _changeChannel(currentList[prevIdx]);
   }
 
-  // ZAPPING INSTANTÁNEO: 0ms al tocar un canal y 80ms de protección en ráfagas CH+/CH-
-  void _changeChannel(ChannelModel ch, {bool instant = true}) {
+  void _changeChannel(ChannelModel ch) {
     int realIndex = _channels.indexOf(ch);
     if (realIndex == -1) {
       realIndex = _channels.indexWhere((c) =>
@@ -342,34 +452,45 @@ class _HomeScreenState extends State<HomeScreen> {
       realIndex = _channels.length - 1;
     }
 
+    final targetUrl = ch.streamUrl.trim();
+    final isReadyInPool = _prebufferedPool.containsKey(targetUrl) &&
+        (_prebufferedPool[targetUrl]?.value.isInitialized ?? false);
+
+    // Respuesta de UI en 0 milisegundos
     setState(() {
       _selectedChannelIndex = realIndex;
       _showOsd = true;
       _hasVideoError = false;
+      if (!isReadyInPool) {
+        _isVideoLoading = true;
+      }
     });
 
     _triggerOsdTimer();
-    _zappingDebounceTimer?.cancel();
 
-    if (instant) {
-      _initializeVideo(ch.streamUrl);
-      SharedPreferences.getInstance().then(
-        (prefs) => prefs.setInt('last_played_channel_index', realIndex),
-      );
+    // Guardar preferencia en segundo plano (sin bloquear el zapping)
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setInt('last_played_channel_index', realIndex);
+    });
+
+    _zappingDebounceTimer?.cancel();
+    if (isReadyInPool) {
+      _initializeVideo(targetUrl);
     } else {
-      _zappingDebounceTimer = Timer(const Duration(milliseconds: 80), () async {
-        if (!mounted) return;
-        _initializeVideo(ch.streamUrl);
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setInt('last_played_channel_index', realIndex);
+      _zappingDebounceTimer = Timer(const Duration(milliseconds: 90), () {
+        if (mounted) {
+          _initializeVideo(targetUrl);
+        }
       });
     }
   }
 
   void _triggerOsdTimer() {
-    _osdTimer?.cancel();
-    setState(() => _showOsd = true);
-    _osdTimer = Timer(const Duration(seconds: 4), () {
+    _osdHideTimer?.cancel();
+    if (!_showOsd) {
+      setState(() => _showOsd = true);
+    }
+    _osdHideTimer = Timer(const Duration(seconds: 4), () {
       if (mounted) {
         setState(() => _showOsd = false);
       }
@@ -377,12 +498,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _toggleOsd() {
-    if (_showOsd) {
-      _osdTimer?.cancel();
-      setState(() => _showOsd = false);
-    } else {
-      _triggerOsdTimer();
-    }
+    setState(() {
+      _showOsd = !_showOsd;
+      if (_showOsd) {
+        _triggerOsdTimer();
+      } else {
+        _osdHideTimer?.cancel();
+      }
+    });
   }
 
   void _startVoiceSearch() {
@@ -413,7 +536,7 @@ class _HomeScreenState extends State<HomeScreen> {
           
           Future.delayed(const Duration(milliseconds: 150), () {
             if (mounted) {
-              _changeChannel(item, instant: true);
+              _changeChannel(item);
               if (item.isMovie || item.isSeries) {
                 setState(() => _isFullScreenMode = true);
               }
@@ -1091,7 +1214,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 contentType: 'movie',
                 searchQuery: _searchQuery,
                 onPlayItem: (item) {
-                  _changeChannel(item, instant: true);
+                  _changeChannel(item);
                   setState(() => _isFullScreenMode = true);
                 },
               ),
@@ -1103,7 +1226,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 contentType: 'series',
                 searchQuery: _searchQuery,
                 onPlayItem: (item) {
-                  _changeChannel(item, instant: true);
+                  _changeChannel(item);
                   setState(() => _isFullScreenMode = true);
                 },
               ),
@@ -1217,7 +1340,7 @@ class _HomeScreenState extends State<HomeScreen> {
               contentType: 'movie',
               searchQuery: _searchQuery,
               onPlayItem: (item) {
-                _changeChannel(item, instant: true);
+                _changeChannel(item);
                 setState(() => _isFullScreenMode = true);
               },
             ),
@@ -1229,7 +1352,7 @@ class _HomeScreenState extends State<HomeScreen> {
               contentType: 'series',
               searchQuery: _searchQuery,
               onPlayItem: (item) {
-                _changeChannel(item, instant: true);
+                _changeChannel(item);
                 setState(() => _isFullScreenMode = true);
               },
             ),
@@ -1444,12 +1567,139 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // LIENZO DE TRANSICIÓN SUAVE CON LOGO Y EPG (CERO PANTALLA NEGRA)
+  Widget _buildSmoothTuningTransition(ChannelModel? activeChannel) {
+    if (activeChannel == null) {
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF)));
+    }
+
+    final currentProg = EpgService.getCurrentProgram(activeChannel.name, activeChannel.groupCategory);
+    final chNum = activeChannel.number.toString().padLeft(3, '0');
+
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Color(0xFF070A10),
+            Color(0xFF131B2E),
+            Color(0xFF090D16),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.45)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00E5FF).withOpacity(0.2),
+                      blurRadius: 14,
+                    ),
+                  ],
+                ),
+                child: _buildChannelLogo(activeChannel, true),
+              ),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF00E5FF).withOpacity(0.18),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'CH $chNum',
+                            style: const TextStyle(
+                              color: Color(0xFF00E5FF),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        const SizedBox(
+                          width: 11,
+                          height: 11,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Color(0xFF00E5FF),
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        const Text(
+                          'SINTONIZANDO...',
+                          style: TextStyle(
+                            color: Color(0xFF00E5FF),
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.8,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      activeChannel.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      currentProg.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildVideoPlayerSection(ChannelModel? activeChannel) {
+    final isReady = !_isVideoLoading &&
+        !_hasVideoError &&
+        _videoPlayerController != null &&
+        _videoPlayerController!.value.isInitialized;
+
     return GestureDetector(
       onTap: _toggleOsd,
       onVerticalDragEnd: (details) {
-        if (details.primaryVelocity! < -150) _nextChannel();
-        if (details.primaryVelocity! > 150) _previousChannel();
+        if (details.primaryVelocity != null) {
+          if (details.primaryVelocity! < -120) _nextChannel();
+          if (details.primaryVelocity! > 120) _previousChannel();
+        }
       },
       onDoubleTap: () {
         setState(() => _isFullScreenMode = !_isFullScreenMode);
@@ -1457,51 +1707,56 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Container(
         height: 215,
         width: double.infinity,
-        color: Colors.black,
+        color: const Color(0xFF070A10),
         child: Stack(
           children: [
-            _isVideoLoading
-                ? const Center(child: CircularProgressIndicator(color: Color(0xFFC77DFF)))
-                : _hasVideoError
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.cloud_off, color: Colors.white38, size: 40),
-                            const SizedBox(height: 6),
-                            const Text('Señal no disponible o sin conexión', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                            const SizedBox(height: 8),
-                            ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF7B2CBF),
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: isReady
+                  ? Center(
+                      key: ValueKey<String>(activeChannel?.streamUrl ?? 'video'),
+                      child: AspectRatio(
+                        aspectRatio: _videoPlayerController!.value.aspectRatio,
+                        child: VideoPlayer(_videoPlayerController!),
+                      ),
+                    )
+                  : _hasVideoError
+                      ? Center(
+                          key: const ValueKey<String>('error'),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.cloud_off, color: Colors.white38, size: 36),
+                              const SizedBox(height: 6),
+                              const Text(
+                                'Señal no disponible temporalmente',
+                                style: TextStyle(color: Colors.white54, fontSize: 12),
                               ),
-                              onPressed: () {
-                                if (activeChannel != null) _initializeVideo(activeChannel.streamUrl);
-                              },
-                              icon: const Icon(Icons.refresh, size: 16, color: Colors.white),
-                              label: const Text('Reintentar', style: TextStyle(color: Colors.white, fontSize: 11)),
-                            ),
-                          ],
-                        ),
-                      )
-                    : (_videoPlayerController != null && _videoPlayerController!.value.isInitialized)
-                        ? Center(
-                            child: AspectRatio(
-                              aspectRatio: _videoPlayerController!.value.aspectRatio,
-                              child: VideoPlayer(_videoPlayerController!),
-                            ),
-                          )
-                        : const Center(child: Icon(Icons.tv_off, color: Colors.white38, size: 48)),
+                              const SizedBox(height: 8),
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF7B2CBF),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                ),
+                                onPressed: () {
+                                  if (activeChannel != null) _initializeVideo(activeChannel.streamUrl);
+                                },
+                                icon: const Icon(Icons.refresh, size: 16, color: Colors.white),
+                                label: const Text('Reintentar', style: TextStyle(color: Colors.white, fontSize: 11)),
+                              ),
+                            ],
+                          ),
+                        )
+                      : _buildSmoothTuningTransition(activeChannel),
+            ),
 
-            // MINI-OVERLAY DE ZAPPING PROFESIONAL CON BOTÓN PANTALLA COMPLETA Y EPG
+            // MINI-OVERLAY DE ZAPPING PROFESIONAL (ESTILO TIVIMATE / DIRECTV)
             if (_showOsd && activeChannel != null)
               ZappingChannelOverlay(
                 channel: activeChannel,
                 channelIndex: _selectedChannelIndex,
                 totalChannels: _channels.length,
                 isPlaying: _videoPlayerController != null && _videoPlayerController!.value.isPlaying,
-                isFullScreen: _isFullScreenMode,
                 onPlayPause: () {
                   if (_videoPlayerController != null) {
                     setState(() {
@@ -1675,7 +1930,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return Focus(
           onKey: (node, event) {
             if (event is RawKeyDownEvent && event.logicalKey == LogicalKeyboardKey.select) {
-              _changeChannel(channel, instant: true);
+              _changeChannel(channel);
               return KeyEventResult.handled;
             }
             return KeyEventResult.ignored;
@@ -1719,7 +1974,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   trailing: isSelected
                       ? const Icon(Icons.volume_up, color: Color(0xFFC77DFF), size: 18)
                       : null,
-                  onTap: () => _changeChannel(channel, instant: true),
+                  onTap: () => _changeChannel(channel),
                 ),
               );
             },
@@ -1767,46 +2022,58 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildImmersivePlayer(ChannelModel? activeChannel) {
+    final isReady = !_isVideoLoading &&
+        !_hasVideoError &&
+        _videoPlayerController != null &&
+        _videoPlayerController!.value.isInitialized;
+
     return GestureDetector(
       onTap: _toggleOsd,
       onVerticalDragEnd: (details) {
-        if (details.primaryVelocity! < -150) _nextChannel();
-        if (details.primaryVelocity! > 150) _previousChannel();
+        if (details.primaryVelocity != null) {
+          if (details.primaryVelocity! < -120) _nextChannel();
+          if (details.primaryVelocity! > 120) _previousChannel();
+        }
       },
       child: Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: const Color(0xFF070A10),
         body: Stack(
           children: [
-            Center(
-              child: _isVideoLoading
-                  ? const CircularProgressIndicator(color: Color(0xFFC77DFF))
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: isReady
+                  ? Center(
+                      key: ValueKey<String>(activeChannel?.streamUrl ?? 'immersive_video'),
+                      child: AspectRatio(
+                        aspectRatio: _videoPlayerController!.value.aspectRatio,
+                        child: VideoPlayer(_videoPlayerController!),
+                      ),
+                    )
                   : _hasVideoError
-                      ? Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
-                            const SizedBox(height: 12),
-                            Text(
-                              'No se pudo reproducir: ${activeChannel?.name ?? "Canal"}',
-                              style: const TextStyle(color: Colors.white, fontSize: 14),
-                            ),
-                            const SizedBox(height: 12),
-                            ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
-                              onPressed: () {
-                                if (activeChannel != null) _initializeVideo(activeChannel.streamUrl);
-                              },
-                              icon: const Icon(Icons.refresh, color: Colors.white),
-                              label: const Text('Reintentar', style: TextStyle(color: Colors.white)),
-                            ),
-                          ],
+                      ? Center(
+                          key: const ValueKey<String>('immersive_error'),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
+                              const SizedBox(height: 12),
+                              Text(
+                                'No se pudo reproducir: ${activeChannel?.name ?? "Canal"}',
+                                style: const TextStyle(color: Colors.white, fontSize: 14),
+                              ),
+                              const SizedBox(height: 12),
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
+                                onPressed: () {
+                                  if (activeChannel != null) _initializeVideo(activeChannel.streamUrl);
+                                },
+                                icon: const Icon(Icons.refresh, color: Colors.white),
+                                label: const Text('Reintentar', style: TextStyle(color: Colors.white)),
+                              ),
+                            ],
+                          ),
                         )
-                      : (_videoPlayerController != null && _videoPlayerController!.value.isInitialized)
-                          ? AspectRatio(
-                              aspectRatio: _videoPlayerController!.value.aspectRatio,
-                              child: VideoPlayer(_videoPlayerController!),
-                            )
-                          : const CircularProgressIndicator(color: Color(0xFFC77DFF)),
+                      : _buildSmoothTuningTransition(activeChannel),
             ),
 
             // OVERLAY EN PANTALLA COMPLETA
@@ -1820,7 +2087,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   channelIndex: _selectedChannelIndex,
                   totalChannels: _channels.length,
                   isPlaying: _videoPlayerController != null && _videoPlayerController!.value.isPlaying,
-                  isFullScreen: _isFullScreenMode,
                   onPlayPause: () {
                     if (_videoPlayerController != null) {
                       setState(() {
@@ -1839,7 +2105,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-            // BOTÓN SALIR DE PANTALLA COMPLETA SUPERIOR
+            // BOTÓN SALIR DE PANTALLA COMPLETA
             if (_showOsd)
               Positioned(
                 top: 24,
@@ -1876,8 +2142,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _clockTimer?.cancel();
     _zappingDebounceTimer?.cancel();
-    _osdTimer?.cancel();
+    _osdHideTimer?.cancel();
     _videoPlayerController?.dispose();
+    for (final pre in _prebufferedPool.values) {
+      pre.dispose();
+    }
+    _prebufferedPool.clear();
     _searchController.dispose();
     super.dispose();
   }
