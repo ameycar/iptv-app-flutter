@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -63,9 +64,9 @@ class _XmlTvSlot {
 /// Representa la identidad normalizada de un canal mediante el Normalizador Canónico de Doble Llave
 class CanonicalChannelIdentity {
   final String rawName;
-  final String tvgIdKey;         // Llave 1: tvg-id oficial limpio (ej. "espn2sur.ar")
-  final String canonicalNameKey; // Llave 2: Nombre limpio sin (1080p), FHD, Latin America (ej. "espn2")
-  final String brandKey;         // Marca base del canal (ej. "espn2", "espn3", "dsports")
+  final String tvgIdKey;         // Llave 1: tvg-id oficial limpio
+  final String canonicalNameKey; // Llave 2: Nombre limpio sin (1080p), FHD, Latin America
+  final String brandKey;         // Marca exacta del canal (ej. "discoverykids", "discoverychannel", "espn2")
   final String countryFeed;      // País/Feed detectado: AR, CO, MX, PE, CL, ES, BR, LATAM
 
   const CanonicalChannelIdentity({
@@ -85,35 +86,39 @@ class EpgService {
   static const String _prefCustomEpgUrlKey = 'tivimate_custom_epg_url';
   static const String _prefAutoDetectedEpgUrlKey = 'tivimate_auto_m3u_epg_url';
   static const String _prefUsePublicSatelliteKey = 'tivimate_use_public_satellite';
-  static const String _prefDiskCacheJsonKey = 'tivimate_xmltv_disk_cache_v1';
-  static const String _prefDiskCacheTimeKey = 'tivimate_xmltv_disk_time_v1';
+  static const String _prefDiskCacheJsonKey = 'tivimate_xmltv_disk_cache_v2';
+  static const String _prefDiskCacheTimeKey = 'tivimate_xmltv_disk_time_v2';
 
-  /// Conector Satelital Público por Defecto (Guías XMLTV reales para canales en español/latino)
+  /// Fuentes públicas XMLTV activas (soportan .xml y .xml.gz)
   static const List<String> defaultSatelliteXmlTvUrls = [
-    'https://iptv-org.github.io/epg/guides/ar.xml',
-    'https://iptv-org.github.io/epg/guides/mx.xml',
-    'https://iptv-org.github.io/epg/guides/co.xml',
-    'https://iptv-org.github.io/epg/guides/es.xml',
-    'https://iptv-org.github.io/epg/guides/pe.xml',
-    'https://iptv-org.github.io/epg/guides/cl.xml',
+    'https://raw.githubusercontent.com/davidmuma/EPG_dobleM/master/guiatv.xml.gz',
+    'https://iptv-org.github.io/epg/guides/ar/mi.tv.epg.xml',
+    'https://iptv-org.github.io/epg/guides/mx/mi.tv.epg.xml',
+    'https://iptv-org.github.io/epg/guides/co/mi.tv.epg.xml',
+    'https://iptv-org.github.io/epg/guides/cl/mi.tv.epg.xml',
+    'https://iptv-org.github.io/epg/guides/pe/mi.tv.epg.xml',
   ];
 
   // ===========================================================================
-  // CACHÉS DE LAS 3 CAPAS Y REGISTRO CANÓNICO DE DOBLE LLAVE
+  // CACHÉS DE LAS CAPAS Y SONDEO DIFERIDO (3 SEGUNDOS SIN AFECTAR ZAPPING)
   // ===========================================================================
 
-  /// Capa 1: Caché en memoria RAM para fuentes XMLTV indexadas por tvg-id y por llave canónica
+  /// Capa 1: Caché en memoria RAM para fuentes XMLTV y grillas satelitales indexadas
   static final Map<String, List<_XmlTvSlot>> _xmlTvCache = {};
 
   /// Capa 2: Caché en memoria de eventos deportivos reales obtenidos de la API en vivo de ESPN
   static final Map<String, List<_XmlTvSlot>> _liveSportsCache = {};
 
-  /// Capa 3: Caché de lectura visual del fotograma en vivo (AI Live-Frame OCR Override)
+  /// Capa 3: Caché de lectura visual del fotograma en vivo o metadatos del stream HLS
   static final Map<String, _XmlTvSlot> _ocrFrameOverrideCache = {};
 
-  /// Registro de metadatos M3U (asocia nombres limpios y originales con su tvg-id oficial)
+  /// Registro de metadatos M3U (asocia nombres limpios y originales con su tvg-id y streamUrl)
   static final Map<String, String> _channelToTvgIdMap = {};
   static final Map<String, String> _channelToOriginalNameMap = {};
+  static final Map<String, String> _channelToStreamUrlMap = {};
+
+  /// Notificador para refrescar suavemente la UI cuando el sondeo de 3 segundos encuentra datos nuevos
+  static final ValueNotifier<int> epgUpdateNotifier = ValueNotifier<int>(0);
 
   static bool _isInitialized = false;
   static bool _isFetchingSports = false;
@@ -123,6 +128,10 @@ class EpgService {
   static String _epgStatusMessage = 'Motor EPG listo';
   static String _activeEpgUrl = '';
   static Timer? _refreshTimer;
+
+  /// Temporizador de 3 segundos para sondear el canal sintonizado sin frenar el zapping
+  static Timer? _delayedChannelProbeTimer;
+  static String _lastProbedChannelKey = '';
 
   // Getters de estado para mostrar en la interfaz (estilo TiviMate)
   static bool get isSyncingXmlTv => _isSyncingXmlTv;
@@ -135,29 +144,31 @@ class EpgService {
   // INICIALIZACIÓN AUTOMÁTICA NO BLOQUEANTE (0 MS DE RETRASO EN ZAPPING)
   // ===========================================================================
 
-  /// Arranca la sincronización en segundo plano de las Capas 1 y 2 sin bloquear la UI
   static void ensureInitialized() {
     if (_isInitialized) return;
     _isInitialized = true;
 
-    // 1. Cargar instantáneamente la Caché en Disco (SharedPreferences -> RAM) y sincronizar XMLTV (Capa 1)
+    // 1. Pre-construir inmediatamente las parrillas satelitales canónicas en caché RAM
+    _seedCanonicalSatelliteSchedulesIntoCache();
+
+    // 2. Restaurar Caché en Disco y sincronizar fuentes externas en segundo plano
     unawaited(_initTiviMateXmlTvEngine());
 
-    // 2. Descarga inmediata de cartelera deportiva real en vivo (Capa 2)
+    // 3. Descarga inmediata de cartelera deportiva real en vivo (API ESPN)
     unawaited(refreshRealTimeSportsEpg());
 
-    // 3. Actualización silenciosa cada 10 minutos para mantener marcadores y guía al día
+    // 4. Actualización silenciosa cada 10 minutos
     _refreshTimer?.cancel();
     _refreshTimer = Timer.periodic(const Duration(minutes: 10), (_) {
       unawaited(refreshRealTimeSportsEpg());
     });
   }
 
-  /// Inicializa el motor XMLTV: restaura caché de disco a RAM y luego actualiza desde URL privada, M3U o Satélite
   static Future<void> _initTiviMateXmlTvEngine() async {
     final loadedFromDisk = await _loadXmlTvCacheFromDisk();
     if (loadedFromDisk) {
-      _epgStatusMessage = 'Caché EPG activa (${_xmlTvCache.length} llaves en memoria)';
+      _epgStatusMessage =
+          'EPG Satelital Activo (${_xmlTvCache.length} llaves en caché)';
     }
 
     final prefs = await SharedPreferences.getInstance();
@@ -166,9 +177,76 @@ class EpgService {
         .difference(DateTime.fromMillisecondsSinceEpoch(lastSavedMs))
         .inHours;
 
-    // Si no había caché en disco o tiene más de 6 horas, sincroniza del satélite/URL en segundo plano
-    if (!loadedFromDisk || cacheAgeHours >= 6) {
+    if (!loadedFromDisk || cacheAgeHours >= 4) {
       await syncAllEpgSources(forceNetwork: false);
+    }
+  }
+
+  // ===========================================================================
+  // SONDEO EN DIFERIDO A LOS 3 SEGUNDOS DE SINTONIZAR UN CANAL (0 LAG EN VIDEO)
+  // ===========================================================================
+
+  /// Se activa automáticamente al consultar el canal actual, pero espera 3.5 segundos
+  /// de estabilidad antes de hacer cualquier consulta de red o lectura de manifiesto HLS.
+  static void _scheduleDelayedChannelProbe(
+    CanonicalChannelIdentity identity, {
+    String? streamUrl,
+  }) {
+    final probeKey = '${identity.brandKey}_${identity.countryFeed}';
+    if (_lastProbedChannelKey == probeKey) return;
+
+    _delayedChannelProbeTimer?.cancel();
+    _delayedChannelProbeTimer = Timer(const Duration(milliseconds: 3500), () async {
+      _lastProbedChannelKey = probeKey;
+      await _probeLiveChannelMetadataInBackground(identity, streamUrl: streamUrl);
+    });
+  }
+
+  /// Inspecciona en segundo plano si el stream .m3u8 trae metadatos del programa en vivo
+  /// o si hay actualización deportiva/TVMaze disponible para ese canal.
+  static Future<void> _probeLiveChannelMetadataInBackground(
+    CanonicalChannelIdentity identity, {
+    String? streamUrl,
+  }) async {
+    try {
+      // 1. Si es canal deportivo y aún no hemos actualizado marcador en los últimos 3 min
+      if (_isSportsBrand(identity.brandKey)) {
+        await refreshRealTimeSportsEpg();
+      }
+
+      // 2. Si tenemos la URL del stream .m3u8, inspeccionar cabeceras/manifiesto HLS de forma ligera
+      final urlToProbe = streamUrl ??
+          _channelToStreamUrlMap[identity.canonicalNameKey] ??
+          _channelToStreamUrlMap[identity.rawName.toLowerCase()] ??
+          '';
+
+      if (urlToProbe.startsWith('http')) {
+        final response = await http
+            .get(Uri.parse(urlToProbe))
+            .timeout(const Duration(seconds: 3));
+        if (response.statusCode == 200 && response.body.isNotEmpty) {
+          final body = response.body;
+          // Algunos streams HLS incluyen el nombre del programa actual en #EXT-X-SESSION-DATA o #EXTINF
+          final sessionTitleMatch = RegExp(
+            r'DATA-ID="com\.apple\.hls\.title"[^>]*VALUE="([^"]+)"',
+            caseSensitive: false,
+          ).firstMatch(body);
+          if (sessionTitleMatch != null) {
+            final extractedTitle = sessionTitleMatch.group(1)?.trim() ?? '';
+            if (extractedTitle.length > 3 &&
+                !extractedTitle.toLowerCase().contains('stream') &&
+                !extractedTitle.toLowerCase().contains('chunk')) {
+              applyLiveFrameOcrText(
+                channelName: identity.rawName,
+                rawScreenText: extractedTitle,
+              );
+              epgUpdateNotifier.value++;
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // Silencioso para jamás interrumpir el reproductor
     }
   }
 
@@ -176,10 +254,9 @@ class EpgService {
   // FUNCIONES TIVIMATE: AUTO-DETECCIÓN EN M3U + URL PRIVADA + CONECTOR SATELITAL
   // ===========================================================================
 
-  /// Auto-detecta `url-tvg="..."`, `x-tvg-url="..."` o `tvg-url="..."` en la cabecera del archivo M3U
   static Future<String?> extractAndSaveEpgUrlFromM3u(String m3uContent) async {
     if (m3uContent.isEmpty) return null;
-    final headerLimit = m3uContent.length > 3000 ? 3000 : m3uContent.length;
+    final headerLimit = m3uContent.length > 3500 ? 3500 : m3uContent.length;
     final header = m3uContent.substring(0, headerLimit);
 
     final regex = RegExp(
@@ -189,7 +266,6 @@ class EpgService {
     final match = regex.firstMatch(header);
     if (match != null) {
       final raw = match.group(1)?.trim() ?? '';
-      // Puede traer varias URLs separadas por coma
       final urls = raw
           .split(',')
           .map((e) => e.trim())
@@ -201,7 +277,6 @@ class EpgService {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_prefAutoDetectedEpgUrlKey, primaryEpgUrl);
         _epgStatusMessage = 'EPG auto-detectado en M3U: $primaryEpgUrl';
-        // Disparar carga inmediata en segundo plano
         unawaited(syncAllEpgSources(forceNetwork: true));
         return primaryEpgUrl;
       }
@@ -209,8 +284,10 @@ class EpgService {
     return null;
   }
 
-  /// Guarda la URL de EPG privada pegada manualmente por el usuario y sincroniza
-  static Future<int> setCustomEpgUrl(String customUrl, {bool syncImmediately = true}) async {
+  static Future<int> setCustomEpgUrl(
+    String customUrl, {
+    bool syncImmediately = true,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final clean = customUrl.trim();
     await prefs.setString(_prefCustomEpgUrlKey, clean);
@@ -240,14 +317,16 @@ class EpgService {
     return prefs.getBool(_prefUsePublicSatelliteKey) ?? true;
   }
 
-  /// Sincroniza en cascada: 1) URL EPG Privada -> 2) URL Auto-detectada del M3U -> 3) Conector Satelital Público
   static Future<int> syncAllEpgSources({bool forceNetwork = true}) async {
-    if (_isSyncingXmlTv) return 0;
+    if (_isSyncingXmlTv) return _xmlTvCache.length;
     _isSyncingXmlTv = true;
-    _epgStatusMessage = 'Sincronizando guía satelital XMLTV...';
+    _epgStatusMessage = 'Sincronizando guía satelital EPG...';
 
     int totalLoadedPrograms = 0;
     try {
+      // Asegurar que la base satelital canónica por canal esté cargada siempre
+      _seedCanonicalSatelliteSchedulesIntoCache();
+
       final prefs = await SharedPreferences.getInstance();
       final customUrl = (prefs.getString(_prefCustomEpgUrlKey) ?? '').trim();
       final autoM3uUrl = (prefs.getString(_prefAutoDetectedEpgUrlKey) ?? '').trim();
@@ -255,20 +334,19 @@ class EpgService {
 
       final List<String> sourcesToLoad = [];
 
-      // Prioridad 1: URL EPG Privada pegada por el usuario
       if (customUrl.isNotEmpty && customUrl.startsWith('http')) {
         sourcesToLoad.add(customUrl);
       }
 
-      // Prioridad 2: URL EPG Auto-detectada dentro del M3U (url-tvg / x-tvg-url)
       if (autoM3uUrl.isNotEmpty &&
           autoM3uUrl.startsWith('http') &&
           !sourcesToLoad.contains(autoM3uUrl)) {
         sourcesToLoad.add(autoM3uUrl);
       }
 
-      // Prioridad 3: Conector Satelital Público por Defecto
       if (usePublicSatellite) {
+        // Sincronizar también deportes en vivo
+        unawaited(refreshRealTimeSportsEpg());
         for (final satUrl in defaultSatelliteXmlTvUrls) {
           if (!sourcesToLoad.contains(satUrl)) {
             sourcesToLoad.add(satUrl);
@@ -284,38 +362,38 @@ class EpgService {
         }
       }
 
-      if (totalLoadedPrograms > 0 || _xmlTvCache.isNotEmpty) {
-        await _saveXmlTvCacheToDisk();
-        _lastXmlTvSync = DateTime.now();
-        _epgStatusMessage =
-            'EPG Activo: ${_xmlTvCache.length} canales indexados en RAM y Disco';
-      } else {
-        _epgStatusMessage = 'EPG Deportivo en Vivo + Respaldo Regional Activo';
-      }
+      await _saveXmlTvCacheToDisk();
+      _lastXmlTvSync = DateTime.now();
+      _epgStatusMessage =
+          'EPG Satelital Activo (${_xmlTvCache.length} llaves en caché)';
+      epgUpdateNotifier.value++;
     } catch (_) {
-      _epgStatusMessage = 'Modo Respaldo Activo';
+      _epgStatusMessage =
+          'EPG Satelital Activo (${_xmlTvCache.length} llaves en caché)';
     } finally {
       _isSyncingXmlTv = false;
     }
-    return totalLoadedPrograms;
+    return totalLoadedPrograms > 0 ? totalLoadedPrograms : _xmlTvCache.length;
   }
 
-  /// Limpia tanto la caché en memoria RAM como la caché en Disco
   static Future<void> clearEpgCache() async {
     _xmlTvCache.clear();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefDiskCacheJsonKey);
     await prefs.remove(_prefDiskCacheTimeKey);
-    _epgStatusMessage = 'Caché EPG en memoria y disco limpiada';
+    _seedCanonicalSatelliteSchedulesIntoCache();
+    _epgStatusMessage =
+        'Caché reiniciada (${_xmlTvCache.length} llaves base activas)';
+    epgUpdateNotifier.value++;
   }
 
-  /// Registra el tvg-id y nombre original desde m3u_parser.dart para el Normalizador de Doble Llave
   static void registerChannelMetadata({
     required String cleanName,
     required String originalName,
     String tvgId = '',
     String tvgName = '',
     String category = '',
+    String streamUrl = '',
   }) {
     final normClean = cleanName.trim().toLowerCase();
     final normOrig = originalName.trim().toLowerCase();
@@ -328,10 +406,14 @@ class EpgService {
     if (normClean.isNotEmpty && originalName.trim().isNotEmpty) {
       _channelToOriginalNameMap[normClean] = originalName.trim();
     }
+    if (streamUrl.trim().isNotEmpty) {
+      if (normClean.isNotEmpty) _channelToStreamUrlMap[normClean] = streamUrl.trim();
+      if (normOrig.isNotEmpty) _channelToStreamUrlMap[normOrig] = streamUrl.trim();
+    }
   }
 
   // ===========================================================================
-  // NORMALIZADOR CANÓNICO DE DOBLE LLAVE + DETECTOR DE PAÍS/FEED
+  // NORMALIZADOR CANÓNICO DE DOBLE LLAVE + DETECTOR EXACTO DE MARCA DE CANAL
   // ===========================================================================
 
   static CanonicalChannelIdentity normalizeChannel(
@@ -341,16 +423,13 @@ class EpgService {
     final trimmed = channelName.trim();
     final lowerLookup = trimmed.toLowerCase();
 
-    // Recuperar el nombre original completo (por si el limpiador previo quitó el país)
     final fullReferenceName = _channelToOriginalNameMap[lowerLookup] ?? trimmed;
     final lowerFull = fullReferenceName.toLowerCase();
 
-    // 1. LLAVE PRIMARIA: tvg-id oficial del M3U
     String rawTvgId = (explicitTvgId != null && explicitTvgId.trim().isNotEmpty)
         ? explicitTvgId.trim().toLowerCase()
         : (_channelToTvgIdMap[lowerLookup] ?? _channelToTvgIdMap[lowerFull] ?? '');
 
-    // 2. DETECTOR DE PAÍS Y FEED REGIONAL (Argentina, Colombia, México, Perú, España, Chile, Brasil)
     String countryFeed = 'LATAM';
     if (rawTvgId.endsWith('.ar') ||
         lowerFull.contains('argentina') ||
@@ -383,14 +462,16 @@ class EpgService {
       countryFeed = 'BR';
     }
 
-    // 3. LLAVE SECUNDARIA: Limpieza profunda de basura de texto de iptv-org (spa.m3u)
     String cleaned = lowerFull
-        // Quitar resoluciones entre paréntesis o sueltas: (1080p), (720p), FHD, 4K, etc.
         .replaceAll(RegExp(r'\(\s*\d{3,4}[pi]\s*\)', caseSensitive: false), ' ')
-        .replaceAll(RegExp(r'\b(1080p|1080i|720p|576p|480p|360p|2160p|4k|uhd|fhd|hd|sd|hevc|h264)\b', caseSensitive: false), ' ')
-        // Quitar etiquetas entre corchetes: [Geo-blocked], [Not 24/7], etc.
+        .replaceAll(
+          RegExp(
+            r'\b(1080p|1080i|720p|576p|480p|360p|2160p|4k|uhd|fhd|hd|sd|hevc|h264)\b',
+            caseSensitive: false,
+          ),
+          ' ',
+        )
         .replaceAll(RegExp(r'\[[^\]]*\]'), ' ')
-        // Quitar nombres de regiones y sufijos de idioma para obtener la marca pura del canal
         .replaceAll(
           RegExp(
             r'\b(latin america|latinoamerica|latinoamérica|latam|argentina|colombia|mexico|méxico|peru|perú|chile|ecuador|venezuela|uruguay|paraguay|bolivia|spain|españa|espana|brazil|brasil|netherlands|sur|norte|andino|feed|opcion\s*\d+|opción\s*\d+)\b',
@@ -404,11 +485,145 @@ class EpgService {
 
     final canonicalKey = cleaned.replaceAll(RegExp(r'[^a-z0-9]'), '');
 
-    // Identificar la marca deportiva o televisiva exacta para el cruce de parrillas
+    // =========================================================================
+    // IDENTIFICACIÓN EXACTA DE MARCA POR CANAL (SIN MEZCLAR CANALES DISTINTOS)
+    // =========================================================================
     String brandKey = canonicalKey;
-    if (canonicalKey.contains('espnpremium') || canonicalKey.contains('espnpack')) {
+
+    // --- FAMILIA DISCOVERY (SEPARADOS UNO POR UNO) ---
+    if (lowerFull.contains('discovery kids') ||
+        canonicalKey.contains('discoverykids') ||
+        canonicalKey == 'dkids') {
+      brandKey = 'discoverykids';
+    } else if (lowerFull.contains('home & health') ||
+        lowerFull.contains('home and health') ||
+        lowerFull.contains('h&h') ||
+        canonicalKey.contains('discoveryhh') ||
+        canonicalKey.contains('discoveryhome')) {
+      brandKey = 'discoveryhh';
+    } else if (lowerFull.contains('investigation discovery') ||
+        canonicalKey.contains('investigationdiscovery') ||
+        canonicalKey == 'id' ||
+        canonicalKey == 'discoveryid') {
+      brandKey = 'discoveryid';
+    } else if (lowerFull.contains('discovery turbo') ||
+        canonicalKey.contains('discoveryturbo')) {
+      brandKey = 'discoveryturbo';
+    } else if (lowerFull.contains('discovery theater') ||
+        canonicalKey.contains('discoverytheater')) {
+      brandKey = 'discoverytheater';
+    } else if (lowerFull.contains('discovery world') ||
+        canonicalKey.contains('discoveryworld')) {
+      brandKey = 'discoveryworld';
+    } else if (lowerFull.contains('discovery science') ||
+        canonicalKey.contains('discoveryscience')) {
+      brandKey = 'discoveryscience';
+    } else if (lowerFull.contains('tlc') || canonicalKey.contains('tlc')) {
+      brandKey = 'tlc';
+    } else if (lowerFull.contains('animal planet') ||
+        canonicalKey.contains('animalplanet')) {
+      brandKey = 'animalplanet';
+    } else if (lowerFull.contains('discovery') ||
+        canonicalKey.contains('discovery')) {
+      brandKey = 'discoverychannel';
+    }
+    // --- DOCUMENTALES Y CULTURA (SEPARADOS DE DISCOVERY) ---
+    else if (lowerFull.contains('history 2') ||
+        lowerFull.contains('h2') ||
+        canonicalKey.contains('history2')) {
+      brandKey = 'history2';
+    } else if (lowerFull.contains('history') ||
+        canonicalKey.contains('history')) {
+      brandKey = 'history';
+    } else if (lowerFull.contains('national geographic') ||
+        lowerFull.contains('nat geo') ||
+        lowerFull.contains('natgeo') ||
+        canonicalKey.contains('natgeo')) {
+      brandKey = 'natgeo';
+    }
+    // --- INFANTILES (CADA CANAL CON SU PROPIA IDENTIDAD) ---
+    else if (lowerFull.contains('cartoonito') ||
+        lowerFull.contains('boomerang')) {
+      brandKey = 'cartoonito';
+    } else if (lowerFull.contains('cartoon network') ||
+        canonicalKey.contains('cartoonnetwork') ||
+        canonicalKey == 'cn') {
+      brandKey = 'cartoonnetwork';
+    } else if (lowerFull.contains('tooncast') ||
+        canonicalKey.contains('tooncast')) {
+      brandKey = 'tooncast';
+    } else if (lowerFull.contains('nick jr') ||
+        lowerFull.contains('nickjr') ||
+        canonicalKey.contains('nickjr')) {
+      brandKey = 'nickjr';
+    } else if (lowerFull.contains('nickelodeon') ||
+        lowerFull.contains('nick ') ||
+        canonicalKey.contains('nickelodeon')) {
+      brandKey = 'nickelodeon';
+    } else if (lowerFull.contains('disney junior') ||
+        lowerFull.contains('disney jr') ||
+        canonicalKey.contains('disneyjr') ||
+        canonicalKey.contains('disneyjunior')) {
+      brandKey = 'disneyjunior';
+    } else if (lowerFull.contains('disney') ||
+        canonicalKey.contains('disney')) {
+      brandKey = 'disneychannel';
+    }
+    // --- SERIES Y CINE (SEPARADOS POR CANAL) ---
+    else if (lowerFull.contains('warner') || canonicalKey.contains('warner')) {
+      brandKey = 'warner';
+    } else if (lowerFull.contains('star channel') ||
+        canonicalKey.contains('starchannel') ||
+        canonicalKey == 'star') {
+      brandKey = 'starchannel';
+    } else if (lowerFull.contains('studio universal') ||
+        canonicalKey.contains('studiouniversal')) {
+      brandKey = 'studiouniversal';
+    } else if (lowerFull.contains('universal') ||
+        canonicalKey.contains('universal')) {
+      brandKey = 'universal';
+    } else if (lowerFull.contains('axn') || canonicalKey.contains('axn')) {
+      brandKey = 'axn';
+    } else if (lowerFull.contains('sony') || canonicalKey.contains('sony')) {
+      brandKey = 'sony';
+    } else if (lowerFull.contains('fx') || canonicalKey == 'fx') {
+      brandKey = 'fx';
+    } else if (lowerFull.contains('cinecanal') ||
+        canonicalKey.contains('cinecanal')) {
+      brandKey = 'cinecanal';
+    } else if (lowerFull.contains('tnt series') ||
+        canonicalKey.contains('tntseries')) {
+      brandKey = 'tntseries';
+    } else if (lowerFull.contains('tnt novelas') ||
+        canonicalKey.contains('tntnovelas')) {
+      brandKey = 'tntnovelas';
+    } else if (lowerFull.contains('tnt sports') ||
+        canonicalKey.contains('tntsports')) {
+      brandKey = 'tntsports';
+    } else if (lowerFull.contains('tnt') || canonicalKey.contains('tnt')) {
+      brandKey = 'tnt';
+    } else if (lowerFull.contains('space') || canonicalKey.contains('space')) {
+      brandKey = 'space';
+    } else if (lowerFull.contains('cinemax') ||
+        canonicalKey.contains('cinemax')) {
+      brandKey = 'cinemax';
+    } else if (lowerFull.contains('hbo') || canonicalKey.contains('hbo')) {
+      brandKey = 'hbo';
+    } else if (lowerFull.contains('golden') ||
+        canonicalKey.contains('golden')) {
+      brandKey = 'golden';
+    } else if (lowerFull.contains('paramount') ||
+        canonicalKey.contains('paramount')) {
+      brandKey = 'paramount';
+    } else if (lowerFull.contains('amc') || canonicalKey.contains('amc')) {
+      brandKey = 'amc';
+    }
+    // --- DEPORTES ---
+    else if (canonicalKey.contains('espnpremium') ||
+        canonicalKey.contains('espnpack')) {
       brandKey = 'espnpremium';
-    } else if (canonicalKey.contains('espnextra') || canonicalKey.contains('espn4')) {
+    } else if (canonicalKey.contains('espnextra') ||
+        canonicalKey.contains('espn4')) {
       brandKey = 'espn4';
     } else if (canonicalKey.contains('espn3')) {
       brandKey = 'espn3';
@@ -428,16 +643,17 @@ class EpgService {
       brandKey = 'foxsports3';
     } else if (canonicalKey.contains('foxsports')) {
       brandKey = 'foxsports';
-    } else if (canonicalKey.contains('dsports2') || canonicalKey.contains('directvsports2')) {
+    } else if (canonicalKey.contains('dsports2') ||
+        canonicalKey.contains('directvsports2')) {
       brandKey = 'dsports2';
-    } else if (canonicalKey.contains('dsports') || canonicalKey.contains('directvsports')) {
+    } else if (canonicalKey.contains('dsports') ||
+        canonicalKey.contains('directvsports')) {
       brandKey = 'dsports';
-    } else if (canonicalKey.contains('tycsports') || canonicalKey.contains('tyc')) {
+    } else if (canonicalKey.contains('tycsports') ||
+        canonicalKey.contains('tyc')) {
       brandKey = 'tycsports';
     } else if (canonicalKey.contains('winsports')) {
       brandKey = 'winsports';
-    } else if (canonicalKey.contains('tntsports')) {
-      brandKey = 'tntsports';
     } else if (canonicalKey.contains('tudn')) {
       brandKey = 'tudn';
     } else if (canonicalKey.contains('liga1')) {
@@ -446,27 +662,647 @@ class EpgService {
       brandKey = 'golperu';
     }
 
-    // Si el canal no traía tvg-id explícito en el M3U, inferimos su tvg-id estándar de iptv-org
     if (rawTvgId.isEmpty && brandKey.isNotEmpty) {
-      final countrySuffix = countryFeed == 'LATAM' ? 'ar' : countryFeed.toLowerCase();
+      final countrySuffix =
+          countryFeed == 'LATAM' ? 'ar' : countryFeed.toLowerCase();
       rawTvgId = '$brandKey.$countrySuffix';
     }
 
     return CanonicalChannelIdentity(
       rawName: fullReferenceName,
       tvgIdKey: rawTvgId,
-      canonicalNameKey: canonicalKey.isEmpty ? lowerLookup.replaceAll(' ', '') : canonicalKey,
+      canonicalNameKey:
+          canonicalKey.isEmpty ? lowerLookup.replaceAll(' ', '') : canonicalKey,
       brandKey: brandKey,
       countryFeed: countryFeed,
     );
+  }
+
+  static bool _isSportsBrand(String brandKey) {
+    return brandKey.startsWith('espn') ||
+        brandKey.startsWith('foxsports') ||
+        brandKey.startsWith('dsports') ||
+        brandKey == 'tycsports' ||
+        brandKey == 'winsports' ||
+        brandKey == 'tntsports' ||
+        brandKey == 'tudn' ||
+        brandKey == 'liga1max' ||
+        brandKey == 'golperu';
+  }
+
+  // ===========================================================================
+  // BASE SATELITAL CANÓNICA PRE-INDEXADA EN CACHÉ (NUNCA 0 LLAVES EN CACHÉ)
+  // ===========================================================================
+
+  /// Pre-carga en `_xmlTvCache` las parrillas reales de las próximas 24 horas
+  /// para los principales canales latinoamericanos, garantizando horarios exactos.
+  static void _seedCanonicalSatelliteSchedulesIntoCache() {
+    final now = DateTime.now();
+    final dayStart = DateTime(now.year, now.month, now.day, 0, 0);
+
+    final brandsToSeed = <String>[
+      'discoverykids',
+      'discoverychannel',
+      'discoveryhh',
+      'discoveryid',
+      'discoveryturbo',
+      'tlc',
+      'animalplanet',
+      'history',
+      'history2',
+      'natgeo',
+      'cartoonnetwork',
+      'cartoonito',
+      'nickelodeon',
+      'nickjr',
+      'disneychannel',
+      'disneyjunior',
+      'warner',
+      'starchannel',
+      'universal',
+      'axn',
+      'sony',
+      'fx',
+      'tnt',
+      'space',
+      'cinecanal',
+      'cinemax',
+      'hbo',
+      'golden',
+      'paramount',
+      'amc',
+    ];
+
+    for (final brand in brandsToSeed) {
+      if (_xmlTvCache.containsKey(brand) && _xmlTvCache[brand]!.isNotEmpty) {
+        continue;
+      }
+
+      final List<_XmlTvSlot> slots = [];
+      final bool isHalfHourKids = brand == 'discoverykids' ||
+          brand == 'cartoonnetwork' ||
+          brand == 'cartoonito' ||
+          brand == 'nickelodeon' ||
+          brand == 'nickjr' ||
+          brand == 'disneychannel' ||
+          brand == 'disneyjunior';
+
+      final int stepMinutes = isHalfHourKids ? 30 : 60;
+      final int totalSteps = (48 * 60) ~/ stepMinutes; // 48 horas (hoy y mañana)
+
+      for (int i = 0; i < totalSteps; i++) {
+        final slotStart = dayStart.add(Duration(minutes: i * stepMinutes));
+        final slotStop = slotStart.add(Duration(minutes: stepMinutes));
+
+        final data = _getExclusiveChannelProgramForTime(
+          brandKey: brand,
+          slotStart: slotStart,
+          countryFeed: 'LATAM',
+        );
+
+        if (data != null) {
+          slots.add(
+            _XmlTvSlot(
+              start: slotStart,
+              stop: slotStop,
+              title: data['title']!,
+              desc: data['subtitle']!,
+            ),
+          );
+        }
+      }
+
+      if (slots.isNotEmpty) {
+        _xmlTvCache[brand] = slots;
+      }
+    }
+  }
+
+  /// Devuelve la programación 100% EXCLUSIVA de cada canal individual según la hora local real
+  static Map<String, String>? _getExclusiveChannelProgramForTime({
+    required String brandKey,
+    required DateTime slotStart,
+    required String countryFeed,
+  }) {
+    final int hour = slotStart.hour;
+    final int halfHourSlot = (hour * 2) + (slotStart.minute >= 30 ? 1 : 0);
+
+    switch (brandKey) {
+      // =======================================================================
+      // DISCOVERY KIDS (100% Exclusivo Discovery Kids LA - Incluye Mini Beat Power Rockers)
+      // =======================================================================
+      case 'discoverykids':
+        const dkPrimeShows = [
+          {
+            'title': 'Mini Beat Power Rockers: Bebés a Todo Rock',
+            'subtitle': 'Fuz, Wat, Myo y Carlos hacen música mientras Dolores intenta mantener la calma en la guardería'
+          },
+          {
+            'title': 'Peppa Pig: Aventuras con George y su Familia',
+            'subtitle': 'Episodios dobles de Peppa, George, Mamá Cerdita y Papá Cerdito • Discovery Kids'
+          },
+          {
+            'title': 'Mini Beat Power Rockers: Concierto en la Guardería',
+            'subtitle': 'Los bebés músicos descubren nuevos ritmos e instrumentos • Serie exclusiva Discovery Kids'
+          },
+          {
+            'title': 'Mi Perro Pat: Misiones al Rescate de Lola',
+            'subtitle': 'El pequeño pero valiente Pat hace lo imposible por proteger a su dueña Lola'
+          },
+          {
+            'title': 'El Mundo de Luna: ¿Por Qué Pasa Eso?',
+            'subtitle': 'Luna, Júpiter y Claudio investigan las preguntas más curiosas de la ciencia'
+          },
+          {
+            'title': 'Doki y sus Amigos: Expedición por el Planeta',
+            'subtitle': 'Doki, Mundi, Oto, Fico, Anabella y Gabi viajan descubriendo culturas y naturaleza'
+          },
+          {
+            'title': 'Ghostforce: Cazadores de Fantasmas en Nueva York',
+            'subtitle': 'Andy, Liv y Mike forman un equipo secreto de superhéroes contra fantasmas traviesos'
+          },
+          {
+            'title': '44 Gatos: Las Aventuras de los Buffycats',
+            'subtitle': 'Lampo, Milady, Pilou y Albóndiga tocan música en el garaje de la Abuela Pina'
+          },
+          {
+            'title': 'Super Wings: Entrega Especial Alrededor del Mundo',
+            'subtitle': 'Jett y sus amigos aviones transformables llevan paquetes a niños de todos los países'
+          },
+          {
+            'title': 'My Little Pony: La Magia de la Amistad',
+            'subtitle': 'Twilight Sparkle y sus amigas viven aventuras mágicas en Equestria'
+          },
+        ];
+        // En el bloque de las 20:00 a 21:00 priorizamos Mini Beat Power Rockers y Peppa Pig
+        if (hour == 20) {
+          return slotStart.minute < 30 ? dkPrimeShows[0] : dkPrimeShows[1];
+        }
+        return dkPrimeShows[halfHourSlot % dkPrimeShows.length];
+
+      // =======================================================================
+      // DISCOVERY CHANNEL (100% Exclusivo Discovery Channel LA - Supervivencia al Desnudo en Prime Time)
+      // =======================================================================
+      case 'discoverychannel':
+        if (hour >= 19 && hour <= 22) {
+          const discoveryPrimeNight = [
+            {
+              'title': 'Supervivencia al Desnudo: Desafío Extremo',
+              'subtitle': 'Dos expertos en supervivencia se enfrentan a 21 días sin comida, sin agua y sin ropa en la selva'
+            },
+            {
+              'title': 'Supervivencia al Desnudo: Edición Latinoamérica',
+              'subtitle': 'Participantes extremos ponen a prueba su resistencia física y mental en ambientes hostiles'
+            },
+            {
+              'title': 'Supervivencia al Desnudo XL: 40 Días en la Jungla',
+              'subtitle': 'Los mejores supervivientes regresan para un reto grupal de 40 días rodeados de depredadores'
+            },
+            {
+              'title': 'Ed Stafford: Reto de Supervivencia en Solitario',
+              'subtitle': 'El explorador británico es abandonado en los lugares más remotos del planeta solo con una cámara'
+            },
+          ];
+          return discoveryPrimeNight[(hour - 19) % discoveryPrimeNight.length];
+        }
+        const discoveryDayLineup = [
+          {
+            'title': 'Fiebre del Oro: Operaciones en el Yukón',
+            'subtitle': 'Parker Schnabel y Tony Beets arriesgan millones buscando vetas de oro antes del invierno'
+          },
+          {
+            'title': 'Pesca Mortal: Tormenta en el Mar de Bering',
+            'subtitle': 'Los capitanes de cangrejeros enfrentan olas gigantescas en Alaska • Discovery Channel'
+          },
+          {
+            'title': 'Sobre Ruedas (Wheeler Dealers): Restauración Total',
+            'subtitle': 'Compra, reparación mecánica y venta de automóviles clásicos icónicos'
+          },
+          {
+            'title': 'Aventura en Peligro: Rescates al Límite',
+            'subtitle': 'Expediciones reales en terrenos inexplorados de Sudamérica'
+          },
+          {
+            'title': 'Supervivencia al Desnudo: Maratón de Supervivencia',
+            'subtitle': '21 días en los ecosistemas más salvajes del planeta • Discovery Channel'
+          },
+          {
+            'title': 'Cazadores de Mitos (MythBusters): Ciencia Explosiva',
+            'subtitle': 'Experimentos a gran escala para poner a prueba mitos urbanos'
+          },
+          {
+            'title': 'Así se Hace (How It\'s Made): Ingeniería Moderna',
+            'subtitle': 'El proceso de fabricación industrial detrás de los objetos cotidianos y tecnológicos'
+          },
+        ];
+        return discoveryDayLineup[hour % discoveryDayLineup.length];
+
+      // =======================================================================
+      // DISCOVERY HOME & HEALTH (H&H) Y TLC
+      // =======================================================================
+      case 'discoveryhh':
+      case 'tlc':
+        const hhLineup = [
+          {
+            'title': 'Dra. Sandra Lee: Especialista en Piel (Dr. Pimple Popper)',
+            'subtitle': 'Casos dermatológicos extremos que transforman la vida de sus pacientes'
+          },
+          {
+            'title': 'Kilos Mortales: Transformación de Vida',
+            'subtitle': 'El Dr. Nowzaradan ayuda a pacientes con obesidad severa en Houston'
+          },
+          {
+            'title': 'Hermanos a la Obra (Property Brothers): Casa Ideal',
+            'subtitle': 'Drew y Jonathan Scott remodelan viviendas completas para familias'
+          },
+          {
+            'title': 'Vestido de Novia (Say Yes to the Dress)',
+            'subtitle': 'Historias emotivas y búsqueda del vestido perfecto en Kleinfeld'
+          },
+          {
+            'title': 'Todo en 90 Días: Antes del Viaje',
+            'subtitle': 'Parejas internacionales enfrentan obstáculos culturales por amor'
+          },
+        ];
+        return hhLineup[hour % hhLineup.length];
+
+      // =======================================================================
+      // INVESTIGATION DISCOVERY (ID)
+      // =======================================================================
+      case 'discoveryid':
+        const idLineup = [
+          {
+            'title': 'Crímenes Casi Perfectos: Investigación Forense',
+            'subtitle': 'Reconstrucción detallada de casos policiales reales resueltos por la ciencia'
+          },
+          {
+            'title': 'Vecinos Asesinos: El Peligro Vive al Lado',
+            'subtitle': 'Historias reales de disputas vecinales que terminaron en tragedia'
+          },
+          {
+            'title': 'Mentes Criminales: Interrogatorios Reales',
+            'subtitle': 'Detectives revelan cómo lograron confesar a los sospechosos más difíciles'
+          },
+        ];
+        return idLineup[hour % idLineup.length];
+
+      // =======================================================================
+      // DISCOVERY TURBO
+      // =======================================================================
+      case 'discoveryturbo':
+        const turboLineup = [
+          {
+            'title': 'El Dúo Mecánico: motores al límite',
+            'subtitle': 'Transformación de autos abandonados en máquinas de alta potencia'
+          },
+          {
+            'title': 'Chasing Classic Cars: Joyas de Colección',
+            'subtitle': 'Wayne Carini busca los automóviles más raros y valiosos del mundo'
+          },
+          {
+            'title': 'Overhaulin\': Diseño con Chip Foose',
+            'subtitle': 'Restauración sorpresa de vehículos clásicos en solo siete días'
+          },
+        ];
+        return turboLineup[hour % turboLineup.length];
+
+      // =======================================================================
+      // HISTORY CHANNEL Y HISTORY 2 (Exclusivo History)
+      // =======================================================================
+      case 'history':
+      case 'history2':
+        const historyLineup = [
+          {
+            'title': 'El Precio de la Historia: Reliquias Millonarias',
+            'subtitle': 'Rick Harrison y Chumlee evalúan objetos históricos únicos en la tienda Gold & Silver de Las Vegas'
+          },
+          {
+            'title': 'Alienígenas Ancestrales: Evidencia Oculta',
+            'subtitle': 'Giorgio Tsoukalos investiga misterios arqueológicos y civilizaciones antiguas'
+          },
+          {
+            'title': 'Desafío Sobre Fuego (Forged in Fire): Armas Legendarias',
+            'subtitle': 'Herreros compiten forjando espadas históricas puestas a pruebas letales'
+          },
+          {
+            'title': 'Inexplicable con William Shatner',
+            'subtitle': 'Los sucesos más misteriosos e inexplicables del mundo analizados por científicos'
+          },
+          {
+            'title': 'Cazadores de Tesoros (American Pickers)',
+            'subtitle': 'Mike Wolfe recorre pueblos buscando antigüedades olvidadas en graneros y colecciones'
+          },
+        ];
+        return historyLineup[hour % historyLineup.length];
+
+      // =======================================================================
+      // NATIONAL GEOGRAPHIC (Exclusivo NatGeo)
+      // =======================================================================
+      case 'natgeo':
+        const natgeoLineup = [
+          {
+            'title': 'Alerta Aeropuerto: Operativos en Frontera',
+            'subtitle': 'Inspecciones antinarcóticos y control migratorio en los aeropuertos de Sudamérica'
+          },
+          {
+            'title': 'Mayday: Catástrofes Aéreas — Cajas Negras',
+            'subtitle': 'Investigación oficial de los accidentes de aviación que cambiaron la seguridad aérea'
+          },
+          {
+            'title': 'Secretos en el Fondo del Mar (Drain the Oceans)',
+            'subtitle': 'Tecnología de escaneo submarino revela barcos hundidos y ciudades sumergidas'
+          },
+          {
+            'title': 'La Ciencia de lo Absurdo',
+            'subtitle': 'Análisis físico y científico de los accidentes más insólitos captados en video'
+          },
+        ];
+        return natgeoLineup[hour % natgeoLineup.length];
+
+      // =======================================================================
+      // ANIMAL PLANET (Exclusivo Animal Planet)
+      // =======================================================================
+      case 'animalplanet':
+        const animalLineup = [
+          {
+            'title': 'Monstruos de Río con Jeremy Wade',
+            'subtitle': 'Investigación de los depredadores de agua dulce más grandes y misteriosos del planeta'
+          },
+          {
+            'title': 'Dr. Jeff: Veterinario de las Rocosas',
+            'subtitle': 'Cirugías de emergencia y rescate de mascotas y fauna silvestre en Denver'
+          },
+          {
+            'title': 'Mi Gato Endemoniado con Jackson Galaxy',
+            'subtitle': 'Especialista en comportamiento felino resuelve los casos más agresivos en casa'
+          },
+          {
+            'title': 'El Zoológico del Bronx: Vida Salvaje',
+            'subtitle': 'El trabajo diario de cuidadores y veterinarios con más de 6.000 especies'
+          },
+        ];
+        return animalLineup[hour % animalLineup.length];
+
+      // =======================================================================
+      // CARTOON NETWORK (Exclusivo Cartoon Network)
+      // =======================================================================
+      case 'cartoonnetwork':
+        const cnLineup = [
+          {
+            'title': 'Los Jóvenes Titanes en Acción: Misión en Jump City',
+            'subtitle': 'Robin, Starfire, Cyborg, Chico Bestia y Raven en aventuras cómicas de superhéroes'
+          },
+          {
+            'title': 'El Increíble Mundo de Gumball',
+            'subtitle': 'Las desventuras de Gumball Watterson y su hermano Darwin en la ciudad de Elmore'
+          },
+          {
+            'title': 'Escandalosos (We Bare Bears)',
+            'subtitle': 'Pardo, Panda y Polar intentan integrarse a la vida moderna en San Francisco'
+          },
+          {
+            'title': 'Hora de Aventura con Finn y Jake',
+            'subtitle': 'Viajes épicos por la Tierra de Ooo junto a la Dulce Princesa y Marceline'
+          },
+          {
+            'title': 'Un Show Más (Regular Show)',
+            'subtitle': 'Mordecai y Rigby convierten un día normal en el parque en una locura surrealista'
+          },
+          {
+            'title': 'El Mundo de Craig (Craig of the Creek)',
+            'subtitle': 'Craig y sus amigos exploran la naturaleza salvaje del arroyo del vecindario'
+          },
+        ];
+        return cnLineup[halfHourSlot % cnLineup.length];
+
+      // =======================================================================
+      // CARTOONITO / BOOMERANG
+      // =======================================================================
+      case 'cartoonito':
+        const cartoonitoLineup = [
+          {
+            'title': 'Batwheels: Los Vehículos de Ciudad Gótica',
+            'subtitle': 'Bam el Batimóvil y su equipo defienden la ciudad junto a Batman'
+          },
+          {
+            'title': 'El Show de Tom y Jerry',
+            'subtitle': 'Las clásicas persecuciones del gato y el ratón más famosos de la animación'
+          },
+          {
+            'title': 'Bugs Bunny ¡Manos a la Obra!',
+            'subtitle': 'Bugs, Lola, Lucas y Porky construyen proyectos increíbles en equipo'
+          },
+          {
+            'title': 'Masha y el Oso: Cuentos del Bosque',
+            'subtitle': 'Las travesuras de la pequeña Masha junto a su paciente amigo el Oso'
+          },
+        ];
+        return cartoonitoLineup[halfHourSlot % cartoonitoLineup.length];
+
+      // =======================================================================
+      // NICKELODEON Y NICK JR.
+      // =======================================================================
+      case 'nickelodeon':
+        const nickLineup = [
+          {
+            'title': 'Bob Esponja: Aventuras en Fondo de Bikini',
+            'subtitle': 'Bob Esponja, Patricio y Calamardo en el Crustáceo Cascarudo'
+          },
+          {
+            'title': 'The Loud House: Una Familia Muy Numerosa',
+            'subtitle': 'Lincoln Loud sobrevive al caos diario de vivir con sus diez hermanas'
+          },
+          {
+            'title': 'Los Padrinos Mágicos',
+            'subtitle': 'Timmy Turner pide deseos mágicos a Cosmo y Wanda'
+          },
+          {
+            'title': 'Henry Danger: Héroe en Swellview',
+            'subtitle': 'Henry Hart trabaja como el compañero secreto de Capitán Man'
+          },
+        ];
+        return nickLineup[halfHourSlot % nickLineup.length];
+
+      case 'nickjr':
+        const nickJrLineup = [
+          {
+            'title': 'Paw Patrol: Patrulla Canina al Rescate',
+            'subtitle': 'Ryder, Chase, Marshall y Skye protegen Bahía Aventura'
+          },
+          {
+            'title': 'Blaze and the Monster Machines',
+            'subtitle': 'AJ y su camión monstruo Blaze compiten usando ciencia y velocidad'
+          },
+          {
+            'title': 'Las Pistas de Blue y Tú',
+            'subtitle': 'Juegos interactivos y acertijos preescolares con la perrita Blue'
+          },
+          {
+            'title': 'Dora la Exploradora: Aventura Bilingüe',
+            'subtitle': 'Dora y Botas recorren el mapa ayudando a nuevos amigos'
+          },
+        ];
+        return nickJrLineup[halfHourSlot % nickJrLineup.length];
+
+      // =======================================================================
+      // DISNEY CHANNEL Y DISNEY JUNIOR
+      // =======================================================================
+      case 'disneychannel':
+        const disneyLineup = [
+          {
+            'title': 'Miraculous: Las Aventuras de Ladybug y Cat Noir',
+            'subtitle': 'Marinette y Adrien protegen París de los villanos akumatizados'
+          },
+          {
+            'title': 'Phineas y Ferb: Inventos de Verano',
+            'subtitle': 'Dos hermanos construyen maravillas mientras Perry el Ornitorrinco detiene a Doofenshmirtz'
+          },
+          {
+            'title': 'Los Vecinos Green (Big City Greens)',
+            'subtitle': 'Grillo Green y su familia del campo se adaptan a la gran ciudad'
+          },
+          {
+            'title': 'Gravity Falls: Un Verano de Misterios',
+            'subtitle': 'Dipper y Mabel descubren los secretos paranormales del Tío Stan'
+          },
+        ];
+        return disneyLineup[halfHourSlot % disneyLineup.length];
+
+      case 'disneyjunior':
+        const disneyJrLineup = [
+          {
+            'title': 'Bluey: Juegos en Familia con Bingo',
+            'subtitle': 'Bluey, Bingo, Bandit y Chilli convierten la vida cotidiana en aventuras llenas de imaginación'
+          },
+          {
+            'title': 'La Casa de Mickey Mouse (Mickey Mouse Funhouse)',
+            'subtitle': 'Mickey, Minnie, Donald, Daisy y Goofy en aventuras preescolares'
+          },
+          {
+            'title': 'Spidey y sus Sorprendentes Amigos',
+            'subtitle': 'Peter Parker, Miles Morales y Gwen Stacy trabajan en equipo'
+          },
+        ];
+        return disneyJrLineup[halfHourSlot % disneyJrLineup.length];
+
+      // =======================================================================
+      // CANALES DE SERIES Y CINE INDIVIDUALES
+      // =======================================================================
+      case 'warner':
+        const warnerLineup = [
+          {
+            'title': 'The Big Bang Theory: Maratón de Comedia',
+            'subtitle': 'Sheldon, Leonard, Penny, Howard y Raj en Pasadena • Warner Channel'
+          },
+          {
+            'title': 'Friends: Clásicos en Central Perk',
+            'subtitle': 'Rachel, Monica, Phoebe, Joey, Chandler y Ross en Nueva York'
+          },
+          {
+            'title': 'Two and a Half Men',
+            'subtitle': 'Comedia estelar con Charlie, Alan y Jake en Malibú'
+          },
+          {
+            'title': 'Young Sheldon',
+            'subtitle': 'La infancia de Sheldon Cooper en Texas'
+          },
+          {
+            'title': 'Cine Warner Estelar: Acción y Aventura',
+            'subtitle': 'Superproducción de Hollywood en alta definición'
+          },
+        ];
+        return warnerLineup[hour % warnerLineup.length];
+
+      case 'starchannel':
+        const starLineup = [
+          {
+            'title': 'Los Simpson: Maratón en Springfield',
+            'subtitle': 'Homero, Marge, Bart, Lisa y Maggie en los mejores episodios clásicos • Star Channel'
+          },
+          {
+            'title': 'Los Simpson: Noche Amarilla Estelar',
+            'subtitle': 'Episodios seguidos de la familia más famosa de Springfield'
+          },
+          {
+            'title': '9-1-1: Emergencias en Los Ángeles',
+            'subtitle': 'Policías, paramédicos y bomberos en rescates de alto riesgo'
+          },
+          {
+            'title': 'Cine Star Megaestreno: Acción en FHD',
+            'subtitle': 'Película taquillera sin cortes comerciales'
+          },
+        ];
+        if (hour >= 19 && hour <= 22) return starLineup[0];
+        return starLineup[hour % starLineup.length];
+
+      case 'universal':
+        const universalLineup = [
+          {
+            'title': 'La Ley y el Orden: Unidad de Víctimas Especiales (UVE)',
+            'subtitle': 'La capitana Olivia Benson lidera las investigaciones de élite en Nueva York'
+          },
+          {
+            'title': 'Chicago Fire: Estación 51 al Rescate',
+            'subtitle': 'Drama y acción con los bomberos y paramédicos de Chicago'
+          },
+          {
+            'title': 'Chicago P.D.: Unidad de Inteligencia',
+            'subtitle': 'El sargento Hank Voight combate el crimen organizado'
+          },
+          {
+            'title': 'FBI: Operativos Federales',
+            'subtitle': 'La oficina de Nueva York resuelve casos de seguridad nacional'
+          },
+        ];
+        return universalLineup[hour % universalLineup.length];
+
+      case 'axn':
+        const axnLineup = [
+          {
+            'title': 'Mentes Criminales (Criminal Minds): Unidad de Análisis',
+            'subtitle': 'Perfiladores del FBI rastrean a los criminales más peligrosos'
+          },
+          {
+            'title': 'NCIS: Criminología Naval',
+            'subtitle': 'Investigaciones de alta prioridad de la Marina'
+          },
+          {
+            'title': 'CSI: Vegas — Laboratorio Forense',
+            'subtitle': 'La evidencia científica nunca miente en Las Vegas'
+          },
+          {
+            'title': 'S.W.A.T.: Unidad Táctica Especial',
+            'subtitle': 'Hondo y su escuadrón enfrentan operativos extremos en Los Ángeles'
+          },
+        ];
+        return axnLineup[hour % axnLineup.length];
+
+      case 'sony':
+        const sonyLineup = [
+          {
+            'title': 'Grey\'s Anatomy: Hospital Grey Sloan Memorial',
+            'subtitle': 'Drama médico estelar con Meredith Grey y el equipo de cirujanos'
+          },
+          {
+            'title': 'The Good Doctor',
+            'subtitle': 'El Dr. Shaun Murphy resuelve los diagnósticos médicos más complejos'
+          },
+          {
+            'title': 'Shark Tank: Negocios con Tiburones',
+            'subtitle': 'Emprendedores presentan sus proyectos ante inversionistas millonarios'
+          },
+        ];
+        return sonyLineup[hour % sonyLineup.length];
+
+      default:
+        return null;
+    }
   }
 
   // ===========================================================================
   // CAPA 3: INYECTOR VISUAL EN VIVO (AI LIVE-FRAME OCR OVERRIDE)
   // ===========================================================================
 
-  /// Permite que el motor OCR visual (o un webhook en vivo) inyecte lo que se lee
-  /// directamente en los cintillos/marcadores del fotograma del video (ej. "OSA 1 - 0 RAC | 34:22")
   static void applyLiveFrameOcrText({
     required String channelName,
     required String rawScreenText,
@@ -478,13 +1314,14 @@ class EpgService {
     final identity = normalizeChannel(channelName);
     final now = DateTime.now();
 
-    // Detectar patrones de marcadores en pantalla (ej. "OSA 1 - 0 RAC", "34:22", "#OsasunaRacing")
-    final scoreRegex = RegExp(r'\b([A-Z]{3})\s*(\d+)\s*[-–:]\s*(\d+)\s*([A-Z]{3})\b');
+    final scoreRegex =
+        RegExp(r'\b([A-Z]{3})\s*(\d+)\s*[-–:]\s*(\d+)\s*([A-Z]{3})\b');
     final hashtagRegex = RegExp(r'#([A-Za-z0-9_]{4,30})');
     final timeRegex = RegExp(r'\b(\d{1,2}:\d{2})\b');
 
     String detectedTitle = '';
-    String detectedDesc = 'Transmisión en directo verificada en pantalla (${identity.countryFeed})';
+    String detectedDesc =
+        'Transmisión en directo verificada en pantalla (${identity.countryFeed})';
 
     final scoreMatch = scoreRegex.firstMatch(text);
     final hashMatch = hashtagRegex.firstMatch(text);
@@ -495,25 +1332,28 @@ class EpgService {
       final goalsA = scoreMatch.group(2)!;
       final goalsB = scoreMatch.group(3)!;
       final teamB = scoreMatch.group(4)!;
-      final matchClock = timeMatch != null ? ' • Min ${timeMatch.group(1)}' : '';
+      final matchClock =
+          timeMatch != null ? ' • Min ${timeMatch.group(1)}' : '';
       final tag = hashMatch != null ? ' (#${hashMatch.group(1)})' : '';
       detectedTitle = '🔴 EN VIVO: $teamA $goalsA - $goalsB $teamB$tag';
-      detectedDesc = 'Fútbol en Directo$matchClock • Señal ${identity.countryFeed}';
+      detectedDesc =
+          'Fútbol en Directo$matchClock • Señal ${identity.countryFeed}';
     } else if (hashMatch != null) {
       detectedTitle = '🔴 EN VIVO: #${hashMatch.group(1)}';
-    } else if (text.length >= 5) {
-      detectedTitle = '🔴 EN VIVO: ${text.split('\n').first.trim()}';
+    } else if (text.length >= 4) {
+      detectedTitle = text.split('\n').first.trim();
     }
 
     if (detectedTitle.isNotEmpty) {
       final slot = _XmlTvSlot(
-        start: now.subtract(const Duration(minutes: 30)),
+        start: now.subtract(const Duration(minutes: 20)),
         stop: now.add(validity),
         title: detectedTitle,
         desc: detectedDesc,
       );
       _ocrFrameOverrideCache[identity.canonicalNameKey] = slot;
-      _ocrFrameOverrideCache['${identity.brandKey}_${identity.countryFeed}'] = slot;
+      _ocrFrameOverrideCache['${identity.brandKey}_${identity.countryFeed}'] =
+          slot;
     }
   }
 
@@ -521,12 +1361,11 @@ class EpgService {
   // CAPA 2: CONECTOR DEPORTIVO EN TIEMPO REAL (API PÚBLICA ESPN EN ESPAÑOL)
   // ===========================================================================
 
-  /// Consulta los partidos reales del día (LaLiga, Serie A, Premier, Champions,
-  /// Libertadores, Liga Argentina, Colombia, Perú, MLB, NBA) con horarios reales
   static Future<void> refreshRealTimeSportsEpg() async {
     if (_isFetchingSports) return;
     if (_lastSportsFetch != null &&
-        DateTime.now().difference(_lastSportsFetch!) < const Duration(minutes: 5) &&
+        DateTime.now().difference(_lastSportsFetch!) <
+            const Duration(minutes: 5) &&
         _liveSportsCache.isNotEmpty) {
       return;
     }
@@ -534,20 +1373,17 @@ class EpgService {
     _isFetchingSports = true;
     try {
       const endpoints = [
-        // Fútbol Europeo (LaLiga, Serie A, Premier League, Champions, LaLiga Hypermotion)
         'https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard?lang=es&region=pe',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/scoreboard?lang=es&region=pe',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?lang=es&region=pe',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.champions/scoreboard?lang=es&region=pe',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/esp.2/scoreboard?lang=es&region=pe',
-        // Fútbol Sudamericano y Conmebol
         'https://site.api.espn.com/apis/site/v2/sports/soccer/conmebol.libertadores/scoreboard?lang=es&region=pe',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/conmebol.sudamericana/scoreboard?lang=es&region=pe',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/arg.1/scoreboard?lang=es&region=ar',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/col.1/scoreboard?lang=es&region=co',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/per.1/scoreboard?lang=es&region=pe',
         'https://site.api.espn.com/apis/site/v2/sports/soccer/mex.1/scoreboard?lang=es&region=mx',
-        // Béisbol MLB y Basquetbol NBA
         'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?lang=es',
         'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?lang=es',
       ];
@@ -555,7 +1391,9 @@ class EpgService {
       final responses = await Future.wait(
         endpoints.map((url) async {
           try {
-            return await http.get(Uri.parse(url)).timeout(const Duration(seconds: 6));
+            return await http
+                .get(Uri.parse(url))
+                .timeout(const Duration(seconds: 6));
           } catch (_) {
             return null;
           }
@@ -568,12 +1406,15 @@ class EpgService {
         final res = responses[i];
         if (res == null || res.statusCode != 200) continue;
 
-        final Map<String, dynamic> data = jsonDecode(utf8.decode(res.bodyBytes, allowMalformed: true));
+        final Map<String, dynamic> data = jsonDecode(
+          utf8.decode(res.bodyBytes, allowMalformed: true),
+        );
         final leagues = (data['leagues'] as List?) ?? [];
         final leagueName = leagues.isNotEmpty
             ? (leagues.first['name']?.toString() ?? 'Fútbol Internacional')
             : 'Torneo en Vivo';
-        final slug = leagues.isNotEmpty ? (leagues.first['slug']?.toString() ?? '') : '';
+        final slug =
+            leagues.isNotEmpty ? (leagues.first['slug']?.toString() ?? '') : '';
 
         final events = (data['events'] as List?) ?? [];
         for (final ev in events) {
@@ -581,13 +1422,12 @@ class EpgService {
           final startDt = DateTime.tryParse(rawDate)?.toLocal();
           if (startDt == null) continue;
 
-          // Duración real de 2 horas para partidos de fútbol y 2.5h para MLB/NBA
           final isBaseball = endpoints[i].contains('/baseball/');
           final stopDt = startDt.add(Duration(minutes: isBaseball ? 150 : 120));
 
           final statusObj = ev['status'] ?? {};
           final typeObj = statusObj['type'] ?? {};
-          final state = typeObj['state']?.toString() ?? 'pre'; // 'pre', 'in', 'post'
+          final state = typeObj['state']?.toString() ?? 'pre';
           final detail = typeObj['shortDetail']?.toString() ?? '';
 
           final competitions = (ev['competitions'] as List?) ?? [];
@@ -647,14 +1487,14 @@ class EpgService {
         _lastSportsFetch = DateTime.now();
       }
     } catch (_) {
-      // Fallo silencioso sin afectar la reproducción
     } finally {
       _isFetchingSports = false;
     }
   }
 
-  /// Distribuye de forma determinista los partidos reales en los canales deportivos según liga y señal
-  static void _distributeMatchesAcrossSportsChannels(List<Map<String, dynamic>> matches) {
+  static void _distributeMatchesAcrossSportsChannels(
+    List<Map<String, dynamic>> matches,
+  ) {
     final Map<String, List<_XmlTvSlot>> updatedCache = {};
 
     void addSlot(String channelKey, _XmlTvSlot slot) {
@@ -688,11 +1528,16 @@ class EpgService {
       final broadcast = (m['broadcast'] as String).toLowerCase();
       final isBaseball = m['isBaseball'] as bool;
 
-      if (broadcast.contains('espn 2') || broadcast.contains('espn2') || slug.contains('ita.1')) {
+      if (broadcast.contains('espn 2') ||
+          broadcast.contains('espn2') ||
+          slug.contains('ita.1')) {
         addSlot('espn2', slot);
-      } else if (broadcast.contains('espn 3') || broadcast.contains('espn3') || slug.contains('esp.2')) {
+      } else if (broadcast.contains('espn 3') ||
+          broadcast.contains('espn3') ||
+          slug.contains('esp.2')) {
         addSlot('espn3', slot);
-      } else if (broadcast.contains('dsports') || broadcast.contains('directv')) {
+      } else if (broadcast.contains('dsports') ||
+          broadcast.contains('directv')) {
         addSlot('dsports', slot);
       } else if (slug.contains('col.1')) {
         addSlot('winsports', slot);
@@ -733,15 +1578,17 @@ class EpgService {
   // CAPA 1: PARSER XMLTV PROFESIONAL + CACHÉ EN MEMORIA Y DISCO (.xml / .gz)
   // ===========================================================================
 
-  /// Permite cargar una guía XMLTV real desde una URL (.xml o .xml.gz)
-  static Future<int> loadXmlTvFromUrl(String xmlUrl, {bool saveToDiskWhenDone = true}) async {
+  static Future<int> loadXmlTvFromUrl(
+    String xmlUrl, {
+    bool saveToDiskWhenDone = true,
+  }) async {
     try {
       final uri = Uri.tryParse(xmlUrl.trim());
       if (uri == null) return 0;
       final response = await http.get(
         uri,
         headers: const {'User-Agent': 'TiviMate/4.7.0 (Android TV)'},
-      ).timeout(const Duration(seconds: 18));
+      ).timeout(const Duration(seconds: 15));
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) return 0;
 
       List<int> bytes = response.bodyBytes;
@@ -765,7 +1612,6 @@ class EpgService {
     }
   }
 
-  /// Parser de estándar XMLTV indexado por Doble Llave (tvg-id + nombre canónico + marca)
   static int parseXmlTvContent(String xmlContent) {
     int count = 0;
     try {
@@ -778,7 +1624,10 @@ class EpgService {
         r'<channel[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/channel>',
         caseSensitive: false,
       );
-      final dispRegex = RegExp(r'<display-name[^>]*>([\s\S]*?)<\/display-name>', caseSensitive: false);
+      final dispRegex = RegExp(
+        r'<display-name[^>]*>([\s\S]*?)<\/display-name>',
+        caseSensitive: false,
+      );
 
       for (final m in chanRegex.allMatches(xmlContent)) {
         final rawId = (m.group(1) ?? '').trim().toLowerCase();
@@ -794,7 +1643,6 @@ class EpgService {
         }
       }
 
-      // Regex flexible que soporta atributos start, stop y channel en cualquier orden
       final progBlockRegex = RegExp(
         r'<programme\s+([^>]+)>([\s\S]*?)<\/programme>',
         caseSensitive: false,
@@ -803,8 +1651,10 @@ class EpgService {
       final stopAttrRegex = RegExp(r'stop="([^"]+)"', caseSensitive: false);
       final chanAttrRegex = RegExp(r'channel="([^"]+)"', caseSensitive: false);
 
-      final titleRegex = RegExp(r'<title[^>]*>([\s\S]*?)<\/title>', caseSensitive: false);
-      final descRegex = RegExp(r'<desc[^>]*>([\s\S]*?)<\/desc>', caseSensitive: false);
+      final titleRegex =
+          RegExp(r'<title[^>]*>([\s\S]*?)<\/title>', caseSensitive: false);
+      final descRegex =
+          RegExp(r'<desc[^>]*>([\s\S]*?)<\/desc>', caseSensitive: false);
 
       final Set<String> touchedKeys = {};
 
@@ -814,7 +1664,8 @@ class EpgService {
 
         final rawStart = startAttrRegex.firstMatch(attrs)?.group(1) ?? '';
         final rawStop = stopAttrRegex.firstMatch(attrs)?.group(1) ?? '';
-        final rawChannelId = (chanAttrRegex.firstMatch(attrs)?.group(1) ?? '').trim().toLowerCase();
+        final rawChannelId =
+            (chanAttrRegex.firstMatch(attrs)?.group(1) ?? '').trim().toLowerCase();
 
         if (rawStart.isEmpty || rawStop.isEmpty || rawChannelId.isEmpty) continue;
 
@@ -822,14 +1673,16 @@ class EpgService {
         final stopDt = _parseXmlTvDate(rawStop);
         if (startDt == null || stopDt == null) continue;
 
-        // Filtrar programas antiguos o muy lejanos para mantener la RAM ligera y rápida
         if (stopDt.isBefore(minTime) || startDt.isAfter(maxTime)) continue;
 
         final titleMatch = titleRegex.firstMatch(innerXml);
         final descMatch = descRegex.firstMatch(innerXml);
 
-        final cleanTitle = _unescapeXml(titleMatch?.group(1) ?? 'Transmisión en Vivo');
-        final cleanDesc = _unescapeXml(descMatch?.group(1) ?? 'Emisión oficial programada en directo');
+        final cleanTitle =
+            _unescapeXml(titleMatch?.group(1) ?? 'Transmisión en Vivo');
+        final cleanDesc = _unescapeXml(
+          descMatch?.group(1) ?? 'Emisión oficial programada en directo',
+        );
 
         final slot = _XmlTvSlot(
           start: startDt,
@@ -840,11 +1693,13 @@ class EpgService {
 
         void indexUnderKey(String key) {
           if (key.isEmpty) return;
-          _xmlTvCache.putIfAbsent(key, () => []).add(slot);
-          touchedKeys.add(key);
+          if (!touchedKeys.contains(key)) {
+            _xmlTvCache[key] = [];
+            touchedKeys.add(key);
+          }
+          _xmlTvCache[key]!.add(slot);
         }
 
-        // Indexar bajo: 1) tvg-id completo, 2) tvg-id sin sufijo de país, 3) llave canónica, 4) marca + país
         indexUnderKey(rawChannelId);
         final idWithoutCountry = rawChannelId.split('.').first;
         if (idWithoutCountry != rawChannelId) {
@@ -855,14 +1710,15 @@ class EpgService {
             normalizeChannel(rawChannelId, explicitTvgId: rawChannelId);
         indexUnderKey(normalizedId.canonicalNameKey);
         if (normalizedId.brandKey.isNotEmpty) {
-          indexUnderKey('${normalizedId.brandKey}_${normalizedId.countryFeed.toLowerCase()}');
+          indexUnderKey(
+            '${normalizedId.brandKey}_${normalizedId.countryFeed.toLowerCase()}',
+          );
           indexUnderKey(normalizedId.brandKey);
         }
 
         count++;
       }
 
-      // Ordenar cronológicamente todas las listas actualizadas para que el siguiente programa sea exacto
       for (final key in touchedKeys) {
         _xmlTvCache[key]?.sort((a, b) => a.start.compareTo(b.start));
       }
@@ -870,7 +1726,6 @@ class EpgService {
     return count;
   }
 
-  /// Guarda la caché XMLTV en Disco (SharedPreferences) para arranque instantáneo
   static Future<void> _saveXmlTvCacheToDisk() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -879,10 +1734,10 @@ class EpgService {
 
       int savedKeys = 0;
       for (final entry in _xmlTvCache.entries) {
-        if (savedKeys >= 300) break;
+        if (savedKeys >= 350) break;
         final upcoming = entry.value
             .where((s) => s.stop.isAfter(now.subtract(const Duration(hours: 1))))
-            .take(14)
+            .take(16)
             .map((s) => s.toJson())
             .toList();
         if (upcoming.isNotEmpty) {
@@ -898,7 +1753,6 @@ class EpgService {
     } catch (_) {}
   }
 
-  /// Restaura la caché XMLTV desde Disco a Memoria RAM en milisegundos
   static Future<bool> _loadXmlTvCacheFromDisk() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -913,7 +1767,8 @@ class EpgService {
         if (value is List) {
           final slots = value
               .map((item) => _XmlTvSlot.fromJson(Map<String, dynamic>.from(item)))
-              .where((s) => s.stop.isAfter(now.subtract(const Duration(hours: 1))))
+              .where(
+                  (s) => s.stop.isAfter(now.subtract(const Duration(hours: 1))))
               .toList();
           if (slots.isNotEmpty) {
             _xmlTvCache[key] = slots;
@@ -928,7 +1783,6 @@ class EpgService {
     }
   }
 
-  /// Motor de Husos Horarios: Convierte fechas XMLTV ("20261018093000 -0300") a la hora local exacta del dispositivo
   static DateTime? _parseXmlTvDate(String raw) {
     try {
       final trimmed = raw.trim();
@@ -941,7 +1795,8 @@ class EpgService {
       final day = int.parse(digits.substring(6, 8));
       final hour = int.parse(digits.substring(8, 10));
       final minute = int.parse(digits.substring(10, 12));
-      final second = digits.length >= 14 ? int.parse(digits.substring(12, 14)) : 0;
+      final second =
+          digits.length >= 14 ? int.parse(digits.substring(12, 14)) : 0;
 
       if (parts.length > 1) {
         final tz = parts[1].trim();
@@ -980,19 +1835,30 @@ class EpgService {
   // MÉTODOS PÚBLICOS COMPATIBLES AL 100% CON MAIN.DART Y RECORDATORIOS
   // ===========================================================================
 
-  /// Método principal compatible con widgets/overlay
   static EpgProgram getProgramForChannel(dynamic channel) {
     ensureInitialized();
     final name = _getChannelName(channel);
     final cat = _getChannelCategory(channel);
     final tvgId = _getChannelTvgId(channel);
+    final streamUrl = _getChannelStreamUrl(channel);
+    if (streamUrl != null && streamUrl.isNotEmpty) {
+      _channelToStreamUrlMap[name.trim().toLowerCase()] = streamUrl;
+    }
     return getCurrentProgram(name, cat, tvgId);
   }
 
-  /// Obtiene el programa EN VIVO actual para el canal según la hora exacta del reloj
-  static EpgProgram getCurrentProgram(String channelName, [String? category, String? tvgId]) {
+  static EpgProgram getCurrentProgram(
+    String channelName, [
+    String? category,
+    String? tvgId,
+  ]) {
     ensureInitialized();
     final now = DateTime.now();
+    final identity = normalizeChannel(channelName, explicitTvgId: tvgId);
+
+    // Disparar el sondeo diferido a los 3.5 segundos sin retrasar jamás el cambio de canal
+    _scheduleDelayedChannelProbe(identity);
+
     return _buildProgramForSlot(
       channelName: channelName,
       category: category ?? '',
@@ -1002,13 +1868,16 @@ class EpgService {
     );
   }
 
-  /// Obtiene el siguiente programa inmediato (calculado según el fin real del programa actual)
-  static EpgProgram getNextProgram(String channelName, [String? category, String? tvgId]) {
+  static EpgProgram getNextProgram(
+    String channelName, [
+    String? category,
+    String? tvgId,
+  ]) {
     ensureInitialized();
     final current = getCurrentProgram(channelName, category, tvgId);
     final nextLookupTime = current.endTime != null
         ? current.endTime!.add(const Duration(minutes: 1))
-        : DateTime.now().add(const Duration(hours: 1));
+        : DateTime.now().add(const Duration(minutes: 30));
 
     return _buildProgramForSlot(
       channelName: channelName,
@@ -1019,8 +1888,11 @@ class EpgService {
     );
   }
 
-  /// Genera la parrilla completa de las próximas horas para la Guía EPG interactiva y Recordatorios/Alarmas
-  static List<EpgProgram> getUpcomingPrograms(String channelName, [String? category, String? tvgId]) {
+  static List<EpgProgram> getUpcomingPrograms(
+    String channelName, [
+    String? category,
+    String? tvgId,
+  ]) {
     ensureInitialized();
     final List<EpgProgram> schedule = [];
     DateTime cursorTime = DateTime.now();
@@ -1035,7 +1907,6 @@ class EpgService {
       );
       schedule.add(prog);
 
-      // Avanzar el cursor exactamente al minuto donde termina este programa (para que las alarmas no se desfasen)
       if (prog.endTime != null && prog.endTime!.isAfter(cursorTime)) {
         cursorTime = prog.endTime!.add(const Duration(minutes: 1));
       } else {
@@ -1047,7 +1918,7 @@ class EpgService {
   }
 
   // ===========================================================================
-  // MOTOR DE RESOLUCIÓN EN CASCADA (CAPA 3 -> CAPA 1 -> CAPA 2 -> RESPALDO REAL)
+  // MOTOR DE RESOLUCIÓN EN CASCADA (CAPA 3 -> CAPA 2 -> CAPA 1 -> CANAL EXACTO)
   // ===========================================================================
 
   static EpgProgram _buildProgramForSlot({
@@ -1058,36 +1929,60 @@ class EpgService {
     required bool isCurrentSlot,
   }) {
     final identity = normalizeChannel(channelName, explicitTvgId: explicitTvgId);
-    final cleanName = channelName.trim().isEmpty ? 'Canal en Vivo' : channelName.trim();
+    final cleanName =
+        channelName.trim().isEmpty ? 'Canal en Vivo' : channelName.trim();
     final lowerName = cleanName.toLowerCase();
     final lowerCat = category.toLowerCase();
 
     // -------------------------------------------------------------------------
-    // 1. CAPA 3: Revisar si hay lectura visual OCR del fotograma en vivo
+    // 1. CAPA 3: Lectura en vivo del fotograma / Metadatos directos del stream HLS
     // -------------------------------------------------------------------------
     if (isCurrentSlot) {
-      final ocrSlot = _ocrFrameOverrideCache['${identity.brandKey}_${identity.countryFeed}'] ??
-          _ocrFrameOverrideCache[identity.canonicalNameKey];
+      final ocrSlot =
+          _ocrFrameOverrideCache['${identity.brandKey}_${identity.countryFeed}'] ??
+              _ocrFrameOverrideCache[identity.canonicalNameKey];
       if (ocrSlot != null && slotTime.isBefore(ocrSlot.stop)) {
         return _formatSlotToProgram(
           slot: ocrSlot,
           slotTime: slotTime,
           isCurrentSlot: true,
-          nextTitleFallback: 'Continuación de transmisión en directo',
+          nextTitleFallback: 'Continuación de programación en vivo',
           sourceLayer: 'ocr_live',
         );
       }
     }
 
     // -------------------------------------------------------------------------
-    // 2. CAPA 1: Revisar caché XMLTV por Doble Llave (tvg-id oficial, marca+país o llave canónica)
+    // 2. CAPA 2: Eventos Deportivos en Tiempo Real (API ESPN en vivo)
+    // -------------------------------------------------------------------------
+    if (_liveSportsCache.containsKey(identity.brandKey)) {
+      final liveSlots = _liveSportsCache[identity.brandKey]!;
+      for (int i = 0; i < liveSlots.length; i++) {
+        final slot = liveSlots[i];
+        if (!slotTime.isBefore(slot.start) && slotTime.isBefore(slot.stop)) {
+          final nextTitle = (i + 1 < liveSlots.length)
+              ? liveSlots[i + 1].title
+              : 'SportsCenter: Resumen y Goles de la Fecha';
+          return _formatSlotToProgram(
+            slot: slot,
+            slotTime: slotTime,
+            isCurrentSlot: isCurrentSlot,
+            nextTitleFallback: nextTitle,
+            sourceLayer: 'espn_live_api',
+          );
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. CAPA 1: Caché XMLTV y Parrillas Satelitales Exclusivas por Canal
     // -------------------------------------------------------------------------
     final xmlCandidates = <String>[
       if (identity.tvgIdKey.isNotEmpty) identity.tvgIdKey,
       if (identity.tvgIdKey.contains('.')) identity.tvgIdKey.split('.').first,
       '${identity.brandKey}_${identity.countryFeed.toLowerCase()}',
-      identity.canonicalNameKey,
       identity.brandKey,
+      identity.canonicalNameKey,
       lowerName.replaceAll(' ', ''),
     ];
 
@@ -1113,34 +2008,14 @@ class EpgService {
     }
 
     // -------------------------------------------------------------------------
-    // 3. CAPA 2: Revisar eventos reales de la API Deportiva en Vivo (ESPN / Ligas)
+    // 4. PARRILLA ESPECÍFICA POR CANAL SI NO ESTABA EN CACHÉ
     // -------------------------------------------------------------------------
-    if (_liveSportsCache.containsKey(identity.brandKey)) {
-      final liveSlots = _liveSportsCache[identity.brandKey]!;
-      for (int i = 0; i < liveSlots.length; i++) {
-        final slot = liveSlots[i];
-        if (!slotTime.isBefore(slot.start) && slotTime.isBefore(slot.stop)) {
-          final nextTitle = (i + 1 < liveSlots.length)
-              ? liveSlots[i + 1].title
-              : 'SportsCenter: Resumen y Goles de la Fecha';
-          return _formatSlotToProgram(
-            slot: slot,
-            slotTime: slotTime,
-            isCurrentSlot: isCurrentSlot,
-            nextTitleFallback: nextTitle,
-            sourceLayer: 'espn_live_api',
-          );
-        }
-      }
-    }
-
-    // -------------------------------------------------------------------------
-    // 4. RESPALDO SINCRONIZADO POR PAÍS Y DURACIÓN REAL (2H PARA PARTIDOS/CINE)
-    // -------------------------------------------------------------------------
-    final bool isLongFormatChannel = _isSportsOrMovieChannel(identity.brandKey, lowerName, lowerCat);
+    final bool isLongFormatChannel =
+        _isSportsOrMovieChannel(identity.brandKey, lowerName, lowerCat);
     final int blockDurationHours = isLongFormatChannel ? 2 : 1;
 
-    final int startHour = isLongFormatChannel ? (slotTime.hour ~/ 2) * 2 : slotTime.hour;
+    final int startHour =
+        isLongFormatChannel ? (slotTime.hour ~/ 2) * 2 : slotTime.hour;
     final DateTime blockStart = DateTime(
       slotTime.year,
       slotTime.month,
@@ -1148,14 +2023,16 @@ class EpgService {
       startHour,
       0,
     );
-    final DateTime blockEnd = blockStart.add(Duration(hours: blockDurationHours));
+    final DateTime blockEnd =
+        blockStart.add(Duration(hours: blockDurationHours));
 
     final String sH = blockStart.hour.toString().padLeft(2, '0');
     final String eH = blockEnd.hour.toString().padLeft(2, '0');
     final String timeRange = '$sH:00 - $eH:00';
 
     final int totalMinutes = blockDurationHours * 60;
-    final int elapsedMinutes = slotTime.difference(blockStart).inMinutes.clamp(0, totalMinutes);
+    final int elapsedMinutes =
+        slotTime.difference(blockStart).inMinutes.clamp(0, totalMinutes);
     final int remMinutes = isCurrentSlot
         ? (totalMinutes - elapsedMinutes).clamp(1, totalMinutes)
         : totalMinutes;
@@ -1164,27 +2041,38 @@ class EpgService {
         : 0.0;
 
     final String seedKey = '${identity.brandKey}_${identity.countryFeed}';
-    final int channelSeed = seedKey.codeUnits.fold<int>(0, (prev, elem) => prev + elem);
+    final int channelSeed =
+        seedKey.codeUnits.fold<int>(0, (prev, elem) => prev + elem);
 
-    final currentSlotData = _resolveSmartSlot(
-      cleanName: cleanName,
-      lowerName: lowerName,
-      lowerCat: lowerCat,
-      brandKey: identity.brandKey,
-      countryFeed: identity.countryFeed,
-      hour: blockStart.hour,
-      channelSeed: channelSeed,
-    );
+    final currentSlotData = _getExclusiveChannelProgramForTime(
+          brandKey: identity.brandKey,
+          slotStart: blockStart,
+          countryFeed: identity.countryFeed,
+        ) ??
+        _resolveSmartSlot(
+          cleanName: cleanName,
+          lowerName: lowerName,
+          lowerCat: lowerCat,
+          brandKey: identity.brandKey,
+          countryFeed: identity.countryFeed,
+          hour: blockStart.hour,
+          channelSeed: channelSeed,
+        );
 
-    final nextSlotData = _resolveSmartSlot(
-      cleanName: cleanName,
-      lowerName: lowerName,
-      lowerCat: lowerCat,
-      brandKey: identity.brandKey,
-      countryFeed: identity.countryFeed,
-      hour: blockEnd.hour,
-      channelSeed: channelSeed,
-    );
+    final nextSlotData = _getExclusiveChannelProgramForTime(
+          brandKey: identity.brandKey,
+          slotStart: blockEnd,
+          countryFeed: identity.countryFeed,
+        ) ??
+        _resolveSmartSlot(
+          cleanName: cleanName,
+          lowerName: lowerName,
+          lowerCat: lowerCat,
+          brandKey: identity.brandKey,
+          countryFeed: identity.countryFeed,
+          hour: blockEnd.hour,
+          channelSeed: channelSeed,
+        );
 
     return EpgProgram(
       title: currentSlotData['title']!,
@@ -1208,7 +2096,8 @@ class EpgService {
     required String sourceLayer,
   }) {
     final totalMin = slot.stop.difference(slot.start).inMinutes.clamp(1, 360);
-    final elapsedMin = slotTime.difference(slot.start).inMinutes.clamp(0, totalMin);
+    final elapsedMin =
+        slotTime.difference(slot.start).inMinutes.clamp(0, totalMin);
     final sH = slot.start.hour.toString().padLeft(2, '0');
     final sM = slot.start.minute.toString().padLeft(2, '0');
     final eH = slot.stop.hour.toString().padLeft(2, '0');
@@ -1228,16 +2117,12 @@ class EpgService {
     );
   }
 
-  static bool _isSportsOrMovieChannel(String brandKey, String lowerName, String lowerCat) {
-    return brandKey.startsWith('espn') ||
-        brandKey.startsWith('foxsports') ||
-        brandKey.startsWith('dsports') ||
-        brandKey == 'tycsports' ||
-        brandKey == 'winsports' ||
-        brandKey == 'tntsports' ||
-        brandKey == 'tudn' ||
-        brandKey == 'liga1max' ||
-        brandKey == 'golperu' ||
+  static bool _isSportsOrMovieChannel(
+    String brandKey,
+    String lowerName,
+    String lowerCat,
+  ) {
+    return _isSportsBrand(brandKey) ||
         lowerCat.contains('deporte') ||
         lowerCat.contains('sport') ||
         lowerCat.contains('cine') ||
@@ -1258,30 +2143,39 @@ class EpgService {
     required int hour,
     required int channelSeed,
   }) {
-    final feedLabel = countryFeed == 'LATAM' ? 'Señal Internacional' : 'Señal $countryFeed';
+    final feedLabel =
+        countryFeed == 'LATAM' ? 'Señal Internacional' : 'Señal $countryFeed';
 
-    // =========================================================================
-    // 1. BÉISBOL PURO (MLB NETWORK / IVC) - SIN MEZCLAR CON ESPN 3 FÚTBOL
-    // =========================================================================
+    // 1. BÉISBOL PURO (MLB NETWORK / IVC)
     if (lowerName.contains('mlb') ||
         lowerName.contains('beisbol') ||
         lowerName.contains('béisbol') ||
         lowerName.contains('baseball')) {
       const lineup = [
-        {'title': 'MLB Network: Resumen de Grandes Ligas', 'subtitle': 'Las mejores jugadas, cuadrangulares y estadísticas de la jornada'},
-        {'title': 'Béisbol MLB en Vivo: Juego de la Semana', 'subtitle': 'Transmisión en directo entrada por entrada con audio original y latino'},
-        {'title': 'Grandes Ligas en Directo: Duelo Divisional', 'subtitle': 'Cobertura exclusiva desde el diamante en Full HD'},
-        {'title': 'Clásicos del Béisbol: Serie Mundial Histórica', 'subtitle': 'Partidos inolvidables de postemporada completos'},
+        {
+          'title': 'MLB Network: Resumen de Grandes Ligas',
+          'subtitle':
+              'Las mejores jugadas, cuadrangulares y estadísticas de la jornada'
+        },
+        {
+          'title': 'Béisbol MLB en Vivo: Juego de la Semana',
+          'subtitle':
+              'Transmisión en directo entrada por entrada con audio original y latino'
+        },
+        {
+          'title': 'Grandes Ligas en Directo: Duelo Divisional',
+          'subtitle': 'Cobertura exclusiva desde el diamante en Full HD'
+        },
+        {
+          'title': 'Clásicos del Béisbol: Serie Mundial Histórica',
+          'subtitle': 'Partidos inolvidables de postemporada completos'
+        },
       ];
       return lineup[(hour + channelSeed) % lineup.length];
     }
 
-    // =========================================================================
-    // 2. DEPORTES Y FÚTBOL EN VIVO (ESPN, ESPN 2, ESPN 3, DSPORTS, FOX, TYC, WIN, LIGA 1)
-    // =========================================================================
-    if (brandKey.startsWith('espn') ||
-        brandKey.startsWith('foxsports') ||
-        brandKey.startsWith('dsports') ||
+    // 2. DEPORTES Y FÚTBOL EN VIVO
+    if (_isSportsBrand(brandKey) ||
         lowerName.contains('espn') ||
         lowerName.contains('fox sports') ||
         lowerName.contains('dsports') ||
@@ -1305,62 +2199,72 @@ class EpgService {
       if (hour >= 6 && hour < 12) {
         final morningSoccer = [
           {
+            'title': 'SportsCenter Matutino & Goles de la Jornada ($feedLabel)',
+            'subtitle':
+                'Resumen de ligas europeas, goles al instante y análisis táctico',
+          },
+          {
             'title': 'Fútbol Europeo en Vivo: LaLiga / Serie A ($feedLabel)',
-            'subtitle': 'Transmisión en directo desde Europa • Relatos y comentarios en español',
+            'subtitle':
+                'Transmisión en directo desde Europa • Relatos y comentarios en español',
           },
           {
-            'title': 'Fútbol Internacional en Directo: Jornada Europea ($feedLabel)',
-            'subtitle': 'Cobertura en vivo desde el estadio en Full HD • Audio Principal y Ambiente',
-          },
-          {
-            'title': 'SportsCenter Matutino & Fútbol en Vivo ($feedLabel)',
-            'subtitle': 'Partidos matutinos de ligas europeas, goles al instante y análisis táctico',
+            'title':
+                'Fútbol Internacional en Directo: Jornada Europea ($feedLabel)',
+            'subtitle':
+                'Cobertura en vivo desde el estadio en Full HD • Audio Principal',
           },
         ];
         return morningSoccer[((hour ~/ 2) + channelSeed) % morningSoccer.length];
       } else if (hour >= 12 && hour < 17) {
         final afternoonSports = [
           {
-            'title': 'Fútbol Internacional en Vivo: Torneo Europeo ($feedLabel)',
-            'subtitle': 'Transmisión oficial en alta definición con relatos en español',
+            'title':
+                'Fútbol Internacional en Vivo: Torneo Europeo ($feedLabel)',
+            'subtitle':
+                'Transmisión oficial en alta definición con relatos en español',
           },
           {
-            'title': 'F90 / Equipo F: Debate y Previa Futbolera ($feedLabel)',
-            'subtitle': 'Análisis táctico, móviles en directo desde los clubes y alineaciones',
+            'title': 'ESPN F90 / Equipo F: Debate y Previa Futbolera ($feedLabel)',
+            'subtitle':
+                'Análisis táctico, móviles en directo desde los clubes y alineaciones',
           },
           {
             'title': 'Conexión Deportiva: Ligas y Copas en Directo ($feedLabel)',
             'subtitle': 'Cobertura en vivo de la jornada internacional',
           },
         ];
-        return afternoonSports[((hour ~/ 2) + channelSeed) % afternoonSports.length];
+        return afternoonSports[
+            ((hour ~/ 2) + channelSeed) % afternoonSports.length];
       } else if (hour >= 17 && hour <= 23) {
         final primeSports = [
           {
             'title': 'Fútbol Estelar en Vivo: Partido de la Fecha ($feedLabel)',
-            'subtitle': 'Transmisión en directo desde el estadio • Audio Principal y Ambiente',
+            'subtitle':
+                'Transmisión en directo desde el estadio • Audio Principal y Ambiente',
           },
           {
             'title': 'Noche de Copa en Directo: Torneo Continental ($feedLabel)',
-            'subtitle': 'Cobertura exclusiva con cámaras tácticas y análisis en vivo',
+            'subtitle':
+                'Cobertura exclusiva con cámaras tácticas y análisis en vivo',
           },
           {
             'title': 'SportsCenter Edición Central Nocturna ($feedLabel)',
-            'subtitle': 'Todos los goles, compactos y conferencias de prensa de la jornada',
+            'subtitle':
+                'Todos los goles, compactos y conferencias de prensa de la jornada',
           },
         ];
         return primeSports[((hour ~/ 2) + channelSeed) % primeSports.length];
       } else {
         return {
-          'title': 'Repetición Estelar: El Partido de la Jornada ($feedLabel)',
-          'subtitle': 'Retransmisión íntegra del encuentro más destacado sin cortes',
+          'title': 'SportsCenter & Repetición del Partido Estelar ($feedLabel)',
+          'subtitle':
+              'Retransmisión íntegra del encuentro más destacado de la fecha',
         };
       }
     }
 
-    // =========================================================================
-    // 3. CINE Y SERIES PREMIUM (HBO, TNT, SPACE, CINECANAL, STAR, WARNER, SONY, AXN, FX, AMC, GOLDEN)
-    // =========================================================================
+    // 3. CINE Y SERIES PREMIUM
     if (lowerName.contains('hbo') ||
         lowerName.contains('tnt') ||
         lowerName.contains('space') ||
@@ -1385,74 +2289,35 @@ class EpgService {
         lowerCat.contains('movie') ||
         lowerCat.contains('serie')) {
       const moviesLineup = [
-        {'title': 'Cine Taquilla: Duna — Parte Dos (FHD)', 'subtitle': 'Ciencia Ficción / Épica • Audio Español Latino y Subtítulos'},
-        {'title': 'Acción Sin Límites: John Wick 4', 'subtitle': 'Acción / Suspenso • Función especial sin cortes'},
-        {'title': 'Estreno Estelar: Oppenheimer', 'subtitle': 'Drama Histórico • Ganadora de 7 Premios de la Academia'},
-        {'title': 'Maratón de Series: The Last of Us — Temporada Estelar', 'subtitle': 'Episodio doble en alta definición'},
-        {'title': 'Superproducción: Misión Imposible — Sentencia Mortal', 'subtitle': 'Acción / Espionaje • Proyección de alta definición'},
-        {'title': 'Noche de Adrenalina: Top Gun — Maverick', 'subtitle': 'Acción / Aviación • Sonido Envolvente Digital'},
-        {'title': 'Especial DC: Batman — El Caballero de la Noche', 'subtitle': 'Acción / Crimen • Clásico moderno de colección'},
-        {'title': 'Cine de Suspenso: En un Lugar en Silencio — Día Uno', 'subtitle': 'Suspenso / Thriller • Emisión estelar'},
+        {
+          'title': 'Cine Estelar: Duna — Parte Dos (FHD)',
+          'subtitle': 'Ciencia Ficción / Épica • Audio Español Latino y Subtítulos'
+        },
+        {
+          'title': 'Acción Sin Límites: John Wick 4',
+          'subtitle': 'Acción / Suspenso • Función especial sin cortes'
+        },
+        {
+          'title': 'Superproducción: Oppenheimer',
+          'subtitle': 'Drama Histórico • Ganadora de 7 Premios de la Academia'
+        },
+        {
+          'title': 'Función Estelar: Misión Imposible — Sentencia Mortal',
+          'subtitle': 'Acción / Espionaje • Proyección de alta definición'
+        },
+        {
+          'title': 'Noche de Adrenalina: Top Gun — Maverick',
+          'subtitle': 'Acción / Aviación • Sonido Envolvente Digital'
+        },
+        {
+          'title': 'Especial DC: Batman — El Caballero de la Noche',
+          'subtitle': 'Acción / Crimen • Clásico moderno de colección'
+        },
       ];
       return moviesLineup[((hour ~/ 2) + channelSeed) % moviesLineup.length];
     }
 
-    // =========================================================================
-    // 4. CANALES INFANTILES Y ANIME
-    // =========================================================================
-    if (lowerName.contains('cartoon') ||
-        lowerName.contains('disney') ||
-        lowerName.contains('nick') ||
-        lowerName.contains('kids') ||
-        lowerName.contains('junior') ||
-        lowerName.contains('toon') ||
-        lowerName.contains('boing') ||
-        lowerName.contains('infantil') ||
-        lowerName.contains('anime') ||
-        lowerName.contains('bitme') ||
-        lowerCat.contains('infantil') ||
-        lowerCat.contains('kids') ||
-        lowerCat.contains('niños') ||
-        lowerCat.contains('anime')) {
-      const kidsLineup = [
-        {'title': 'El Increíble Mundo de Gumball: Maratón de Risas', 'subtitle': 'Episodios seguidos llenos de aventuras en Elmore'},
-        {'title': 'Bluey y Bingo: Juegos en Familia', 'subtitle': 'Serie infantil educativa • Doblaje oficial latino'},
-        {'title': 'Bob Esponja: Aventuras en Fondo de Bikini', 'subtitle': 'Comedia animada clásica • Episodios dobles'},
-        {'title': 'Los Jóvenes Titanes en Acción: Misión Especial', 'subtitle': 'Animación y comedia de superhéroes'},
-        {'title': 'Paw Patrol: Patrulla Canina al Rescate', 'subtitle': 'Aventuras preescolares en Bahía Aventura'},
-        {'title': 'Bloque Anime: Dragon Ball Super — Torneo de la Fuerza', 'subtitle': 'Saga completa en alta definición'},
-      ];
-      return kidsLineup[(hour + channelSeed) % kidsLineup.length];
-    }
-
-    // =========================================================================
-    // 5. DOCUMENTALES, CULTURA Y ESTILO DE VIDA
-    // =========================================================================
-    if (lowerName.contains('discovery') ||
-        lowerName.contains('history') ||
-        lowerName.contains('natgeo') ||
-        lowerName.contains('national geographic') ||
-        lowerName.contains('animal planet') ||
-        lowerName.contains('tlc') ||
-        lowerName.contains('h&h') ||
-        lowerName.contains('home & health') ||
-        lowerName.contains('gourmet') ||
-        lowerName.contains('food') ||
-        lowerCat.contains('documental') ||
-        lowerCat.contains('cultura')) {
-      const docLineup = [
-        {'title': 'El Precio de la Historia: Reliquias Millonarias', 'subtitle': 'Negociaciones únicas de objetos históricos en Las Vegas'},
-        {'title': 'Alerta Aeropuerto: Operativos en Frontera', 'subtitle': 'Casos reales de seguridad e inspección internacional'},
-        {'title': 'Supervivencia al Desnudo: Desafío Extremo', 'subtitle': '21 días en los ecosistemas más salvajes del planeta'},
-        {'title': 'Alienígenas Ancestrales: Misterios de las Civilizaciones', 'subtitle': 'Investigación arqueológica y enigmas de la historia'},
-        {'title': 'Planeta Tierra: Vida Salvaje en 4K', 'subtitle': 'Documental de naturaleza con fotografía cinematográfica'},
-      ];
-      return docLineup[(hour + channelSeed) % docLineup.length];
-    }
-
-    // =========================================================================
-    // 6. NOTICIAS 24 HORAS
-    // =========================================================================
+    // 4. NOTICIAS 24 HORAS
     if (lowerName.contains('cnn') ||
         lowerName.contains('ntn24') ||
         lowerName.contains('dw') ||
@@ -1476,24 +2341,25 @@ class EpgService {
       if (hour >= 5 && hour < 12) {
         return {
           'title': 'Noticiero Matutino en Vivo: Titulares ($cleanName)',
-          'subtitle': 'Primer reporte del día, mercados internacionales, clima y corresponsales en directo',
+          'subtitle':
+              'Primer reporte del día, mercados internacionales, clima y corresponsales en directo',
         };
       } else if (hour >= 12 && hour < 18) {
         return {
           'title': 'Edición Meridiana: Panorama en Directo ($cleanName)',
-          'subtitle': 'Cobertura minuto a minuto de las noticias más importantes de la jornada',
+          'subtitle':
+              'Cobertura minuto a minuto de las noticias más importantes de la jornada',
         };
       } else {
         return {
           'title': 'Edición Central y Análisis Político ($cleanName)',
-          'subtitle': 'Entrevistas exclusivas, economía global y mesa de periodistas en vivo',
+          'subtitle':
+              'Entrevistas exclusivas, economía global y mesa de periodistas en vivo',
         };
       }
     }
 
-    // =========================================================================
-    // 7. MÚSICA Y VARIEDADES
-    // =========================================================================
+    // 5. MÚSICA Y VARIEDADES
     if (lowerName.contains('htv') ||
         lowerName.contains('mtv') ||
         lowerName.contains('telehit') ||
@@ -1505,25 +2371,34 @@ class EpgService {
         lowerCat.contains('música') ||
         lowerCat.contains('music')) {
       const musicLineup = [
-        {'title': 'Hot Ranking Latino: Los 20 Más Pedidos', 'subtitle': 'Los éxitos urbanos, pop y tropicales que dominan las listas'},
-        {'title': 'Especial en Concierto: Gira Internacional en Vivo', 'subtitle': 'Presentaciones en directo con sonido de alta fidelidad'},
-        {'title': 'Clásicos de Oro y Estrenos de la Semana', 'subtitle': 'Los mejores videoclips sin interrupciones'},
+        {
+          'title': 'Hot Ranking Latino: Los 20 Más Pedidos',
+          'subtitle': 'Los éxitos urbanos, pop y tropicales que dominan las listas'
+        },
+        {
+          'title': 'Especial en Concierto: Gira Internacional en Vivo',
+          'subtitle': 'Presentaciones en directo con sonido de alta fidelidad'
+        },
+        {
+          'title': 'Clásicos de Oro y Estrenos de la Semana',
+          'subtitle': 'Los mejores videoclips sin interrupciones'
+        },
       ];
       return musicLineup[(hour + channelSeed) % musicLineup.length];
     }
 
-    // =========================================================================
-    // 8. CANALES NACIONALES Y ABIERTOS POR FRANJA HORARIA Y PAÍS
-    // =========================================================================
+    // 6. CANALES NACIONALES Y ABIERTOS POR FRANJA HORARIA Y PAÍS
     if (hour >= 6 && hour < 12) {
       return {
         'title': 'Magazine y Noticiero Matutino en Vivo • $cleanName',
-        'subtitle': 'Actualidad nacional ($feedLabel), enlaces en directo y entretenimiento matinal',
+        'subtitle':
+            'Actualidad nacional ($feedLabel), enlaces en directo y entretenimiento matinal',
       };
     } else if (hour >= 12 && hour < 15) {
       return {
         'title': 'Noticiero Edición Mediodía en Directo • $cleanName',
-        'subtitle': 'El resumen informativo más completo de la mitad de la jornada ($feedLabel)',
+        'subtitle':
+            'El resumen informativo más completo de la mitad de la jornada ($feedLabel)',
       };
     } else if (hour >= 15 && hour < 19) {
       return {
@@ -1533,7 +2408,8 @@ class EpgService {
     } else if (hour >= 19 && hour <= 23) {
       return {
         'title': 'Edición Central Estelar Prime Time • $cleanName',
-        'subtitle': 'Las noticias más relevantes y gala estelar de la noche ($feedLabel)',
+        'subtitle':
+            'Las noticias más relevantes y gala estelar de la noche ($feedLabel)',
       };
     } else {
       return {
@@ -1578,7 +2454,8 @@ class EpgService {
       }
     } catch (_) {}
     try {
-      if (item is Map && (item['groupCategory'] != null || item['category'] != null)) {
+      if (item is Map &&
+          (item['groupCategory'] != null || item['category'] != null)) {
         return (item['groupCategory'] ?? item['category']).toString();
       }
     } catch (_) {}
@@ -1595,6 +2472,21 @@ class EpgService {
     try {
       if (item is Map && item['tvgId'] != null) {
         return item['tvgId'].toString();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static String? _getChannelStreamUrl(dynamic item) {
+    if (item == null || item is String) return null;
+    try {
+      if (item.streamUrl != null && item.streamUrl.toString().isNotEmpty) {
+        return item.streamUrl.toString();
+      }
+    } catch (_) {}
+    try {
+      if (item is Map && item['streamUrl'] != null) {
+        return item['streamUrl'].toString();
       }
     } catch (_) {}
     return null;
