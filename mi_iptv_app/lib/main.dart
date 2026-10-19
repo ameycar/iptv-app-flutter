@@ -185,6 +185,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    EpgService.ensureInitialized();
     _startClockTimer();
     _loadSavedChannels();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -220,6 +221,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _activeAlarms.addAll(savedAlarmsList);
 
       if (savedM3u != null && savedM3u.isNotEmpty) {
+        unawaited(EpgService.extractAndSaveEpgUrlFromM3u(savedM3u));
         _channels = M3USanitizerService.parseAndSanitize(savedM3u);
       } else {
         _channels = M3USanitizerService.getCuratedChannels();
@@ -1027,63 +1029,240 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _openM3uDialog() {
-    final controller = TextEditingController();
+  // GESTOR TIVIMATE: LISTA M3U + AUTO-DETECCIÓN EPG + URL EPG PRIVADA + SATÉLITE PÚBLICO + CACHÉ
+  void _openM3uDialog() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedM3uUrl = prefs.getString('saved_m3u_url') ?? '';
+    final savedCustomEpgUrl = await EpgService.getCustomEpgUrl();
+    final autoDetectedEpgUrl = await EpgService.getAutoDetectedEpgUrl();
+    bool usePublicSatellite = await EpgService.getUsePublicSatelliteConnector();
+
+    final m3uController = TextEditingController(text: savedM3uUrl);
+    final epgController = TextEditingController(text: savedCustomEpgUrl);
+
+    if (!mounted) return;
+
     showDialog(
       context: context,
-      builder: (ctx) => BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-        child: AlertDialog(
-          backgroundColor: const Color(0xFF0F172A).withOpacity(0.95),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: Color(0xFF7B2CBF), width: 1.5),
-          ),
-          title: const Row(
-            children: [
-              Icon(Icons.playlist_play, color: Color(0xFFC77DFF)),
-              SizedBox(width: 8),
-              Text('Gestor de Listas M3U', style: TextStyle(color: Colors.white, fontSize: 16)),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Pega el enlace URL de tu lista M3U o M3U8 para sanitizar y cargar tus canales:',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
+      builder: (ctx) => StatefulBuilder(
+        builder: (dialogCtx, setDialogState) => BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+          child: AlertDialog(
+            backgroundColor: const Color(0xFF0F172A).withOpacity(0.96),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: Color(0xFF7B2CBF), width: 1.5),
+            ),
+            title: const Row(
+              children: [
+                Icon(Icons.settings_input_antenna, color: Color(0xFF00E5FF)),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Gestor TiviMate: Lista M3U y Guía EPG',
+                    style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 1. CAMPO LISTA M3U
+                  const Text(
+                    '1. Enlace de Lista de Canales (M3U / M3U8):',
+                    style: TextStyle(color: Color(0xFFC77DFF), fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: m3uController,
+                    style: const TextStyle(color: Colors.white, fontSize: 12.5),
+                    decoration: InputDecoration(
+                      hintText: 'https://servidor.com/lista.m3u',
+                      hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
+                      filled: true,
+                      fillColor: const Color(0xFF1E293B),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // 2. CAMPO URL EPG PRIVADA (ESTILO TIVIMATE)
+                  const Text(
+                    '2. Enlace Guía EPG Privada (XMLTV .xml o .xml.gz - Opcional):',
+                    style: TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Si tienes un enlace EPG privado pégalo aquí. Si lo dejas vacío, se usa el auto-detectado en el M3U o el Satélite Público.',
+                    style: TextStyle(color: Colors.white60, fontSize: 10.5),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: epgController,
+                    style: const TextStyle(color: Colors.white, fontSize: 12.5),
+                    decoration: InputDecoration(
+                      hintText: 'https://proveedor.com/xmltv.xml.gz',
+                      hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
+                      filled: true,
+                      fillColor: const Color(0xFF1E293B),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // 3. ESTADO DE AUTO-DETECCIÓN EPG EN M3U Y CACHÉ EN MEMORIA + DISCO
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF131B2E),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.radar, color: Color(0xFFFFB703), size: 15),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                autoDetectedEpgUrl.isNotEmpty
+                                    ? 'Auto-detección M3U: $autoDetectedEpgUrl'
+                                    : 'Auto-detección M3U: Sin etiqueta url-tvg en la lista actual',
+                                style: const TextStyle(color: Colors.white70, fontSize: 10.5),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(Icons.memory, color: Color(0xFF00E5FF), size: 15),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                '${EpgService.epgStatusMessage} (${EpgService.cachedXmlTvChannelsCount} llaves en caché)',
+                                style: const TextStyle(
+                                  color: Color(0xFF00E5FF),
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // 4. CONECTOR SATELITAL PÚBLICO POR DEFECTO
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    activeColor: const Color(0xFF00E5FF),
+                    title: const Text(
+                      'Conector Satelital Público por Defecto',
+                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: const Text(
+                      'Descarga guías XMLTV oficiales + API ESPN en vivo en caché RAM y Disco',
+                      style: TextStyle(color: Colors.white54, fontSize: 10),
+                    ),
+                    value: usePublicSatellite,
+                    onChanged: (val) async {
+                      setDialogState(() => usePublicSatellite = val);
+                      await EpgService.setUsePublicSatelliteConnector(val);
+                    },
+                  ),
+
+                  // BOTONES DE SINCRONIZACIÓN Y LIMPIEZA DE CACHÉ
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF00E5FF),
+                            side: const BorderSide(color: Color(0xFF00E5FF)),
+                          ),
+                          icon: const Icon(Icons.sync, size: 16),
+                          label: const Text('Sincronizar EPG', style: TextStyle(fontSize: 11)),
+                          onPressed: () async {
+                            await EpgService.setCustomEpgUrl(
+                              epgController.text.trim(),
+                              syncImmediately: false,
+                            );
+                            setDialogState(() {});
+                            await EpgService.syncAllEpgSources(forceNetwork: true);
+                            await EpgService.refreshRealTimeSportsEpg();
+                            if (mounted) setState(() {});
+                            setDialogState(() {});
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.orangeAccent,
+                          side: const BorderSide(color: Colors.orangeAccent),
+                        ),
+                        icon: const Icon(Icons.delete_sweep, size: 16),
+                        label: const Text('Limpiar Caché', style: TextStyle(fontSize: 11)),
+                        onPressed: () async {
+                          await EpgService.clearEpgCache();
+                          if (mounted) setState(() {});
+                          setDialogState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                style: const TextStyle(color: Colors.white, fontSize: 13),
-                decoration: InputDecoration(
-                  hintText: 'https://servidor.com/lista.m3u',
-                  hintStyle: const TextStyle(color: Colors.white30),
-                  filled: true,
-                  fillColor: const Color(0xFF1E293B),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
+                onPressed: () async {
+                  final url = m3uController.text.trim();
+                  final customEpg = epgController.text.trim();
+
+                  await EpgService.setCustomEpgUrl(customEpg, syncImmediately: true);
+
+                  if (url.isNotEmpty) {
+                    await prefs.setString('saved_m3u_url', url);
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    _downloadAndSanitizeM3u(url);
+                  } else {
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    if (mounted) {
+                      setState(() {});
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('¡Guía EPG actualizada y sincronizada!'),
+                          backgroundColor: Color(0xFF7B2CBF),
+                        ),
+                      );
+                    }
+                  }
+                },
+                child: const Text(
+                  'Cargar y Sanitizar',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                 ),
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
-              onPressed: () async {
-                final url = controller.text.trim();
-                if (url.isNotEmpty) {
-                  Navigator.pop(ctx);
-                  _downloadAndSanitizeM3u(url);
-                }
-              },
-              child: const Text('Cargar y Sanitizar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ],
         ),
       ),
     );
@@ -1092,16 +1271,18 @@ class _HomeScreenState extends State<HomeScreen> {
   void _downloadAndSanitizeM3u(String url) async {
     setState(() => _isVideoLoading = true);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Descargando y sanitizando lista M3U...')),
+      const SnackBar(content: Text('Descargando lista M3U y auto-detectando guía EPG...')),
     );
 
     try {
       final res = await http.get(Uri.parse(url));
       if (res.statusCode == 200) {
+        final detectedEpg = await EpgService.extractAndSaveEpgUrlFromM3u(res.body);
         final parsed = M3USanitizerService.parseAndSanitize(res.body);
         if (parsed.isNotEmpty) {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('saved_m3u_content', res.body);
+          await prefs.setString('saved_m3u_url', url);
           await prefs.setInt('last_played_channel_index', 0);
 
           setState(() {
@@ -1112,9 +1293,13 @@ class _HomeScreenState extends State<HomeScreen> {
           });
           _initializeVideo(_channels[0].streamUrl);
 
+          final epgSuffix = detectedEpg != null
+              ? ' + EPG M3U auto-detectado'
+              : ' + EPG Satelital activo';
+
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('¡${parsed.length} elementos sanitizados con éxito!'),
+              content: Text('¡${parsed.length} elementos sanitizados con éxito$epgSuffix!'),
               backgroundColor: Colors.green,
             ),
           );
@@ -1454,7 +1639,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                   padding: EdgeInsets.zero,
                   icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 20),
-                  tooltip: 'Cargar M3U',
+                  tooltip: 'Cargar M3U / Guía EPG',
                   onPressed: _openM3uDialog,
                 ),
                 IconButton(

@@ -1,34 +1,57 @@
+import 'dart:async';
 import 'dart:convert';
 import '../models/channel_model.dart';
+import 'epg_service.dart';
 
 class M3USanitizerService {
   /// Limpia y separa con precisión: Canales de TV (.m3u8) vs Películas/Series VOD (.mp4, /movie/)
+  /// Y registra automáticamente el EPG (url-tvg / x-tvg-url) y los tvg-id estilo TiviMate
   static List<ChannelModel> parseAndSanitize(String rawM3u) {
+    // Asegura que el motor EPG (Caché en Disco + Satélite + Deportes en Vivo) esté activo
+    EpgService.ensureInitialized();
+
     final List<ChannelModel> sanitizedChannels = [];
     final cleanContent = rawM3u.replaceAll('\uFEFF', '').replaceAll('\r\n', '\n');
+
+    // 1. Auto-detección estilo TiviMate del enlace EPG en la cabecera del M3U
+    unawaited(EpgService.extractAndSaveEpgUrlFromM3u(cleanContent));
+
     final lines = const LineSplitter().convert(cleanContent);
 
+    String rawOriginalName = 'Canal sin nombre';
     String tempName = 'Canal sin nombre';
     String tempLogo = '';
     String tempGroup = 'General';
+    String tempTvgId = '';
+    String tempTvgName = '';
     int channelCounter = 1;
 
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i].trim();
 
-      if (line.toUpperCase().startsWith('#EXTINF:')) {
+      if (line.toUpperCase().startsWith('#EXTM3U')) {
+        unawaited(EpgService.extractAndSaveEpgUrlFromM3u(line));
+      } else if (line.toUpperCase().startsWith('#EXTINF:')) {
         final commaIndex = line.lastIndexOf(',');
         if (commaIndex != -1 && commaIndex < line.length - 1) {
-          tempName = line.substring(commaIndex + 1).trim();
+          rawOriginalName = line.substring(commaIndex + 1).trim();
+        } else {
+          rawOriginalName = 'Canal $channelCounter';
         }
 
-        tempName = _cleanChannelTitle(tempName);
+        tempName = _cleanChannelTitle(rawOriginalName);
 
         final logoMatch = RegExp(r'tvg-logo="([^"]*)"', caseSensitive: false).firstMatch(line);
         tempLogo = logoMatch?.group(1)?.trim() ?? '';
 
         final groupMatch = RegExp(r'group-title="([^"]*)"', caseSensitive: false).firstMatch(line);
         tempGroup = groupMatch?.group(1)?.trim() ?? 'General';
+
+        final idMatch = RegExp(r'tvg-id="([^"]*)"', caseSensitive: false).firstMatch(line);
+        tempTvgId = idMatch?.group(1)?.trim() ?? '';
+
+        final tvgNameMatch = RegExp(r'tvg-name="([^"]*)"', caseSensitive: false).firstMatch(line);
+        tempTvgName = tvgNameMatch?.group(1)?.trim() ?? '';
       } else if (line.isNotEmpty && !line.startsWith('#')) {
         String cleanUrl = line.replaceAll(RegExp(r'\s+'), '');
 
@@ -36,16 +59,27 @@ class M3USanitizerService {
           final contentType = _determineContentType(tempName, tempGroup, cleanUrl);
           final category = _determineCategory(tempName, tempGroup, contentType);
           final year = _extractYear(tempName);
+          final finalChannelName = tempName.isEmpty ? 'Elemento $channelCounter' : tempName;
+
+          // 2. Registrar en el Normalizador Canónico de Doble Llave de EpgService
+          // Así el banner sabe el tvg-id exacto y el país original (Argentina, México, Colombia, España, etc.)
+          EpgService.registerChannelMetadata(
+            cleanName: finalChannelName,
+            originalName: rawOriginalName,
+            tvgId: tempTvgId,
+            tvgName: tempTvgName,
+            category: category,
+          );
 
           sanitizedChannels.add(
             ChannelModel(
               id: 'item_$channelCounter',
               number: channelCounter,
-              name: tempName.isEmpty ? 'Elemento $channelCounter' : tempName,
+              name: finalChannelName,
               streamUrl: cleanUrl,
               logoUrl: tempLogo,
               groupCategory: category,
-              resolution: _detectResolution(tempName, cleanUrl),
+              resolution: _detectResolution(rawOriginalName, cleanUrl),
               contentType: contentType,
               year: year,
               rating: contentType == 'live' ? 'HD' : '8.5',
@@ -53,6 +87,14 @@ class M3USanitizerService {
             ),
           );
           channelCounter++;
+
+          // Resetear variables temporales para el siguiente canal
+          rawOriginalName = 'Canal sin nombre';
+          tempName = 'Canal sin nombre';
+          tempLogo = '';
+          tempGroup = 'General';
+          tempTvgId = '';
+          tempTvgName = '';
         }
       }
     }
@@ -113,8 +155,8 @@ class M3USanitizerService {
       if (lowerGroup.contains('accion') || lowerName.contains('accion')) return 'Acción';
       if (lowerGroup.contains('terror') || lowerGroup.contains('horror')) return 'Terror';
       if (lowerGroup.contains('comedia') || lowerName.contains('comedia')) return 'Comedia';
-      if (lowerGroup.contains('animacion') || lowerGroup.contains('infantil')) return 'Animación';
-      if (lowerGroup.contains('ciencia') || lowerGroup.contains('ficcion')) return 'Ciencia Ficción';
+      if (lowerGroup.contains('animacion') || lowerName.contains('infantil')) return 'Animación';
+      if (lowerGroup.contains('ciencia') || lowerName.contains('ficcion')) return 'Ciencia Ficción';
       return rawGroup.isNotEmpty && rawGroup != 'General' ? rawGroup : 'Películas';
     }
 

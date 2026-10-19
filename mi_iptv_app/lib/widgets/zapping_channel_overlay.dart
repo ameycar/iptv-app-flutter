@@ -97,7 +97,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     final logoUrl = _getLogoUrl();
     final resolution = _getResolution();
 
-    // Sincronización directa con EpgService para coincidir con la tarjeta inferior y el modal
+    // Sincronización directa con EpgService (Capa 1 XMLTV + Capa 2 ESPN Live + Capa 3 OCR)
     final currentProg = EpgService.getCurrentProgram(channelName, groupCat);
     final nextProg = EpgService.getNextProgram(channelName, groupCat);
 

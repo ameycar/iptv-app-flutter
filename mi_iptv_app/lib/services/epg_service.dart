@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class EpgProgram {
   final String title;
@@ -43,6 +44,20 @@ class _XmlTvSlot {
     required this.title,
     required this.desc,
   });
+
+  Map<String, dynamic> toJson() => {
+        's': start.millisecondsSinceEpoch,
+        'e': stop.millisecondsSinceEpoch,
+        't': title,
+        'd': desc,
+      };
+
+  factory _XmlTvSlot.fromJson(Map<String, dynamic> json) => _XmlTvSlot(
+        start: DateTime.fromMillisecondsSinceEpoch(json['s'] as int),
+        stop: DateTime.fromMillisecondsSinceEpoch(json['e'] as int),
+        title: (json['t'] ?? 'Transmisión en Vivo').toString(),
+        desc: (json['d'] ?? 'Emisión en directo').toString(),
+      );
 }
 
 /// Representa la identidad normalizada de un canal mediante el Normalizador Canónico de Doble Llave
@@ -64,10 +79,30 @@ class CanonicalChannelIdentity {
 
 class EpgService {
   // ===========================================================================
+  // CONFIGURACIÓN ESTILO TIVIMATE: AUTO-DETECCIÓN + URL PRIVADA + SATÉLITE + CACHÉ
+  // ===========================================================================
+
+  static const String _prefCustomEpgUrlKey = 'tivimate_custom_epg_url';
+  static const String _prefAutoDetectedEpgUrlKey = 'tivimate_auto_m3u_epg_url';
+  static const String _prefUsePublicSatelliteKey = 'tivimate_use_public_satellite';
+  static const String _prefDiskCacheJsonKey = 'tivimate_xmltv_disk_cache_v1';
+  static const String _prefDiskCacheTimeKey = 'tivimate_xmltv_disk_time_v1';
+
+  /// Conector Satelital Público por Defecto (Guías XMLTV reales para canales en español/latino)
+  static const List<String> defaultSatelliteXmlTvUrls = [
+    'https://iptv-org.github.io/epg/guides/ar.xml',
+    'https://iptv-org.github.io/epg/guides/mx.xml',
+    'https://iptv-org.github.io/epg/guides/co.xml',
+    'https://iptv-org.github.io/epg/guides/es.xml',
+    'https://iptv-org.github.io/epg/guides/pe.xml',
+    'https://iptv-org.github.io/epg/guides/cl.xml',
+  ];
+
+  // ===========================================================================
   // CACHÉS DE LAS 3 CAPAS Y REGISTRO CANÓNICO DE DOBLE LLAVE
   // ===========================================================================
 
-  /// Capa 1: Caché en memoria para fuentes XMLTV indexadas por tvg-id y por llave canónica
+  /// Capa 1: Caché en memoria RAM para fuentes XMLTV indexadas por tvg-id y por llave canónica
   static final Map<String, List<_XmlTvSlot>> _xmlTvCache = {};
 
   /// Capa 2: Caché en memoria de eventos deportivos reales obtenidos de la API en vivo de ESPN
@@ -82,8 +117,19 @@ class EpgService {
 
   static bool _isInitialized = false;
   static bool _isFetchingSports = false;
+  static bool _isSyncingXmlTv = false;
   static DateTime? _lastSportsFetch;
+  static DateTime? _lastXmlTvSync;
+  static String _epgStatusMessage = 'Motor EPG listo';
+  static String _activeEpgUrl = '';
   static Timer? _refreshTimer;
+
+  // Getters de estado para mostrar en la interfaz (estilo TiviMate)
+  static bool get isSyncingXmlTv => _isSyncingXmlTv;
+  static String get epgStatusMessage => _epgStatusMessage;
+  static String get activeEpgUrl => _activeEpgUrl;
+  static DateTime? get lastXmlTvSync => _lastXmlTvSync;
+  static int get cachedXmlTvChannelsCount => _xmlTvCache.length;
 
   // ===========================================================================
   // INICIALIZACIÓN AUTOMÁTICA NO BLOQUEANTE (0 MS DE RETRASO EN ZAPPING)
@@ -94,14 +140,173 @@ class EpgService {
     if (_isInitialized) return;
     _isInitialized = true;
 
-    // Descarga inmediata de cartelera deportiva real en vivo (Capa 2)
+    // 1. Cargar instantáneamente la Caché en Disco (SharedPreferences -> RAM) y sincronizar XMLTV (Capa 1)
+    unawaited(_initTiviMateXmlTvEngine());
+
+    // 2. Descarga inmediata de cartelera deportiva real en vivo (Capa 2)
     unawaited(refreshRealTimeSportsEpg());
 
-    // Actualización silenciosa cada 10 minutos para mantener marcadores y partidos al día
+    // 3. Actualización silenciosa cada 10 minutos para mantener marcadores y guía al día
     _refreshTimer?.cancel();
     _refreshTimer = Timer.periodic(const Duration(minutes: 10), (_) {
       unawaited(refreshRealTimeSportsEpg());
     });
+  }
+
+  /// Inicializa el motor XMLTV: restaura caché de disco a RAM y luego actualiza desde URL privada, M3U o Satélite
+  static Future<void> _initTiviMateXmlTvEngine() async {
+    final loadedFromDisk = await _loadXmlTvCacheFromDisk();
+    if (loadedFromDisk) {
+      _epgStatusMessage = 'Caché EPG activa (${_xmlTvCache.length} llaves en memoria)';
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final lastSavedMs = prefs.getInt(_prefDiskCacheTimeKey) ?? 0;
+    final cacheAgeHours = DateTime.now()
+        .difference(DateTime.fromMillisecondsSinceEpoch(lastSavedMs))
+        .inHours;
+
+    // Si no había caché en disco o tiene más de 6 horas, sincroniza del satélite/URL en segundo plano
+    if (!loadedFromDisk || cacheAgeHours >= 6) {
+      await syncAllEpgSources(forceNetwork: false);
+    }
+  }
+
+  // ===========================================================================
+  // FUNCIONES TIVIMATE: AUTO-DETECCIÓN EN M3U + URL PRIVADA + CONECTOR SATELITAL
+  // ===========================================================================
+
+  /// Auto-detecta `url-tvg="..."`, `x-tvg-url="..."` o `tvg-url="..."` en la cabecera del archivo M3U
+  static Future<String?> extractAndSaveEpgUrlFromM3u(String m3uContent) async {
+    if (m3uContent.isEmpty) return null;
+    final headerLimit = m3uContent.length > 3000 ? 3000 : m3uContent.length;
+    final header = m3uContent.substring(0, headerLimit);
+
+    final regex = RegExp(
+      r'(?:url-tvg|x-tvg-url|tvg-url)\s*=\s*"([^"]+)"',
+      caseSensitive: false,
+    );
+    final match = regex.firstMatch(header);
+    if (match != null) {
+      final raw = match.group(1)?.trim() ?? '';
+      // Puede traer varias URLs separadas por coma
+      final urls = raw
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.startsWith('http'))
+          .toList();
+
+      if (urls.isNotEmpty) {
+        final primaryEpgUrl = urls.first;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_prefAutoDetectedEpgUrlKey, primaryEpgUrl);
+        _epgStatusMessage = 'EPG auto-detectado en M3U: $primaryEpgUrl';
+        // Disparar carga inmediata en segundo plano
+        unawaited(syncAllEpgSources(forceNetwork: true));
+        return primaryEpgUrl;
+      }
+    }
+    return null;
+  }
+
+  /// Guarda la URL de EPG privada pegada manualmente por el usuario y sincroniza
+  static Future<int> setCustomEpgUrl(String customUrl, {bool syncImmediately = true}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final clean = customUrl.trim();
+    await prefs.setString(_prefCustomEpgUrlKey, clean);
+    if (syncImmediately) {
+      return await syncAllEpgSources(forceNetwork: true);
+    }
+    return 0;
+  }
+
+  static Future<String> getCustomEpgUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_prefCustomEpgUrlKey) ?? '';
+  }
+
+  static Future<String> getAutoDetectedEpgUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_prefAutoDetectedEpgUrlKey) ?? '';
+  }
+
+  static Future<void> setUsePublicSatelliteConnector(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefUsePublicSatelliteKey, enabled);
+  }
+
+  static Future<bool> getUsePublicSatelliteConnector() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_prefUsePublicSatelliteKey) ?? true;
+  }
+
+  /// Sincroniza en cascada: 1) URL EPG Privada -> 2) URL Auto-detectada del M3U -> 3) Conector Satelital Público
+  static Future<int> syncAllEpgSources({bool forceNetwork = true}) async {
+    if (_isSyncingXmlTv) return 0;
+    _isSyncingXmlTv = true;
+    _epgStatusMessage = 'Sincronizando guía satelital XMLTV...';
+
+    int totalLoadedPrograms = 0;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final customUrl = (prefs.getString(_prefCustomEpgUrlKey) ?? '').trim();
+      final autoM3uUrl = (prefs.getString(_prefAutoDetectedEpgUrlKey) ?? '').trim();
+      final usePublicSatellite = prefs.getBool(_prefUsePublicSatelliteKey) ?? true;
+
+      final List<String> sourcesToLoad = [];
+
+      // Prioridad 1: URL EPG Privada pegada por el usuario
+      if (customUrl.isNotEmpty && customUrl.startsWith('http')) {
+        sourcesToLoad.add(customUrl);
+      }
+
+      // Prioridad 2: URL EPG Auto-detectada dentro del M3U (url-tvg / x-tvg-url)
+      if (autoM3uUrl.isNotEmpty &&
+          autoM3uUrl.startsWith('http') &&
+          !sourcesToLoad.contains(autoM3uUrl)) {
+        sourcesToLoad.add(autoM3uUrl);
+      }
+
+      // Prioridad 3: Conector Satelital Público por Defecto
+      if (usePublicSatellite) {
+        for (final satUrl in defaultSatelliteXmlTvUrls) {
+          if (!sourcesToLoad.contains(satUrl)) {
+            sourcesToLoad.add(satUrl);
+          }
+        }
+      }
+
+      for (final url in sourcesToLoad) {
+        final count = await loadXmlTvFromUrl(url, saveToDiskWhenDone: false);
+        if (count > 0) {
+          totalLoadedPrograms += count;
+          if (_activeEpgUrl.isEmpty) _activeEpgUrl = url;
+        }
+      }
+
+      if (totalLoadedPrograms > 0 || _xmlTvCache.isNotEmpty) {
+        await _saveXmlTvCacheToDisk();
+        _lastXmlTvSync = DateTime.now();
+        _epgStatusMessage =
+            'EPG Activo: ${_xmlTvCache.length} canales indexados en RAM y Disco';
+      } else {
+        _epgStatusMessage = 'EPG Deportivo en Vivo + Respaldo Regional Activo';
+      }
+    } catch (_) {
+      _epgStatusMessage = 'Modo Respaldo Activo';
+    } finally {
+      _isSyncingXmlTv = false;
+    }
+    return totalLoadedPrograms;
+  }
+
+  /// Limpia tanto la caché en memoria RAM como la caché en Disco
+  static Future<void> clearEpgCache() async {
+    _xmlTvCache.clear();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_prefDiskCacheJsonKey);
+    await prefs.remove(_prefDiskCacheTimeKey);
+    _epgStatusMessage = 'Caché EPG en memoria y disco limpiada';
   }
 
   /// Registra el tvg-id y nombre original desde m3u_parser.dart para el Normalizador de Doble Llave
@@ -525,16 +730,19 @@ class EpgService {
   }
 
   // ===========================================================================
-  // CAPA 1: PARSER XMLTV PROFESIONAL CON CONVERSIÓN DE HUSOS HORARIOS (.xml / .gz)
+  // CAPA 1: PARSER XMLTV PROFESIONAL + CACHÉ EN MEMORIA Y DISCO (.xml / .gz)
   // ===========================================================================
 
   /// Permite cargar una guía XMLTV real desde una URL (.xml o .xml.gz)
-  static Future<int> loadXmlTvFromUrl(String xmlUrl) async {
+  static Future<int> loadXmlTvFromUrl(String xmlUrl, {bool saveToDiskWhenDone = true}) async {
     try {
       final uri = Uri.tryParse(xmlUrl.trim());
       if (uri == null) return 0;
-      final response = await http.get(uri).timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) return 0;
+      final response = await http.get(
+        uri,
+        headers: const {'User-Agent': 'TiviMate/4.7.0 (Android TV)'},
+      ).timeout(const Duration(seconds: 18));
+      if (response.statusCode != 200 || response.bodyBytes.isEmpty) return 0;
 
       List<int> bytes = response.bodyBytes;
       if (xmlUrl.toLowerCase().endsWith('.gz') ||
@@ -544,17 +752,28 @@ class EpgService {
         } catch (_) {}
       }
 
-      return parseXmlTvContent(utf8.decode(bytes, allowMalformed: true));
+      final count = parseXmlTvContent(utf8.decode(bytes, allowMalformed: true));
+      if (count > 0) {
+        _activeEpgUrl = xmlUrl.trim();
+        if (saveToDiskWhenDone) {
+          await _saveXmlTvCacheToDisk();
+        }
+      }
+      return count;
     } catch (_) {
       return 0;
     }
   }
 
-  /// Parser de estándar XMLTV indexado por Doble Llave (tvg-id + nombre canónico)
+  /// Parser de estándar XMLTV indexado por Doble Llave (tvg-id + nombre canónico + marca)
   static int parseXmlTvContent(String xmlContent) {
     int count = 0;
     try {
-      final Map<String, String> channelIdToCanonical = {};
+      final now = DateTime.now();
+      final minTime = now.subtract(const Duration(hours: 6));
+      final maxTime = now.add(const Duration(hours: 36));
+
+      final Map<String, CanonicalChannelIdentity> channelIdToIdentity = {};
       final chanRegex = RegExp(
         r'<channel[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/channel>',
         caseSensitive: false,
@@ -564,36 +783,53 @@ class EpgService {
       for (final m in chanRegex.allMatches(xmlContent)) {
         final rawId = (m.group(1) ?? '').trim().toLowerCase();
         final inner = m.group(2) ?? '';
-        final dispMatch = dispRegex.firstMatch(inner);
-        if (rawId.isNotEmpty && dispMatch != null) {
+        if (rawId.isEmpty) continue;
+
+        for (final dispMatch in dispRegex.allMatches(inner)) {
           final dispName = _unescapeXml(dispMatch.group(1) ?? '');
-          final identity = normalizeChannel(dispName, explicitTvgId: rawId);
-          channelIdToCanonical[rawId] = identity.canonicalNameKey;
+          if (dispName.isNotEmpty) {
+            final identity = normalizeChannel(dispName, explicitTvgId: rawId);
+            channelIdToIdentity[rawId] = identity;
+          }
         }
       }
 
-      final progRegex = RegExp(
-        r'<programme[^>]*start="([^"]+)"[^>]*stop="([^"]+)"[^>]*channel="([^"]+)"[^>]*>([\s\S]*?)<\/programme>',
+      // Regex flexible que soporta atributos start, stop y channel en cualquier orden
+      final progBlockRegex = RegExp(
+        r'<programme\s+([^>]+)>([\s\S]*?)<\/programme>',
         caseSensitive: false,
       );
+      final startAttrRegex = RegExp(r'start="([^"]+)"', caseSensitive: false);
+      final stopAttrRegex = RegExp(r'stop="([^"]+)"', caseSensitive: false);
+      final chanAttrRegex = RegExp(r'channel="([^"]+)"', caseSensitive: false);
+
       final titleRegex = RegExp(r'<title[^>]*>([\s\S]*?)<\/title>', caseSensitive: false);
       final descRegex = RegExp(r'<desc[^>]*>([\s\S]*?)<\/desc>', caseSensitive: false);
 
-      for (final match in progRegex.allMatches(xmlContent)) {
-        final rawStart = match.group(1) ?? '';
-        final rawStop = match.group(2) ?? '';
-        final rawChannelId = (match.group(3) ?? '').trim().toLowerCase();
-        final innerXml = match.group(4) ?? '';
+      final Set<String> touchedKeys = {};
+
+      for (final match in progBlockRegex.allMatches(xmlContent)) {
+        final attrs = match.group(1) ?? '';
+        final innerXml = match.group(2) ?? '';
+
+        final rawStart = startAttrRegex.firstMatch(attrs)?.group(1) ?? '';
+        final rawStop = stopAttrRegex.firstMatch(attrs)?.group(1) ?? '';
+        final rawChannelId = (chanAttrRegex.firstMatch(attrs)?.group(1) ?? '').trim().toLowerCase();
+
+        if (rawStart.isEmpty || rawStop.isEmpty || rawChannelId.isEmpty) continue;
 
         final startDt = _parseXmlTvDate(rawStart);
         final stopDt = _parseXmlTvDate(rawStop);
-        if (startDt == null || stopDt == null || rawChannelId.isEmpty) continue;
+        if (startDt == null || stopDt == null) continue;
+
+        // Filtrar programas antiguos o muy lejanos para mantener la RAM ligera y rápida
+        if (stopDt.isBefore(minTime) || startDt.isAfter(maxTime)) continue;
 
         final titleMatch = titleRegex.firstMatch(innerXml);
         final descMatch = descRegex.firstMatch(innerXml);
 
         final cleanTitle = _unescapeXml(titleMatch?.group(1) ?? 'Transmisión en Vivo');
-        final cleanDesc = _unescapeXml(descMatch?.group(1) ?? 'Emisión en directo');
+        final cleanDesc = _unescapeXml(descMatch?.group(1) ?? 'Emisión oficial programada en directo');
 
         final slot = _XmlTvSlot(
           start: startDt,
@@ -602,19 +838,94 @@ class EpgService {
           desc: cleanDesc,
         );
 
-        _xmlTvCache.putIfAbsent(rawChannelId, () => []).add(slot);
+        void indexUnderKey(String key) {
+          if (key.isEmpty) return;
+          _xmlTvCache.putIfAbsent(key, () => []).add(slot);
+          touchedKeys.add(key);
+        }
 
-        final normalizedId = normalizeChannel(rawChannelId, explicitTvgId: rawChannelId);
-        if (normalizedId.canonicalNameKey.isNotEmpty) {
-          _xmlTvCache.putIfAbsent(normalizedId.canonicalNameKey, () => []).add(slot);
+        // Indexar bajo: 1) tvg-id completo, 2) tvg-id sin sufijo de país, 3) llave canónica, 4) marca + país
+        indexUnderKey(rawChannelId);
+        final idWithoutCountry = rawChannelId.split('.').first;
+        if (idWithoutCountry != rawChannelId) {
+          indexUnderKey(idWithoutCountry);
         }
-        if (channelIdToCanonical.containsKey(rawChannelId)) {
-          _xmlTvCache.putIfAbsent(channelIdToCanonical[rawChannelId]!, () => []).add(slot);
+
+        final normalizedId = channelIdToIdentity[rawChannelId] ??
+            normalizeChannel(rawChannelId, explicitTvgId: rawChannelId);
+        indexUnderKey(normalizedId.canonicalNameKey);
+        if (normalizedId.brandKey.isNotEmpty) {
+          indexUnderKey('${normalizedId.brandKey}_${normalizedId.countryFeed.toLowerCase()}');
+          indexUnderKey(normalizedId.brandKey);
         }
+
         count++;
+      }
+
+      // Ordenar cronológicamente todas las listas actualizadas para que el siguiente programa sea exacto
+      for (final key in touchedKeys) {
+        _xmlTvCache[key]?.sort((a, b) => a.start.compareTo(b.start));
       }
     } catch (_) {}
     return count;
+  }
+
+  /// Guarda la caché XMLTV en Disco (SharedPreferences) para arranque instantáneo
+  static Future<void> _saveXmlTvCacheToDisk() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final Map<String, dynamic> dump = {};
+      final now = DateTime.now();
+
+      int savedKeys = 0;
+      for (final entry in _xmlTvCache.entries) {
+        if (savedKeys >= 300) break;
+        final upcoming = entry.value
+            .where((s) => s.stop.isAfter(now.subtract(const Duration(hours: 1))))
+            .take(14)
+            .map((s) => s.toJson())
+            .toList();
+        if (upcoming.isNotEmpty) {
+          dump[entry.key] = upcoming;
+          savedKeys++;
+        }
+      }
+
+      if (dump.isNotEmpty) {
+        await prefs.setString(_prefDiskCacheJsonKey, jsonEncode(dump));
+        await prefs.setInt(_prefDiskCacheTimeKey, now.millisecondsSinceEpoch);
+      }
+    } catch (_) {}
+  }
+
+  /// Restaura la caché XMLTV desde Disco a Memoria RAM en milisegundos
+  static Future<bool> _loadXmlTvCacheFromDisk() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rawJson = prefs.getString(_prefDiskCacheJsonKey);
+      if (rawJson == null || rawJson.isEmpty) return false;
+
+      final Map<String, dynamic> decoded = jsonDecode(rawJson);
+      final now = DateTime.now();
+      int restored = 0;
+
+      decoded.forEach((key, value) {
+        if (value is List) {
+          final slots = value
+              .map((item) => _XmlTvSlot.fromJson(Map<String, dynamic>.from(item)))
+              .where((s) => s.stop.isAfter(now.subtract(const Duration(hours: 1))))
+              .toList();
+          if (slots.isNotEmpty) {
+            _xmlTvCache[key] = slots;
+            restored++;
+          }
+        }
+      });
+
+      return restored > 0;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Motor de Husos Horarios: Convierte fechas XMLTV ("20261018093000 -0300") a la hora local exacta del dispositivo
@@ -647,7 +958,7 @@ class EpgService {
         }
       }
 
-      return DateTime(year, month, day, hour, minute, second);
+      return DateTime.utc(year, month, day, hour, minute, second).toLocal();
     } catch (_) {
       return null;
     }
@@ -658,8 +969,10 @@ class EpgService {
         .replaceAll('&amp;', '&')
         .replaceAll('&quot;', '"')
         .replaceAll('&apos;', "'")
+        .replaceAll('&#39;', "'")
         .replaceAll('&lt;', '<')
         .replaceAll('&gt;', '>')
+        .replaceAll(RegExp(r'<!\[CDATA\[([\s\S]*?)\]\]>'), r'$1')
         .trim();
   }
 
@@ -767,17 +1080,19 @@ class EpgService {
     }
 
     // -------------------------------------------------------------------------
-    // 2. CAPA 1: Revisar caché XMLTV por Doble Llave (tvg-id oficial o llave canónica)
+    // 2. CAPA 1: Revisar caché XMLTV por Doble Llave (tvg-id oficial, marca+país o llave canónica)
     // -------------------------------------------------------------------------
     final xmlCandidates = <String>[
       if (identity.tvgIdKey.isNotEmpty) identity.tvgIdKey,
+      if (identity.tvgIdKey.contains('.')) identity.tvgIdKey.split('.').first,
+      '${identity.brandKey}_${identity.countryFeed.toLowerCase()}',
       identity.canonicalNameKey,
       identity.brandKey,
       lowerName.replaceAll(' ', ''),
     ];
 
     for (final key in xmlCandidates) {
-      if (_xmlTvCache.containsKey(key)) {
+      if (key.isNotEmpty && _xmlTvCache.containsKey(key)) {
         final slots = _xmlTvCache[key]!;
         for (int i = 0; i < slots.length; i++) {
           final slot = slots[i];
