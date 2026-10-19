@@ -42,7 +42,6 @@ class NotificationService {
     }
   }
 
-  // Solicitud segura de permisos una vez que la pantalla ya está activa
   static Future<void> requestPermissionsSafely() async {
     try {
       final androidImpl = _notificationsPlugin
@@ -153,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<ChannelModel> _channels = [];
   int _selectedChannelIndex = 0;
   String _selectedCategory = 'Todos';
-  String _selectedSection = 'En Vivo'; // 'En Vivo', 'Películas', 'Series'
+  String _selectedSection = 'En Vivo';
   
   VideoPlayerController? _videoPlayerController;
   bool _isVideoLoading = false;
@@ -162,7 +161,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showOsd = true;
   double _currentVolume = 1.0;
 
-  // MOTOR TURBO-ZAPPING DUAL EXOPLAYER (EL MISMO MOTOR NATIVO DE TIVIMATE)
   final Map<String, VideoPlayerController> _prebufferedPool = {};
   final Set<String> _prebufferingInProgress = {};
   int _zappingToken = 0;
@@ -238,7 +236,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Liberación asíncrona en segundo plano (NUNCA bloquea el cambio de canal)
   void _disposeControllerInBackground(VideoPlayerController? controller) {
     if (controller == null) return;
     Future.microtask(() async {
@@ -260,7 +257,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return targetUri;
   }
 
-  // Pre-carga real en segundo plano de CH+ y CH- con primer cuadro de video listo
   void _warmUpAdjacentChannels() {
     if (!mounted) return;
     final list = _filteredChannels;
@@ -286,7 +282,6 @@ class _HomeScreenState extends State<HomeScreen> {
       if (prevUrl.isNotEmpty && prevUrl != activeUrl) prevUrl,
     };
 
-    // 1. Limpiar del pool cualquier canal que ya no sea vecino inmediato
     final existingKeys = _prebufferedPool.keys.toList();
     for (final key in existingKeys) {
       if (!desiredUrls.contains(key)) {
@@ -295,7 +290,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    // 2. Pre-inicializar en silencio CH+ y CH- y decodificar el primer cuadro
     for (final targetUrl in desiredUrls) {
       if (_prebufferedPool.containsKey(targetUrl) ||
           _prebufferingInProgress.contains(targetUrl)) {
@@ -314,7 +308,6 @@ class _HomeScreenState extends State<HomeScreen> {
           await preController.initialize();
           await preController.setVolume(0.0);
           await preController.setLooping(true);
-          // Arrancar 120ms en silencio para dejar el primer frame ya renderizado en textura
           await preController.play();
           await Future.delayed(const Duration(milliseconds: 120));
           await preController.pause();
@@ -355,7 +348,6 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    // RUTA INSTANTÁNEA (0.02s): El canal ya está pre-decodificado en el Pool ExoPlayer
     final preloaded = _prebufferedPool.remove(url);
     if (preloaded != null && preloaded.value.isInitialized) {
       final oldController = _videoPlayerController;
@@ -378,7 +370,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _disposeControllerInBackground(preloaded);
     }
 
-    // RUTA PARALELA DIRECTA (0ms de espera): Conectar de inmediato mientras conserva el frame anterior o muestra el lienzo EPG
     setState(() {
       _isVideoLoading = true;
       _hasVideoError = false;
@@ -467,7 +458,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final isReadyInPool = _prebufferedPool.containsKey(targetUrl) &&
         (_prebufferedPool[targetUrl]?.value.isInitialized ?? false);
 
-    // Respuesta de UI en 0 milisegundos
     setState(() {
       _selectedChannelIndex = realIndex;
       _showOsd = true;
@@ -483,7 +473,6 @@ class _HomeScreenState extends State<HomeScreen> {
       prefs.setInt('last_played_channel_index', realIndex);
     });
 
-    // Disparo inmediato sin ningún retraso artificial
     _initializeVideo(targetUrl);
   }
 
@@ -1029,7 +1018,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // GESTOR TIVIMATE: LISTA M3U + AUTO-DETECCIÓN EPG + URL EPG PRIVADA + SATÉLITE PÚBLICO + CACHÉ
   void _openM3uDialog() async {
     final prefs = await SharedPreferences.getInstance();
     final savedM3uUrl = prefs.getString('saved_m3u_url') ?? '';
@@ -1070,7 +1058,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 1. CAMPO LISTA M3U
                   const Text(
                     '1. Enlace de Lista de Canales (M3U / M3U8):',
                     style: TextStyle(color: Color(0xFFC77DFF), fontSize: 12, fontWeight: FontWeight.bold),
@@ -1090,7 +1077,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 14),
 
-                  // 2. CAMPO URL EPG PRIVADA (ESTILO TIVIMATE)
                   const Text(
                     '2. Enlace Guía EPG Privada (XMLTV .xml o .xml.gz - Opcional):',
                     style: TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold),
@@ -1115,7 +1101,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 10),
 
-                  // 3. ESTADO DE AUTO-DETECCIÓN EPG EN M3U Y CACHÉ EN MEMORIA + DISCO
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(10),
@@ -1163,7 +1148,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 8),
 
-                  // 4. CONECTOR SATELITAL PÚBLICO POR DEFECTO
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     dense: true,
@@ -1183,7 +1167,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
 
-                  // BOTONES DE SINCRONIZACIÓN Y LIMPIEZA DE CACHÉ
                   Row(
                     children: [
                       Expanded(
@@ -1547,7 +1530,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // BARRA SUPERIOR GLASS CON BADGE INTELIGENTE (ESPACIO CONSTANTE, NUNCA SE MONTA)
   Widget _buildTopGlassBar([ChannelModel? activeChannel]) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1752,7 +1734,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // LIENZO DE TRANSICIÓN SUAVE CON LOGO Y EPG (CERO PANTALLA NEGRA)
   Widget _buildSmoothTuningTransition(ChannelModel? activeChannel) {
     if (activeChannel == null) {
       return const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF)));
@@ -1935,7 +1916,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       : _buildSmoothTuningTransition(activeChannel),
             ),
 
-            // MINI-OVERLAY DE ZAPPING PROFESIONAL (ESTILO TIVIMATE / DIRECTV)
             if (_showOsd && activeChannel != null)
               ZappingChannelOverlay(
                 channel: activeChannel,
@@ -1964,81 +1944,94 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // TARJETA DE PROGRAMACIÓN CON SUSCRIPCIÓN REACTIVA EN VIVO
   Widget _buildLiveEpgCard(ChannelModel? activeChannel) {
     if (activeChannel == null) return const SizedBox.shrink();
 
-    final currentProg = EpgService.getCurrentProgram(activeChannel.name, activeChannel.groupCategory);
-    final nextProg = EpgService.getNextProgram(activeChannel.name, activeChannel.groupCategory);
+    return ValueListenableBuilder<int>(
+      valueListenable: EpgService.epgUpdateNotifier,
+      builder: (context, _, __) {
+        final currentProg = EpgService.getCurrentProgram(activeChannel.name, activeChannel.groupCategory);
+        final nextProg = EpgService.getNextProgram(activeChannel.name, activeChannel.groupCategory);
+        final isSyncing = EpgService.isChannelSyncing(activeChannel.name);
 
-    return InkWell(
-      onTap: () => _openEpgScheduleModal(activeChannel),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: const Color(0xFF0F172A).withOpacity(0.9),
-          border: const Border(bottom: BorderSide(color: Color(0x1F9D4EDD))),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        return InkWell(
+          onTap: () => _openEpgScheduleModal(activeChannel),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F172A).withOpacity(0.9),
+              border: const Border(bottom: BorderSide(color: Color(0x1F9D4EDD))),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      const Icon(Icons.live_tv, color: Colors.redAccent, size: 14),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          currentProg.title,
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Icon(
+                            isSyncing ? Icons.radar : Icons.live_tv,
+                            color: isSyncing ? const Color(0xFFFFB703) : Colors.redAccent,
+                            size: 14,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              currentProg.title,
+                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      currentProg.timeFormatted,
+                      style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  currentProg.timeFormatted,
-                  style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11, fontWeight: FontWeight.bold),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'A continuación: ${nextProg.title}',
+                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Quedan ${currentProg.remainingMinutes} min',
+                      style: const TextStyle(color: Colors.white54, fontSize: 10),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: currentProg.progress,
+                    backgroundColor: const Color(0xFF1E293B),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      isSyncing ? const Color(0xFFFFB703) : const Color(0xFF9D4EDD),
+                    ),
+                    minHeight: 3,
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    'A continuación: ${nextProg.title}',
-                    style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Quedan ${currentProg.remainingMinutes} min',
-                  style: const TextStyle(color: Colors.white54, fontSize: 10),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: LinearProgressIndicator(
-                value: currentProg.progress,
-                backgroundColor: const Color(0xFF1E293B),
-                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF9D4EDD)),
-                minHeight: 3,
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -2261,7 +2254,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       : _buildSmoothTuningTransition(activeChannel),
             ),
 
-            // OVERLAY EN PANTALLA COMPLETA
             if (_showOsd && activeChannel != null)
               Positioned(
                 bottom: 16,
@@ -2290,7 +2282,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-            // BOTÓN SALIR DE PANTALLA COMPLETA
             if (_showOsd)
               Positioned(
                 top: 24,
