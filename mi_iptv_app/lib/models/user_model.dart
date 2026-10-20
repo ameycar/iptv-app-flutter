@@ -11,7 +11,7 @@ class UserModel {
   final String? registeredHardwareId; // ID único del dispositivo vinculado
   final String? deviceName; // Ej: "Smart TV Sala", "Xiaomi Box", "Samsung S23"
   final bool hardwareResetRequested; // Si el usuario solicitó cambio desde la app
-  final String? hardwareResetToken; // PIN express (4 dígitos) de desbloqueo rápido
+  final String? hardwareResetToken; // Código PIN express (4 dígitos) de desbloqueo rápido
   final int maxScreens; // Máximo de pantallas permitidas (1 por defecto)
   final DateTime? createdAt;
   final DateTime? lastActiveAt;
@@ -44,9 +44,9 @@ class UserModel {
 
   /// Verifica si el hardware actual coincide con el registrado
   bool isHardwareAuthorized(String currentHardwareId) {
-    if (isAdmin) return true; // Administrador tiene acceso total
+    if (isAdmin) return true; // El administrador puede entrar desde cualquier dispositivo
     if (registeredHardwareId == null || registeredHardwareId!.isEmpty) {
-      return true; // Primer inicio: se vinculará este dispositivo automáticamente
+      return true; // Aún no tiene hardware asignado, se asignará el actual en el primer inicio
     }
     return registeredHardwareId == currentHardwareId;
   }
@@ -58,20 +58,21 @@ class UserModel {
       'role': role,
       'isActive': isActive,
       'isVip': isVip,
-      'expirationDate': Timestamp.fromDate(expirationDate),
+      'expirationDate': expirationDate.toIso8601String(),
       'registeredHardwareId': registeredHardwareId,
       'deviceName': deviceName,
       'hardwareResetRequested': hardwareResetRequested,
       'hardwareResetToken': hardwareResetToken,
       'maxScreens': maxScreens,
-      'createdAt': createdAt != null ? Timestamp.fromDate(createdAt!) : FieldValue.serverTimestamp(),
-      'lastActiveAt': lastActiveAt != null ? Timestamp.fromDate(lastActiveAt!) : FieldValue.serverTimestamp(),
+      'createdAt': (createdAt ?? DateTime.now()).toIso8601String(),
+      'lastActiveAt': (lastActiveAt ?? DateTime.now()).toIso8601String(),
     };
   }
 
   factory UserModel.fromMap(String id, Map<String, dynamic> map) {
     DateTime parseDate(dynamic val) {
       if (val is Timestamp) return val.toDate();
+      if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
       if (val is String) return DateTime.tryParse(val) ?? DateTime.now().add(const Duration(days: 30));
       return DateTime.now().add(const Duration(days: 30));
     }
@@ -89,8 +90,8 @@ class UserModel {
       hardwareResetRequested: map['hardwareResetRequested'] == true,
       hardwareResetToken: map['hardwareResetToken']?.toString(),
       maxScreens: (map['maxScreens'] as num?)?.toInt() ?? 1,
-      createdAt: map['createdAt'] is Timestamp ? (map['createdAt'] as Timestamp).toDate() : null,
-      lastActiveAt: map['lastActiveAt'] is Timestamp ? (map['lastActiveAt'] as Timestamp).toDate() : null,
+      createdAt: map['createdAt'] != null ? parseDate(map['createdAt']) : null,
+      lastActiveAt: map['lastActiveAt'] != null ? parseDate(map['lastActiveAt']) : null,
     );
   }
 
