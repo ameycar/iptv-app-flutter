@@ -4,7 +4,7 @@ class UserModel {
   final String id;
   final String username;
   final String password;
-  final String role; // 'admin' | 'user' | 'family_admin'
+  final String role; // 'admin' (SuperAdmin) | 'family_admin' (Admin Familiar) | 'user' (Cliente)
   final bool isActive;
   final bool isVip;
   final DateTime expirationDate;
@@ -12,15 +12,15 @@ class UserModel {
   final String? deviceName; // Ej: "Smart TV Sala", "Xiaomi Box", "Samsung S23"
   final bool hardwareResetRequested; // Si el usuario solicitó cambio desde la app
   final String? hardwareResetToken; // Código PIN express (4 dígitos) de desbloqueo rápido
-  final int maxScreens; // Máximo de pantallas permitidas (1 por defecto, 5 en familiar)
+  final int maxScreens; // Máximo de pantallas permitidas (1 para estándar, 5 para familiar)
   final DateTime? createdAt;
   final DateTime? lastActiveAt;
 
   // Campos para Grupos Familiares (Hasta 5 dispositivos)
-  final String? familyId;
-  final bool isFamilyAdmin;
-  final String? familyPlan;
-  final String? familyAdminUsername;
+  final String? familyId; // Identificador del grupo familiar (ej: "FAM-ACOSTA-1234")
+  final bool isFamilyAdmin; // True si es el jefe/administrador de la cuenta familiar
+  final String? familyPlan; // 'vip' | 'standard'
+  final String? familyAdminUsername; // Nombre del jefe de la familia que lo creó
 
   UserModel({
     required this.id,
@@ -48,7 +48,6 @@ class UserModel {
   bool get isFamilyGroupAdmin => role == 'family_admin' || isFamilyAdmin;
   bool get hasAdminPrivileges => isAdmin || isFamilyGroupAdmin;
   bool get isPartOfFamily => familyId != null && familyId!.isNotEmpty;
-
   bool get isExpired => DateTime.now().isAfter(expirationDate);
 
   int get daysRemaining {
@@ -56,7 +55,7 @@ class UserModel {
     return diff < 0 ? 0 : diff;
   }
 
-  /// Verifica si el hardware actual coincide con el registrado (Tu método original)
+  /// Verifica si el hardware actual coincide con el registrado
   bool isHardwareAuthorized(String currentHardwareId) {
     if (isAdmin) return true;
     if (registeredHardwareId == null || registeredHardwareId!.isEmpty) {

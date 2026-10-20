@@ -13,42 +13,251 @@ class FamilyPanelScreen extends StatefulWidget {
 }
 
 class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
-  final _currentUser = AuthService.currentUser;
+  final _formKey = GlobalKey<FormState>();
+  final _usernameCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  final _deviceNameCtrl = TextEditingController();
+  bool _memberIsVip = false;
+  bool _isSaving = false;
+
+  @override
+  void dispose() {
+    _usernameCtrl.dispose();
+    _passwordCtrl.dispose();
+    _deviceNameCtrl.dispose();
+    super.dispose();
+  }
+
+  void _showAddMemberModal(BuildContext context, UserModel adminUser, int currentCount) {
+    if (currentCount >= 5) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Has alcanzado el límite máximo de 5 pantallas en tu plan familiar.'),
+        ),
+      );
+      return;
+    }
+
+    _usernameCtrl.clear();
+    _passwordCtrl.clear();
+    _deviceNameCtrl.clear();
+    _memberIsVip = adminUser.familyPlan == 'vip';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) => Container(
+          padding: EdgeInsets.only(
+            top: 24,
+            left: 24,
+            right: 24,
+            bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+          ),
+          decoration: BoxDecoration(
+            color: const Color(0xFF161B26),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            border: Border.all(color: Colors.white.withOpacity(0.12)),
+          ),
+          child: Form(
+            key: _formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF8B5CF6).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.tv_rounded, color: Color(0xFFC4B5FD)),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Agregar Pantalla / Dispositivo',
+                              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              'Pantalla ${currentCount + 1} de 5 permitidas',
+                              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(modalCtx),
+                        icon: const Icon(Icons.close, color: Colors.white60),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  TextFormField(
+                    controller: _deviceNameCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Nombre del Dispositivo / Familiar',
+                      hintText: 'Ej: TV Sala, Celular Hijo, Tablet',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      prefixIcon: const Icon(Icons.devices, color: Color(0xFF8B5CF6)),
+                      filled: true,
+                      fillColor: Colors.black26,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    validator: (v) => v == null || v.trim().isEmpty ? 'Ingresa el nombre del dispositivo' : null,
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: _usernameCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Usuario para esta pantalla',
+                      hintText: 'Ej: sala_${adminUser.username}',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      prefixIcon: const Icon(Icons.person, color: Color(0xFF8B5CF6)),
+                      filled: true,
+                      fillColor: Colors.black26,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    validator: (v) => v == null || v.trim().isEmpty ? 'Ingresa un usuario' : null,
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: _passwordCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Contraseña para esta pantalla',
+                      hintText: 'Mínimo 4 caracteres',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      prefixIcon: const Icon(Icons.lock, color: Color(0xFF8B5CF6)),
+                      filled: true,
+                      fillColor: Colors.black26,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    validator: (v) => v == null || v.trim().length < 4 ? 'Mínimo 4 caracteres' : null,
+                  ),
+                  const SizedBox(height: 16),
+                  if (adminUser.familyPlan == 'vip') ...[
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _memberIsVip,
+                      title: const Text('Asignar Canales VIP a esta pantalla', style: TextStyle(color: Colors.white, fontSize: 14)),
+                      subtitle: const Text('Habilita contenido premium y 4K', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                      activeColor: const Color(0xFFFFD600),
+                      onChanged: (val) => setModalState(() => _memberIsVip = val),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF8B5CF6),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      onPressed: _isSaving ? null : () async {
+                        if (!_formKey.currentState!.validate()) return;
+                        setModalState(() => _isSaving = true);
+                        try {
+                          await AuthService.addFamilyMember(
+                            familyId: adminUser.familyId!,
+                            username: _usernameCtrl.text,
+                            password: _passwordCtrl.text,
+                            memberName: _deviceNameCtrl.text,
+                            overrideVip: _memberIsVip,
+                          );
+                          if (mounted) {
+                            Navigator.pop(modalCtx);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: Color(0xFF10B981),
+                                content: Text('¡Pantalla agregada con éxito al grupo familiar!'),
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          setModalState(() => _isSaving = false);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(backgroundColor: Colors.redAccent, content: Text('Error: $e')),
+                          );
+                        }
+                      },
+                      icon: _isSaving
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Icon(Icons.add_circle_outline, color: Colors.white),
+                      label: Text(_isSaving ? 'Guardando...' : 'ACTIVAR PANTALLA', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final familyId = _currentUser?.familyId ?? '';
+    final currentUser = AuthService.currentUser;
+    if (currentUser == null || !currentUser.isFamilyGroupAdmin || currentUser.familyId == null) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0D1117),
+        appBar: AppBar(title: const Text('Panel Familiar'), backgroundColor: Colors.transparent),
+        body: const Center(
+          child: Text('No tienes una cuenta de Administrador Familiar activa.', style: TextStyle(color: Colors.white70)),
+        ),
+      );
+    }
+
+    final familyId = currentUser.familyId!;
+    final isVipPlan = currentUser.familyPlan == 'vip';
 
     return Scaffold(
-      backgroundColor: const Color(0xFF090D16),
+      backgroundColor: const Color(0xFF0B0F17),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF101726),
-        elevation: 0,
+        backgroundColor: const Color(0xFF161B26),
         title: Row(
           children: [
-            const Icon(Icons.family_restroom, color: Color(0xFF00E5FF)),
-            const SizedBox(width: 8),
-            Text(
-              'Grupo Familiar (${_currentUser?.familyPlan?.toUpperCase() ?? "ESTÁNDAR"})',
-              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: isVipPlan ? const Color(0xFFFFD600).withOpacity(0.2) : const Color(0xFF8B5CF6).withOpacity(0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(Icons.family_restroom, color: isVipPlan ? const Color(0xFFFFD600) : const Color(0xFFC4B5FD)),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Panel Familiar', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                Text(
+                  isVipPlan ? 'PLAN FAMILIAR VIP (5 Pantallas)' : 'PLAN FAMILIAR ESTÁNDAR (5 Pantallas)',
+                  style: TextStyle(fontSize: 11, color: isVipPlan ? const Color(0xFFFFD600) : const Color(0xFF94A3B8)),
+                ),
+              ],
             ),
           ],
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white70),
-            tooltip: 'Actualizar',
-            onPressed: () => setState(() {}),
-          ),
-          IconButton(
-            icon: const Icon(Icons.exit_to_app, color: Colors.white70),
             tooltip: 'Cerrar Sesión',
+            icon: const Icon(Icons.logout, color: Colors.white70),
             onPressed: () async {
               await AuthService.logout();
-              if (mounted) {
-                Navigator.pop(context);
-                widget.onLogout?.call();
-              }
+              if (widget.onLogout != null) widget.onLogout!();
+              if (mounted) Navigator.pop(context);
             },
           ),
         ],
@@ -56,479 +265,241 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
       body: StreamBuilder<List<UserModel>>(
         stream: AuthService.getFamilyMembersStream(familyId),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF)));
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
           }
 
-          final members = snapshot.data ?? [];
-          final usedScreens = members.length;
-          const maxScreens = 5;
-          final availableScreens = maxScreens - usedScreens;
+          final members = snapshot.data!;
+          final activeScreensCount = members.length;
 
-          return CustomScrollView(
-            slivers: [
-              // 1. Banner Resumen de Pantallas Familiares
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          const Color(0xFF101726),
-                          _currentUser?.isVip == true
-                              ? const Color(0xFF4A148C).withOpacity(0.4)
-                              : const Color(0xFF004D40).withOpacity(0.4),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: _currentUser?.isVip == true ? const Color(0xFFC77DFF) : const Color(0xFF00E5FF),
-                        width: 1.5,
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(
-                                      _currentUser?.isVip == true ? Icons.stars : Icons.tv,
-                                      color: _currentUser?.isVip == true
-                                          ? const Color(0xFFFFD700)
-                                          : const Color(0xFF00E5FF),
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      _currentUser?.isVip == true ? 'PLAN FAMILIAR VIP' : 'PLAN FAMILIAR ESTÁNDAR',
-                                      style: TextStyle(
-                                        color: _currentUser?.isVip == true
-                                            ? const Color(0xFFFFD700)
-                                            : const Color(0xFF00E5FF),
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 1.1,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Administrador: ${_currentUser?.username ?? ""}',
-                                  style: const TextStyle(color: Colors.white70, fontSize: 13),
-                                ),
-                              ],
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: Colors.black45,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: Colors.white24),
-                              ),
-                              child: Text(
-                                '${_currentUser?.daysRemaining ?? 0} días restantes',
-                                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        // Barra de progreso de pantallas
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Pantallas Activas: $usedScreens de $maxScreens',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                            ),
-                            Text(
-                              availableScreens > 0 ? '$availableScreens cupo(s) disponible(s)' : 'Cupo lleno',
-                              style: TextStyle(
-                                color: availableScreens > 0 ? const Color(0xFF00E676) : Colors.orangeAccent,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: LinearProgressIndicator(
-                            value: usedScreens / maxScreens,
-                            minHeight: 8,
-                            backgroundColor: Colors.white12,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              usedScreens == maxScreens ? Colors.orangeAccent : const Color(0xFF00E5FF),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // 2. Encabezado de la lista
-              const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Text(
-                    'Dispositivos y Perfiles de la Familia (5 Máximo)',
-                    style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-
-              // 3. Lista de miembros familiares
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                sliver: SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final member = members[index];
-                      return _buildFamilyMemberCard(member);
-                    },
-                    childCount: members.length,
-                  ),
-                ),
-              ),
-
-              const SliverToBoxAdapter(child: SizedBox(height: 90)),
-            ],
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddMemberModal(context, familyId),
-        backgroundColor: const Color(0xFF00E5FF),
-        foregroundColor: Colors.black,
-        icon: const Icon(Icons.add_to_queue),
-        label: const Text('Agregar Pantalla', style: TextStyle(fontWeight: FontWeight.bold)),
-      ),
-    );
-  }
-
-  Widget _buildFamilyMemberCard(UserModel member) {
-    final bool isHead = member.isFamilyAdmin;
-    final bool hasHw = member.registeredHardwareId != null && member.registeredHardwareId!.isNotEmpty;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF131A29),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isHead ? const Color(0xFFC77DFF).withOpacity(0.6) : Colors.white12,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          return Column(
             children: [
-              CircleAvatar(
-                backgroundColor: isHead ? const Color(0xFFC77DFF).withOpacity(0.2) : Colors.white10,
-                radius: 20,
-                child: Icon(
-                  isHead ? Icons.admin_panel_settings : Icons.tv,
-                  color: isHead ? const Color(0xFFC77DFF) : const Color(0xFF00E5FF),
+              Container(
+                margin: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isVipPlan
+                        ? [const Color(0xFF3B2D00), const Color(0xFF1A1500)]
+                        : [const Color(0xFF2E1065), const Color(0xFF160B30)],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isVipPlan ? const Color(0xFFFFD600).withOpacity(0.4) : const Color(0xFF8B5CF6).withOpacity(0.4),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          member.username,
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                        ),
-                        const SizedBox(width: 6),
-                        if (isHead)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFC77DFF).withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: const Color(0xFFC77DFF), width: 0.8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Pantallas en uso: $activeScreensCount / 5',
+                              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                             ),
-                            child: const Text('JEFE', style: TextStyle(color: Color(0xFFC77DFF), fontSize: 9, fontWeight: FontWeight.bold)),
-                          ),
-                        const SizedBox(width: 6),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Vence en: ${currentUser.daysRemaining} días (${currentUser.expirationDate.day}/${currentUser.expirationDate.month}/${currentUser.expirationDate.year})',
+                              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                            ),
+                          ],
+                        ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: member.isVip ? Colors.amber.withOpacity(0.2) : Colors.blueGrey.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(4),
+                            color: isVipPlan ? const Color(0xFFFFD600) : const Color(0xFF8B5CF6),
+                            borderRadius: BorderRadius.circular(20),
                           ),
                           child: Text(
-                            member.isVip ? 'VIP' : 'ESTÁNDAR',
-                            style: TextStyle(
-                              color: member.isVip ? Colors.amber : Colors.white70,
-                              fontSize: 9,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            isVipPlan ? 'FAMILIA VIP' : 'ESTÁNDAR',
+                            style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      member.deviceName ?? (isHead ? 'Dispositivo Administrador' : 'Dispositivo sin registrar'),
-                      style: const TextStyle(color: Colors.white60, fontSize: 12),
+                    const SizedBox(height: 14),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: LinearProgressIndicator(
+                        value: activeScreensCount / 5.0,
+                        minHeight: 8,
+                        backgroundColor: Colors.white12,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          isVipPlan ? const Color(0xFFFFD600) : const Color(0xFF8B5CF6),
+                        ),
+                      ),
                     ),
                   ],
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.copy, size: 16, color: Colors.white38),
-                tooltip: 'Copiar Usuario y Contraseña',
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: 'Usuario: ${member.username} | Clave: ${member.password}'));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Credenciales copiadas para ${member.username}'),
-                      duration: const Duration(seconds: 2),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'PANTALLAS VINCULADAS',
+                      style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1),
                     ),
-                  );
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Divider(color: Colors.white10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(hasHw ? Icons.lock : Icons.lock_open, size: 14, color: hasHw ? const Color(0xFF00E676) : Colors.orangeAccent),
-                  const SizedBox(width: 4),
-                  Text(
-                    hasHw ? 'Dispositivo Vinculado' : 'Pendiente de primer inicio',
-                    style: TextStyle(color: hasHw ? const Color(0xFF00E676) : Colors.orangeAccent, fontSize: 11),
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  if (hasHw)
-                    TextButton.icon(
-                      icon: const Icon(Icons.phonelink_erase, size: 14, color: Colors.orangeAccent),
-                      label: const Text('Reset HW', style: TextStyle(color: Colors.orangeAccent, fontSize: 11)),
-                      onPressed: () => _confirmResetHw(member),
-                    ),
-                  if (!isHead)
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
-                      tooltip: 'Eliminar pantalla para liberar cupo',
-                      onPressed: () => _confirmDeleteMember(member),
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _confirmResetHw(UserModel member) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF131A29),
-        title: const Text('¿Liberar Dispositivo?', style: TextStyle(color: Colors.white)),
-        content: Text(
-          'Esto permitirá que ${member.username} inicie sesión en un nuevo celular o televisor.',
-          style: const TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await AuthService.adminResetHardware(member.id);
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Dispositivo liberado exitosamente.')),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent, foregroundColor: Colors.black),
-            child: const Text('Liberar'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _confirmDeleteMember(UserModel member) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF131A29),
-        title: const Text('¿Eliminar Pantalla?', style: TextStyle(color: Colors.white)),
-        content: Text(
-          'Se eliminará a ${member.username} y se liberará 1 cupo para otra pantalla familiar.',
-          style: const TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await AuthService.deleteClientUser(member.id);
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Pantalla eliminada y cupo liberado.')),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddMemberModal(BuildContext context, String familyId) {
-    final userCtrl = TextEditingController();
-    final passCtrl = TextEditingController();
-    final nameCtrl = TextEditingController();
-    bool isVip = _currentUser?.isVip ?? false;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF101726),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.tv, color: Color(0xFF00E5FF)),
-                  SizedBox(width: 8),
-                  Text('Agregar Pantalla Familiar', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                ],
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: nameCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'Nombre del Dispositivo / Familiar (Ej: TV Habitación, Hijo)',
-                  labelStyle: const TextStyle(color: Colors.white60),
-                  filled: true,
-                  fillColor: const Color(0xFF131A29),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    if (activeScreensCount < 5)
+                      TextButton.icon(
+                        style: TextButton.styleFrom(foregroundColor: const Color(0xFFC4B5FD)),
+                        onPressed: () => _showAddMemberModal(context, currentUser, activeScreensCount),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Agregar Pantalla'),
+                      ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: userCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'Usuario para ingresar',
-                  labelStyle: const TextStyle(color: Colors.white60),
-                  filled: true,
-                  fillColor: const Color(0xFF131A29),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: passCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'Contraseña',
-                  labelStyle: const TextStyle(color: Colors.white60),
-                  filled: true,
-                  fillColor: const Color(0xFF131A29),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Acceso VIP a esta pantalla', style: TextStyle(color: Colors.white, fontSize: 14)),
-                subtitle: const Text('Canales premium, 4K y películas/series', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                value: isVip,
-                activeColor: Colors.amber,
-                onChanged: (val) => setModalState(() => isVip = val),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: () async {
-                    if (userCtrl.text.trim().isEmpty || passCtrl.text.trim().isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Por favor completa usuario y contraseña.')),
-                      );
-                      return;
-                    }
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  itemCount: members.length,
+                  itemBuilder: (ctx, idx) {
+                    final member = members[idx];
+                    final isHeadOfFamily = member.isFamilyAdmin;
 
-                    try {
-                      await AuthService.addFamilyMember(
-                        familyId: familyId,
-                        username: userCtrl.text.trim(),
-                        password: passCtrl.text.trim(),
-                        memberName: nameCtrl.text.trim().isEmpty ? 'Dispositivo Familiar' : nameCtrl.text.trim(),
-                        overrideVip: isVip,
-                      );
-                      if (context.mounted) {
-                        Navigator.pop(ctx);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('¡Pantalla agregada exitosamente!')),
-                        );
-                      }
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-                        );
-                      }
-                    }
+                    return Card(
+                      color: const Color(0xFF161B26),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(
+                          color: isHeadOfFamily ? const Color(0xFF8B5CF6).withOpacity(0.5) : Colors.white10,
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  isHeadOfFamily ? Icons.star_rounded : Icons.tv_rounded,
+                                  color: isHeadOfFamily ? const Color(0xFFFFD600) : const Color(0xFF8B5CF6),
+                                  size: 24,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        member.deviceName ?? member.username,
+                                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                                      ),
+                                      Text(
+                                        'Usuario: ${member.username} | Clave: ${member.password}',
+                                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                if (member.isVip)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFD600).withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Text('VIP', style: TextStyle(color: Color(0xFFFFD600), fontSize: 11, fontWeight: FontWeight.bold)),
+                                  ),
+                              ],
+                            ),
+                            const Divider(color: Colors.white10, height: 24),
+                            Row(
+                              children: [
+                                Icon(
+                                  member.registeredHardwareId != null ? Icons.lock : Icons.lock_open,
+                                  size: 14,
+                                  color: member.registeredHardwareId != null ? Colors.greenAccent : Colors.amberAccent,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    member.registeredHardwareId != null
+                                        ? 'Vinculado a: ${member.registeredHardwareId}'
+                                        : 'Sin vincular (Se asociará al primer inicio)',
+                                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                if (member.registeredHardwareId != null)
+                                  OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.amberAccent,
+                                      side: const BorderSide(color: Colors.amberAccent),
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    ),
+                                    onPressed: () async {
+                                      await AuthService.adminResetHardware(member.id);
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Dispositivo desvinculado. Puede conectarse en otro TV.')),
+                                      );
+                                    },
+                                    icon: const Icon(Icons.refresh, size: 14),
+                                    label: const Text('Cambiar TV / Liberar', style: TextStyle(fontSize: 11)),
+                                  ),
+                                if (!isHeadOfFamily) ...[
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    tooltip: 'Eliminar pantalla',
+                                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                                    onPressed: () async {
+                                      final confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (dCtx) => AlertDialog(
+                                          backgroundColor: const Color(0xFF161B26),
+                                          title: const Text('¿Eliminar pantalla?', style: TextStyle(color: Colors.white)),
+                                          content: Text('Se revocará el acceso al usuario "${member.username}".', style: const TextStyle(color: Colors.white70)),
+                                          actions: [
+                                            TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancelar')),
+                                            TextButton(onPressed: () => Navigator.pop(dCtx, true), child: const Text('Eliminar', style: TextStyle(color: Colors.redAccent))),
+                                          ],
+                                        ),
+                                      );
+                                      if (confirm == true) {
+                                        await AuthService.deleteClientUser(member.id);
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
                   },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00E5FF),
-                    foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  child: const Text('Guardar y Activar Pantalla', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 ),
               ),
             ],
-          ),
-        ),
+          );
+        },
+      ),
+      floatingActionButton: StreamBuilder<List<UserModel>>(
+        stream: AuthService.getFamilyMembersStream(familyId),
+        builder: (context, snapshot) {
+          final count = snapshot.data?.length ?? 0;
+          if (count >= 5) return const SizedBox.shrink();
+          return FloatingActionButton.extended(
+            backgroundColor: const Color(0xFF8B5CF6),
+            onPressed: () => _showAddMemberModal(context, currentUser, count),
+            icon: const Icon(Icons.add, color: Colors.white),
+            label: const Text('Agregar Pantalla', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          );
+        },
       ),
     );
   }

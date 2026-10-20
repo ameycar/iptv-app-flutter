@@ -13,6 +13,7 @@ enum AuthStatus {
   accountDisabled,
   subscriptionExpired,
   hardwareMismatch,
+  adminDeviceUnauthorized,
   error,
 }
 
@@ -33,8 +34,12 @@ class AuthResponse {
 class AuthService {
   static const String _kHardwareIdKey = 'ameycaiptv_hardware_id_v2';
   static const String _kSessionUserKey = 'ameycaiptv_current_user_id';
-  static const String _kLocalUsersDbKey = 'ameycaiptv_local_users_db_v1';
+  static const String _kLocalUsersDbKey = 'ameycaiptv_local_users_db_v2';
+  static const String _kMasterAdminHwKey = 'ameycaiptv_master_admin_hw_id';
   static const String _usersCollection = 'users';
+
+  // Clave maestra de recuperación para autorizar un nuevo dispositivo del dueño
+  static const String masterRecoveryKey = 'AMEYCAR-VIP-2026';
 
   static UserModel? _currentUser;
   static String? _cachedHardwareId;
@@ -46,8 +51,10 @@ class AuthService {
   static UserModel? get currentUser => _currentUser;
   static bool get isLoggedIn => _currentUser != null;
   static bool get isAdmin => _currentUser?.isAdmin ?? false;
+  static bool get isSuperAdmin => _currentUser?.isSuperAdmin ?? false;
+  static bool get isFamilyAdmin => _currentUser?.isFamilyGroupAdmin ?? false;
 
-  /// Verifica de forma 100% segura si Firebase está conectado y configurado con google-services.json
+  /// Verifica si Firebase Firestore está inicializado
   static bool get isFirebaseAvailable {
     try {
       return Firebase.apps.isNotEmpty;
@@ -56,436 +63,451 @@ class AuthService {
     }
   }
 
-  /// Obtiene o genera el Hardware ID único y blindado del dispositivo actual
+  /// Obtiene o genera el Hardware ID único y permanente de este dispositivo
   static Future<String> getDeviceHardwareId() async {
     if (_cachedHardwareId != null && _cachedHardwareId!.isNotEmpty) {
       return _cachedHardwareId!;
     }
-
     final prefs = await SharedPreferences.getInstance();
-    String? storedId = prefs.getString(_kHardwareIdKey);
-
-    if (storedId == null || storedId.isEmpty) {
-      final random = Random.secure();
-      final values = List<int>.generate(16, (i) => random.nextInt(256));
-      final hex = values.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-      final timestamp = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
-      storedId = 'HW-${timestamp.substring(max(0, timestamp.length - 6))}-${hex.substring(0, 12).toUpperCase()}';
-      await prefs.setString(_kHardwareIdKey, storedId);
+    String? hwId = prefs.getString(_kHardwareIdKey);
+    if (hwId == null || hwId.isEmpty) {
+      final rand = Random();
+      final partA = rand.nextInt(900000) + 100000;
+      final partB = rand.nextInt(900000) + 100000;
+      hwId = 'AMEYCAR-HW-$partA-$partB';
+      await prefs.setString(_kHardwareIdKey, hwId);
     }
-
-    _cachedHardwareId = storedId;
-    return storedId;
+    _cachedHardwareId = hwId;
+    return hwId;
   }
 
-  /// Inicializa la cuenta Administrador por defecto tanto en Cloud como en Local
+  /// Verifica si este dispositivo físico es el teléfono autorizado del Dueño (SuperAdmin)
+  static Future<bool> isMasterAdminDeviceAuthorized() async {
+    final prefs = await SharedPreferences.getInstance();
+    final registeredMasterHw = prefs.getString(_kMasterAdminHwKey);
+    final currentHw = await getDeviceHardwareId();
+
+    if (registeredMasterHw == null || registeredMasterHw.isEmpty) {
+      // Primer inicio del Administrador: este celular se convierte en el Dispositivo Maestro
+      await prefs.setString(_kMasterAdminHwKey, currentHw);
+      return true;
+    }
+    return registeredMasterHw == currentHw;
+  }
+
+  /// Autoriza un nuevo teléfono maestro usando la clave maestra de recuperación
+  static Future<bool> authorizeMasterAdminDevice(String recoveryKey) async {
+    if (recoveryKey.trim() == masterRecoveryKey) {
+      final prefs = await SharedPreferences.getInstance();
+      final currentHw = await getDeviceHardwareId();
+      await prefs.setString(_kMasterAdminHwKey, currentHw);
+      return true;
+    }
+    return false;
+  }
+
+  /// Inicializa la cuenta admin por defecto si es el primer inicio
   static Future<void> initializeAdminAccount() async {
     try {
+      final currentHw = await getDeviceHardwareId();
       if (isFirebaseAvailable) {
-        final query = await FirebaseFirestore.instance
+        final doc = await FirebaseFirestore.instance
             .collection(_usersCollection)
-            .where('role', isEqualTo: 'admin')
-            .limit(1)
+            .doc('admin')
             .get();
-
-        if (query.docs.isEmpty) {
-          final adminDoc = FirebaseFirestore.instance.collection(_usersCollection).doc();
+        if (!doc.exists) {
           final defaultAdmin = UserModel(
-            id: adminDoc.id,
+            id: 'admin',
             username: 'admin',
-            password: 'admin2026',
+            password: 'adminpassword123',
             role: 'admin',
             isActive: true,
             isVip: true,
             expirationDate: DateTime.now().add(const Duration(days: 3650)),
-            deviceName: 'Admin Master Console',
-            maxScreens: 5,
+            deviceName: 'Consola Administrador Principal',
+            registeredHardwareId: currentHw,
+            createdAt: DateTime.now(),
           );
-          await adminDoc.set(defaultAdmin.toMap());
-          debugPrint('✅ [AuthService Cloud] Usuario Admin creado: admin / admin2026');
+          await FirebaseFirestore.instance
+              .collection(_usersCollection)
+              .doc('admin')
+              .set(defaultAdmin.toMap());
         }
       } else {
-        // Modo Local: Asegurar usuario admin en base de datos local
         final localUsers = await _getLocalUsers();
-        final hasAdmin = localUsers.any((u) => u.isAdmin);
-        if (!hasAdmin) {
+        if (!localUsers.any((u) => u.username.toLowerCase() == 'admin')) {
           final defaultAdmin = UserModel(
-            id: 'admin_master_001',
+            id: 'admin',
             username: 'admin',
-            password: 'admin2026',
+            password: 'adminpassword123',
             role: 'admin',
             isActive: true,
             isVip: true,
             expirationDate: DateTime.now().add(const Duration(days: 3650)),
-            deviceName: 'Admin Master Console',
-            maxScreens: 5,
+            deviceName: 'Consola Administrador Principal',
+            registeredHardwareId: currentHw,
+            createdAt: DateTime.now(),
           );
           localUsers.add(defaultAdmin);
           await _saveLocalUsers(localUsers);
-          debugPrint('✅ [AuthService Local] Usuario Admin creado: admin / admin2026');
         }
       }
     } catch (e) {
-      debugPrint('⚠️ [AuthService] Error inicializando admin: $e');
+      debugPrint('Error inicializando cuenta admin: $e');
     }
   }
 
-  /// Inicia sesión validando credenciales, estado, vencimiento y candado de hardware
-  static Future<AuthResponse> login({
-    required String username,
-    required String password,
-  }) async {
+  /// Inicio de Sesión seguro con control de Hardware y Soporte Familiar
+  static Future<AuthResponse> login(String username, String password) async {
+    final cleanUser = username.trim().toLowerCase();
+    final cleanPass = password.trim();
+    final currentHw = await getDeviceHardwareId();
+
     try {
-      final cleanUsername = username.trim().toLowerCase();
-      final cleanPassword = password.trim();
+      UserModel? matchedUser;
 
-      if (cleanUsername.isEmpty || cleanPassword.isEmpty) {
-        return AuthResponse(
-          status: AuthStatus.invalidCredentials,
-          message: 'Por favor, ingresa tu usuario y contraseña.',
-        );
-      }
-
-      final hardwareId = await getDeviceHardwareId();
-
-      // ==========================================
-      // CASO A: MODO CLOUD (FIREBASE DISPONIBLE)
-      // ==========================================
       if (isFirebaseAvailable) {
-        final snapshot = await FirebaseFirestore.instance
+        final query = await FirebaseFirestore.instance
             .collection(_usersCollection)
-            .where('username', isEqualTo: cleanUsername)
+            .where('username', isEqualTo: cleanUser)
             .limit(1)
             .get();
 
-        if (snapshot.docs.isEmpty) {
-          // Si es el admin y aún no existe en Firebase, crearlo al vuelo
-          if (cleanUsername == 'admin' && (cleanPassword == 'admin2026' || cleanPassword == 'admin1234')) {
-            await initializeAdminAccount();
-            return login(username: username, password: password);
+        if (query.docs.isNotEmpty) {
+          matchedUser = UserModel.fromMap(
+            query.docs.first.id,
+            query.docs.first.data(),
+          );
+        }
+      } else {
+        final localUsers = await _getLocalUsers();
+        for (final u in localUsers) {
+          if (u.username.toLowerCase() == cleanUser) {
+            matchedUser = u;
+            break;
           }
-          return AuthResponse(
-            status: AuthStatus.invalidCredentials,
-            message: 'El usuario no existe o las credenciales son incorrectas.',
-          );
-        }
-
-        final doc = snapshot.docs.first;
-        final user = UserModel.fromMap(doc.id, doc.data());
-
-        // Validar contraseña
-        if (user.password != cleanPassword) {
-          return AuthResponse(
-            status: AuthStatus.invalidCredentials,
-            message: 'Contraseña incorrecta. Verifica e intenta de nuevo.',
-          );
-        }
-
-        if (!user.isActive) {
-          return AuthResponse(
-            status: AuthStatus.accountDisabled,
-            user: user,
-            message: 'Tu cuenta ha sido desactivada. Contacta al administrador.',
-          );
-        }
-
-        if (!user.isAdmin && user.isExpired) {
-          return AuthResponse(
-            status: AuthStatus.subscriptionExpired,
-            user: user,
-            message: 'Tu suscripción venció el ${_formatDate(user.expirationDate)}. Solicita tu renovación.',
-          );
-        }
-
-        // Blindaje de hardware
-        if (!user.isAdmin) {
-          if (user.registeredHardwareId == null || user.registeredHardwareId!.isEmpty) {
-            await FirebaseFirestore.instance.collection(_usersCollection).doc(user.id).update({
-              'registeredHardwareId': hardwareId,
-              'deviceName': 'Dispositivo ${hardwareId.substring(max(0, hardwareId.length - 6))}',
-              'hardwareResetRequested': false,
-              'lastActiveAt': FieldValue.serverTimestamp(),
-            });
-            _currentUser = user.copyWith(registeredHardwareId: hardwareId);
-            await _saveSession(user.id);
-            return AuthResponse(
-              status: AuthStatus.success,
-              user: _currentUser,
-              message: 'Bienvenido. Dispositivo vinculado exitosamente.',
-            );
-          }
-
-          if (user.registeredHardwareId != hardwareId) {
-            return AuthResponse(
-              status: AuthStatus.hardwareMismatch,
-              user: user,
-              message: 'Esta cuenta ya está vinculada a otro equipo (${user.deviceName ?? "Equipo Registrado"}). No se permite compartir cuentas.',
-            );
-          }
-        }
-
-        await FirebaseFirestore.instance.collection(_usersCollection).doc(user.id).update({
-          'lastActiveAt': FieldValue.serverTimestamp(),
-        });
-
-        _currentUser = user;
-        await _saveSession(user.id);
-        return AuthResponse(status: AuthStatus.success, user: user, message: 'Sesión iniciada correctamente.');
-      }
-
-      // ==========================================
-      // CASO B: MODO LOCAL (SIN FIREBASE O MODO OFFLINE)
-      // ==========================================
-      // Super Admin maestro incorporado (acepta admin2026 y admin1234)
-      if (cleanUsername == 'admin') {
-        if (cleanPassword == 'admin2026' || cleanPassword == 'admin1234') {
-          final adminUser = UserModel(
-            id: 'admin_master_001',
-            username: 'admin',
-            password: cleanPassword,
-            role: 'admin',
-            isActive: true,
-            isVip: true,
-            expirationDate: DateTime.now().add(const Duration(days: 3650)),
-            deviceName: 'Admin Master Console',
-            maxScreens: 5,
-          );
-          _currentUser = adminUser;
-          await _saveSession(adminUser.id);
-          await _saveLocalUser(adminUser);
-          return AuthResponse(
-            status: AuthStatus.success,
-            user: adminUser,
-            message: 'Bienvenido Administrador (Modo Seguro Activo).',
-          );
-        } else {
-          return AuthResponse(
-            status: AuthStatus.invalidCredentials,
-            message: 'Contraseña de administrador incorrecta.',
-          );
         }
       }
 
-      // Buscar en base de datos local
-      final localUsers = await _getLocalUsers();
-      final matchIdx = localUsers.indexWhere((u) => u.username.toLowerCase() == cleanUsername);
-
-      if (matchIdx == -1) {
+      if (matchedUser == null) {
         return AuthResponse(
           status: AuthStatus.invalidCredentials,
-          message: 'El usuario no existe o las credenciales son incorrectas.',
+          message: 'Usuario no encontrado. Verifica con tu proveedor.',
         );
       }
 
-      UserModel user = localUsers[matchIdx];
-
-      if (user.password != cleanPassword) {
+      if (matchedUser.password != cleanPass) {
         return AuthResponse(
           status: AuthStatus.invalidCredentials,
-          message: 'Contraseña incorrecta. Verifica e intenta de nuevo.',
+          message: 'Contraseña incorrecta.',
         );
       }
 
-      if (!user.isActive) {
+      // Si es SuperAdmin, verificar blindaje de dispositivo maestro
+      if (matchedUser.isAdmin) {
+        final isMasterPhone = await isMasterAdminDeviceAuthorized();
+        if (!isMasterPhone) {
+          return AuthResponse(
+            status: AuthStatus.adminDeviceUnauthorized,
+            user: matchedUser,
+            message: 'Acceso Denegado: Este dispositivo no está autorizado para abrir el Panel Maestro.',
+          );
+        }
+      }
+
+      if (!matchedUser.isActive) {
         return AuthResponse(
           status: AuthStatus.accountDisabled,
-          user: user,
-          message: 'Tu cuenta ha sido desactivada. Contacta al administrador.',
+          user: matchedUser,
+          message: 'Esta cuenta ha sido pausada o desactivada.',
         );
       }
 
-      if (!user.isAdmin && user.isExpired) {
+      if (matchedUser.isExpired) {
         return AuthResponse(
           status: AuthStatus.subscriptionExpired,
-          user: user,
-          message: 'Tu suscripción venció el ${_formatDate(user.expirationDate)}. Solicita tu renovación.',
+          user: matchedUser,
+          message: 'Tu suscripción ha vencido. Contacta a soporte para renovar.',
         );
       }
 
-      // Blindaje de hardware local
-      if (!user.isAdmin) {
-        if (user.registeredHardwareId == null || user.registeredHardwareId!.isEmpty) {
-          user = user.copyWith(
-            registeredHardwareId: hardwareId,
-            deviceName: 'Dispositivo ${hardwareId.substring(max(0, hardwareId.length - 6))}',
-            hardwareResetRequested: false,
+      // Validación de Hardware ID
+      if (!matchedUser.isAdmin) {
+        if (matchedUser.registeredHardwareId == null ||
+            matchedUser.registeredHardwareId!.isEmpty) {
+          // Primer login: Se vincula automáticamente a este dispositivo
+          await updateClientUser(matchedUser.id, {
+            'registeredHardwareId': currentHw,
+            'lastActiveAt': DateTime.now().toIso8601String(),
+          });
+          matchedUser = matchedUser.copyWith(
+            registeredHardwareId: currentHw,
+            lastActiveAt: DateTime.now(),
           );
-          localUsers[matchIdx] = user;
-          await _saveLocalUsers(localUsers);
-
-          _currentUser = user;
-          await _saveSession(user.id);
-          return AuthResponse(
-            status: AuthStatus.success,
-            user: _currentUser,
-            message: 'Bienvenido. Dispositivo vinculado exitosamente.',
-          );
-        }
-
-        if (user.registeredHardwareId != hardwareId) {
+        } else if (matchedUser.registeredHardwareId != currentHw) {
           return AuthResponse(
             status: AuthStatus.hardwareMismatch,
-            user: user,
-            message: 'Esta cuenta ya está vinculada a otro equipo (${user.deviceName ?? "Equipo Registrado"}). No se permite compartir cuentas.',
+            user: matchedUser,
+            message: 'Esta cuenta ya está vinculada a otro dispositivo.',
           );
         }
       }
 
-      _currentUser = user;
-      await _saveSession(user.id);
+      _currentUser = matchedUser;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kSessionUserKey, matchedUser.id);
+
       return AuthResponse(
         status: AuthStatus.success,
-        user: user,
-        message: 'Sesión iniciada correctamente.',
+        user: matchedUser,
+        message: 'Bienvenido ${matchedUser.username}',
       );
     } catch (e) {
-      debugPrint('❌ [AuthService] Error en login: $e');
       return AuthResponse(
         status: AuthStatus.error,
-        message: 'Error al iniciar sesión: $e',
+        message: 'Error al conectar con el servidor: $e',
       );
     }
   }
 
-  /// ⚡ LIBERACIÓN EXPRESS 1: El usuario solicita cambio de equipo con 1 toque
-  static Future<bool> requestHardwareReset(String userId) async {
-    try {
-      if (isFirebaseAvailable) {
-        await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).update({
-          'hardwareResetRequested': true,
-          'requestedAt': FieldValue.serverTimestamp(),
-        });
-        return true;
-      } else {
-        final users = await _getLocalUsers();
-        final idx = users.indexWhere((u) => u.id == userId);
-        if (idx != -1) {
-          users[idx] = users[idx].copyWith(hardwareResetRequested: true);
-          await _saveLocalUsers(users);
-          return true;
-        }
-        return false;
-      }
-    } catch (e) {
-      debugPrint('Error solicitando reset de hardware: $e');
-      return false;
-    }
-  }
+  // ============================================================
+  // GESTIÓN DE GRUPOS FAMILIARES (HASTA 5 DISPOSITIVOS)
+  // ============================================================
 
-  /// ⚡ LIBERACIÓN EXPRESS 2: El Administrador libera el hardware con 1 toque
-  static Future<bool> adminResetHardware(String userId) async {
-    try {
-      if (isFirebaseAvailable) {
-        await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).update({
-          'registeredHardwareId': null,
-          'deviceName': null,
-          'hardwareResetRequested': false,
-          'hardwareResetToken': null,
-        });
-        return true;
-      } else {
-        final users = await _getLocalUsers();
-        final idx = users.indexWhere((u) => u.id == userId);
-        if (idx != -1) {
-          users[idx] = users[idx].copyWith(
-            registeredHardwareId: null,
-            deviceName: null,
-            hardwareResetRequested: false,
-            hardwareResetToken: null,
-          );
-          await _saveLocalUsers(users);
-          return true;
-        }
-        return false;
-      }
-    } catch (e) {
-      debugPrint('Error reseteando hardware: $e');
-      return false;
-    }
-  }
-
-  /// ⚡ LIBERACIÓN EXPRESS 3: El Administrador genera un PIN de 4 dígitos para WhatsApp
-  static Future<String?> adminGenerateExpressPin(String userId) async {
-    try {
-      final random = Random();
-      final pin = (1000 + random.nextInt(9000)).toString();
-
-      if (isFirebaseAvailable) {
-        await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).update({
-          'hardwareResetToken': pin,
-        });
-        return pin;
-      } else {
-        final users = await _getLocalUsers();
-        final idx = users.indexWhere((u) => u.id == userId);
-        if (idx != -1) {
-          users[idx] = users[idx].copyWith(hardwareResetToken: pin);
-          await _saveLocalUsers(users);
-          return pin;
-        }
-        return null;
-      }
-    } catch (e) {
-      debugPrint('Error generando PIN express: $e');
-      return null;
-    }
-  }
-
-  /// ⚡ LIBERACIÓN EXPRESS 4: El usuario ingresa el PIN de 4 dígitos y se vincula al instante
-  static Future<AuthResponse> unlockWithExpressPin({
-    required String userId,
-    required String pin,
+  /// Crea un nuevo Grupo Familiar completo con su Administrador Familiar
+  static Future<void> createFamilyGroup({
+    required String familyName,
+    required String adminUsername,
+    required String adminPassword,
+    required bool isVip,
+    required DateTime expirationDate,
   }) async {
-    try {
-      final hardwareId = await getDeviceHardwareId();
+    final familyId = 'FAM-${familyName.trim().toUpperCase().replaceAll(' ', '_')}-${Random().nextInt(9000) + 1000}';
+    final familyPlan = isVip ? 'vip' : 'standard';
 
-      if (isFirebaseAvailable) {
-        final doc = await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).get();
-        if (!doc.exists) {
-          return AuthResponse(status: AuthStatus.error, message: 'Usuario no encontrado.');
-        }
+    final familyAdminUser = UserModel(
+      id: 'usr_${DateTime.now().millisecondsSinceEpoch}_admin',
+      username: adminUsername.trim().toLowerCase(),
+      password: adminPassword.trim(),
+      role: 'family_admin',
+      isActive: true,
+      isVip: isVip,
+      expirationDate: expirationDate,
+      deviceName: 'Consola Familiar ($adminUsername)',
+      maxScreens: 5,
+      familyId: familyId,
+      isFamilyAdmin: true,
+      familyPlan: familyPlan,
+      createdAt: DateTime.now(),
+    );
 
-        final user = UserModel.fromMap(doc.id, doc.data()!);
-        if (user.hardwareResetToken != pin.trim()) {
-          return AuthResponse(status: AuthStatus.error, message: 'PIN express incorrecto o ya expirado.');
-        }
+    await createClientUser(familyAdminUser);
+  }
 
-        await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).update({
-          'registeredHardwareId': hardwareId,
-          'deviceName': 'Equipo Vinculado Express',
-          'hardwareResetRequested': false,
-          'hardwareResetToken': null,
-          'lastActiveAt': FieldValue.serverTimestamp(),
-        });
+  /// Obtiene los miembros de una familia específica
+  static Future<List<UserModel>> getFamilyMembers(String familyId) async {
+    if (isFirebaseAvailable) {
+      final snap = await FirebaseFirestore.instance
+          .collection(_usersCollection)
+          .where('familyId', isEqualTo: familyId)
+          .get();
+      return snap.docs.map((d) => UserModel.fromMap(d.id, d.data())).toList();
+    } else {
+      final all = await _getLocalUsers();
+      return all.where((u) => u.familyId == familyId).toList();
+    }
+  }
 
-        _currentUser = user.copyWith(registeredHardwareId: hardwareId);
-        await _saveSession(user.id);
-        return AuthResponse(status: AuthStatus.success, user: _currentUser, message: '¡Hardware desbloqueado!');
-      } else {
-        final users = await _getLocalUsers();
-        final idx = users.indexWhere((u) => u.id == userId);
-        if (idx == -1) return AuthResponse(status: AuthStatus.error, message: 'Usuario no encontrado.');
+  /// Stream reactivo de miembros de una familia para el Panel Familiar
+  static Stream<List<UserModel>> getFamilyMembersStream(String familyId) {
+    if (isFirebaseAvailable) {
+      return FirebaseFirestore.instance
+          .collection(_usersCollection)
+          .where('familyId', isEqualTo: familyId)
+          .snapshots()
+          .map((snap) => snap.docs.map((d) => UserModel.fromMap(d.id, d.data())).toList());
+    } else {
+      Future.microtask(() async {
+        final list = await getFamilyMembers(familyId);
+        _localUsersStreamController.add(list);
+      });
+      return _localUsersStreamController.stream.map((list) => list.where((u) => u.familyId == familyId).toList());
+    }
+  }
 
-        UserModel user = users[idx];
-        if (user.hardwareResetToken != pin.trim()) {
-          return AuthResponse(status: AuthStatus.error, message: 'PIN express incorrecto.');
-        }
+  /// Agrega un sub-usuario al grupo familiar (máximo 5 miembros en total)
+  static Future<bool> addFamilyMember({
+    required String familyId,
+    required String username,
+    required String password,
+    required String memberName,
+    bool? overrideVip,
+  }) async {
+    final currentMembers = await getFamilyMembers(familyId);
+    if (currentMembers.length >= 5) {
+      throw Exception('Límite alcanzado: Este grupo familiar ya tiene el cupo máximo de 5 pantallas.');
+    }
 
-        user = user.copyWith(
-          registeredHardwareId: hardwareId,
-          deviceName: 'Equipo Vinculado Express',
-          hardwareResetRequested: false,
-          hardwareResetToken: null,
-        );
-        users[idx] = user;
-        await _saveLocalUsers(users);
+    final familyAdmin = currentMembers.firstWhere(
+      (u) => u.isFamilyAdmin,
+      orElse: () => currentMembers.first,
+    );
 
-        _currentUser = user;
-        await _saveSession(user.id);
-        return AuthResponse(status: AuthStatus.success, user: _currentUser, message: '¡Hardware desbloqueado!');
+    final bool isMemberVip = overrideVip ?? familyAdmin.isVip;
+
+    final newMember = UserModel(
+      id: 'usr_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
+      username: username.trim().toLowerCase(),
+      password: password.trim(),
+      role: 'user',
+      isActive: true,
+      isVip: isMemberVip,
+      expirationDate: familyAdmin.expirationDate,
+      deviceName: memberName.trim(),
+      maxScreens: 1,
+      familyId: familyId,
+      isFamilyAdmin: false,
+      familyPlan: familyAdmin.familyPlan,
+      familyAdminUsername: familyAdmin.username,
+      createdAt: DateTime.now(),
+    );
+
+    await createClientUser(newMember);
+    return true;
+  }
+
+  /// El Administrador de Familia puede cambiar si una pantalla es VIP o Estándar
+  static Future<void> toggleMemberVipStatus(String memberId, bool newVip) async {
+    await updateClientUser(memberId, {'isVip': newVip});
+  }
+
+  /// Renueva o modifica la fecha de vencimiento a TODA la familia completa
+  static Future<void> renewFamilyGroup(String familyId, int additionalDays) async {
+    final members = await getFamilyMembers(familyId);
+    final now = DateTime.now();
+    for (final member in members) {
+      final baseDate = member.expirationDate.isAfter(now) ? member.expirationDate : now;
+      final newExp = baseDate.add(Duration(days: additionalDays));
+      await updateClientUser(member.id, {'expirationDate': newExp.toIso8601String()});
+    }
+  }
+
+  /// Activa o pausa a TODA la familia completa de un solo toque
+  static Future<void> toggleFamilyGroupActive(String familyId, bool active) async {
+    final members = await getFamilyMembers(familyId);
+    for (final member in members) {
+      await updateClientUser(member.id, {'isActive': active});
+    }
+  }
+
+  // ============================================================
+  // OPERACIONES CRUD DE USUARIOS (CLOUD & LOCAL)
+  // ============================================================
+
+  /// Crea un nuevo usuario cliente
+  static Future<void> createClientUser(UserModel newUser) async {
+    if (isFirebaseAvailable) {
+      await FirebaseFirestore.instance
+          .collection(_usersCollection)
+          .doc(newUser.id)
+          .set(newUser.toMap());
+    } else {
+      final local = await _getLocalUsers();
+      local.removeWhere((u) => u.id == newUser.id || u.username == newUser.username);
+      local.add(newUser);
+      await _saveLocalUsers(local);
+    }
+  }
+
+  /// Actualiza campos de un usuario
+  static Future<void> updateClientUser(String userId, Map<String, dynamic> updates) async {
+    if (isFirebaseAvailable) {
+      await FirebaseFirestore.instance
+          .collection(_usersCollection)
+          .doc(userId)
+          .update(updates);
+    } else {
+      final local = await _getLocalUsers();
+      final idx = local.indexWhere((u) => u.id == userId);
+      if (idx != -1) {
+        final map = local[idx].toMap();
+        map.addAll(updates);
+        local[idx] = UserModel.fromMap(userId, map);
+        await _saveLocalUsers(local);
       }
-    } catch (e) {
-      return AuthResponse(status: AuthStatus.error, message: 'Error al canjear PIN: $e');
+    }
+  }
+
+  /// Elimina un usuario cliente
+  static Future<void> deleteClientUser(String userId) async {
+    if (isFirebaseAvailable) {
+      await FirebaseFirestore.instance
+          .collection(_usersCollection)
+          .doc(userId)
+          .delete();
+    } else {
+      final local = await _getLocalUsers();
+      local.removeWhere((u) => u.id == userId);
+      await _saveLocalUsers(local);
+    }
+  }
+
+  /// Genera un PIN express de 4 dígitos para desbloqueo rápido de hardware
+  static Future<String> adminGenerateExpressPin(String userId) async {
+    final pin = (Random().nextInt(9000) + 1000).toString();
+    await updateClientUser(userId, {
+      'hardwareResetToken': pin,
+      'hardwareResetRequested': true,
+    });
+    return pin;
+  }
+
+  /// Resetea el hardware de un usuario (para cambio de televisor o teléfono)
+  static Future<void> adminResetHardware(String userId) async {
+    await updateClientUser(userId, {
+      'registeredHardwareId': null,
+      'hardwareResetRequested': false,
+      'hardwareResetToken': null,
+    });
+  }
+
+  /// El cliente solicita cambio de dispositivo desde la pantalla de bloqueo
+  static Future<void> requestHardwareReset(String userId) async {
+    await updateClientUser(userId, {'hardwareResetRequested': true});
+  }
+
+  /// Desbloqueo directo con PIN de 4 dígitos proporcionado por el soporte
+  static Future<bool> unlockWithExpressPin(String userId, String inputPin) async {
+    final user = await getUserById(userId);
+    if (user != null &&
+        user.hardwareResetToken != null &&
+        user.hardwareResetToken == inputPin.trim()) {
+      final currentHw = await getDeviceHardwareId();
+      await updateClientUser(userId, {
+        'registeredHardwareId': currentHw,
+        'hardwareResetRequested': false,
+        'hardwareResetToken': null,
+      });
+      return true;
+    }
+    return false;
+  }
+
+  /// Obtiene un usuario por su ID
+  static Future<UserModel?> getUserById(String userId) async {
+    if (isFirebaseAvailable) {
+      final doc = await FirebaseFirestore.instance
+          .collection(_usersCollection)
+          .doc(userId)
+          .get();
+      if (doc.exists) {
+        return UserModel.fromMap(doc.id, doc.data()!);
+      }
+      return null;
+    } else {
+      final local = await _getLocalUsers();
+      final matches = local.where((u) => u.id == userId);
+      return matches.isNotEmpty ? matches.first : null;
     }
   }
 
@@ -513,7 +535,6 @@ class AuthService {
           .snapshots()
           .map((snap) => snap.docs.map((d) => UserModel.fromMap(d.id, d.data())).toList());
     } else {
-      // Emitir estado local inicial y cambios futuros
       Future.microtask(() async {
         final list = await _getLocalUsers();
         _localUsersStreamController.add(list);
@@ -522,145 +543,59 @@ class AuthService {
     }
   }
 
-  /// Crea un nuevo cliente en el Panel Admin (Cloud o Local)
-  static Future<void> createClientUser(UserModel newUser) async {
-    if (isFirebaseAvailable) {
-      await FirebaseFirestore.instance.collection(_usersCollection).doc(newUser.id).set(newUser.toMap());
-    } else {
-      final list = await _getLocalUsers();
-      list.add(newUser);
-      await _saveLocalUsers(list);
-    }
-  }
-
-  /// Elimina un cliente en el Panel Admin (Cloud o Local)
-  static Future<void> deleteClientUser(String userId) async {
-    if (isFirebaseAvailable) {
-      await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).delete();
-    } else {
-      final list = await _getLocalUsers();
-      list.removeWhere((u) => u.id == userId);
-      await _saveLocalUsers(list);
-    }
-  }
-
-  /// Actualiza un cliente en el Panel Admin (Cloud o Local)
-  static Future<void> updateClientUser(String userId, Map<String, dynamic> updates) async {
-    if (isFirebaseAvailable) {
-      await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).update(updates);
-    } else {
-      final list = await _getLocalUsers();
-      final idx = list.indexWhere((u) => u.id == userId);
-      if (idx != -1) {
-        final currentMap = list[idx].toMap();
-        currentMap.addAll(updates);
-        list[idx] = UserModel.fromMap(userId, currentMap);
-        await _saveLocalUsers(list);
-      }
-    }
-  }
-
-  /// Guarda la sesión en preferencias locales
-  static Future<void> _saveSession(String userId) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kSessionUserKey, userId);
-  }
-
-  /// Recupera la sesión activa al abrir la app
-  static Future<UserModel?> checkAutoLogin() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString(_kSessionUserKey);
-      if (userId == null) return null;
-
-      final hardwareId = await getDeviceHardwareId();
-
-      if (isFirebaseAvailable) {
-        final doc = await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).get();
-        if (!doc.exists) return null;
-
-        final user = UserModel.fromMap(doc.id, doc.data()!);
-        if (!user.isActive || (!user.isAdmin && user.isExpired)) {
-          await logout();
-          return null;
-        }
-
-        if (!user.isAdmin && user.registeredHardwareId != hardwareId) {
-          await logout();
-          return null;
-        }
-
-        _currentUser = user;
-        return user;
-      } else {
-        final users = await _getLocalUsers();
-        final match = users.where((u) => u.id == userId);
-        if (match.isEmpty) return null;
-
-        final user = match.first;
-        if (!user.isActive || (!user.isAdmin && user.isExpired)) {
-          await logout();
-          return null;
-        }
-
-        if (!user.isAdmin && user.registeredHardwareId != hardwareId) {
-          await logout();
-          return null;
-        }
-
-        _currentUser = user;
-        return user;
-      }
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /// Cierra sesión
+  /// Cierre de sesión
   static Future<void> logout() async {
     _currentUser = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kSessionUserKey);
   }
 
-  // ==========================================
-  // HELPERS DE ALMACENAMIENTO LOCAL SEGURO
-  // ==========================================
-  static Future<List<UserModel>> _getLocalUsers() async {
+  /// Comprueba sesión previa activa
+  static Future<UserModel?> checkAutoLogin() async {
     final prefs = await SharedPreferences.getInstance();
-    final rawJson = prefs.getString(_kLocalUsersDbKey);
-    if (rawJson == null || rawJson.isEmpty) return [];
-    try {
-      final List decoded = jsonDecode(rawJson);
-      return decoded.map((m) => UserModel.fromMap(m['id'] ?? '', m as Map<String, dynamic>)).toList();
-    } catch (_) {
-      return [];
+    final savedId = prefs.getString(_kSessionUserKey);
+    if (savedId != null && savedId.isNotEmpty) {
+      final user = await getUserById(savedId);
+      if (user != null && user.isActive && !user.isExpired) {
+        _currentUser = user;
+        return user;
+      }
     }
+    return null;
+  }
+
+  // ============================================================
+  // MODO AUTÓNOMO LOCAL (PERSISTENCIA OFFLINE SIN FIREBASE)
+  // ============================================================
+
+  static Future<List<UserModel>> _getLocalUsers() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonStr = prefs.getString(_kLocalUsersDbKey);
+      if (jsonStr != null && jsonStr.isNotEmpty) {
+        final List<dynamic> decoded = jsonDecode(jsonStr);
+        return decoded
+            .map((item) => UserModel.fromMap(item['id'] ?? '', item as Map<String, dynamic>))
+            .toList();
+      }
+    } catch (e) {
+      debugPrint('Error leyendo DB local: $e');
+    }
+    return [];
   }
 
   static Future<void> _saveLocalUsers(List<UserModel> users) async {
-    final prefs = await SharedPreferences.getInstance();
-    final mapped = users.map((u) {
-      final m = u.toMap();
-      m['id'] = u.id;
-      return m;
-    }).toList();
-    await prefs.setString(_kLocalUsersDbKey, jsonEncode(mapped));
-    _localUsersStreamController.add(users);
-  }
-
-  static Future<void> _saveLocalUser(UserModel user) async {
-    final users = await _getLocalUsers();
-    final idx = users.indexWhere((u) => u.id == user.id);
-    if (idx != -1) {
-      users[idx] = user;
-    } else {
-      users.add(user);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final listMaps = users.map((u) {
+        final map = u.toMap();
+        map['id'] = u.id;
+        return map;
+      }).toList();
+      await prefs.setString(_kLocalUsersDbKey, jsonEncode(listMaps));
+      _localUsersStreamController.add(users);
+    } catch (e) {
+      debugPrint('Error guardando DB local: $e');
     }
-    await _saveLocalUsers(users);
-  }
-
-  static String _formatDate(DateTime date) {
-    return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
 }
