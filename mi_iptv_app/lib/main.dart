@@ -151,7 +151,7 @@ class _AmeycarTVAppState extends State<AmeycarTVApp> {
       final res = await AuthService.checkAutoLogin();
       if (mounted) {
         setState(() {
-          _isAuthenticated = res.isSuccess;
+          _isAuthenticated = res != null;
           _isCheckingAuth = false;
         });
       }
@@ -333,9 +333,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (_channels.isNotEmpty) {
         _selectedChannelIndex = (lastIndex < _channels.length && lastIndex >= 0) ? lastIndex : 0;
-        final activeCh = _channels[_selectedChannelIndex];
-        EpgService.onChannelTuned(activeCh, neighborChannels: _channels);
-        _initializeVideo(activeCh.streamUrl);
+        _initializeVideo(_channels[_selectedChannelIndex].streamUrl);
         _triggerOsdTimer();
       }
       if (mounted) setState(() {});
@@ -574,9 +572,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _isVideoLoading = true;
       }
     });
-
-    // Activar motor multicapa EPG al sintonizar el canal
-    EpgService.onChannelTuned(ch, neighborChannels: _filteredChannels);
 
     _triggerOsdTimer();
 
