@@ -1576,11 +1576,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => AdminPanelScreen(
-                        onLogout: widget.onLogout,
-                      ),
+                      builder: (_) => const AdminPanelScreen(),
                     ),
-                  );
+                  ).then((_) {
+                    if (AuthService.currentUser == null) {
+                      widget.onLogout?.call();
+                    }
+                  });
                 }),
               _buildSideMenuItem(Icons.verified_user, 'Mi Cuenta VIP', _showAccountProfileModal),
             ],
@@ -1709,11 +1711,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => AdminPanelScreen(
-                                      onLogout: widget.onLogout,
-                                    ),
+                                    builder: (_) => const AdminPanelScreen(),
                                   ),
-                                );
+                                ).then((_) {
+                                  if (AuthService.currentUser == null) {
+                                    widget.onLogout?.call();
+                                  }
+                                });
                               },
                               child: const Padding(
                                 padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1950,11 +1954,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => AdminPanelScreen(
-                              onLogout: widget.onLogout,
-                            ),
+                            builder: (_) => const AdminPanelScreen(),
                           ),
-                        );
+                        ).then((_) {
+                          if (AuthService.currentUser == null) {
+                            widget.onLogout?.call();
+                          }
+                        });
                       },
                       icon: const Icon(Icons.admin_panel_settings, size: 18),
                       label: const Text('Panel Admin'),
