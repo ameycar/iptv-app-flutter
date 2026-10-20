@@ -1575,7 +1575,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildSideMenuItem(Icons.admin_panel_settings, 'Panel Admin VIP', () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
+                    MaterialPageRoute(
+                      builder: (_) => AdminPanelScreen(
+                        onLogout: widget.onLogout,
+                      ),
+                    ),
                   );
                 }),
               _buildSideMenuItem(Icons.verified_user, 'Mi Cuenta VIP', _showAccountProfileModal),
@@ -1646,15 +1650,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildTopGlassBar([ChannelModel? activeChannel]) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F172A).withOpacity(0.85),
+        color: const Color(0xFF0F172A).withOpacity(0.92),
         border: const Border(bottom: BorderSide(color: Color(0x227B2CBF))),
       ),
       child: _isSearching
           ? _buildActiveSearchBar()
           : Row(
               children: [
+                // 1. TÍTULO Y BADGE FIJOS / ESTÁTICOS A LA IZQUIERDA
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1667,9 +1672,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         letterSpacing: 1.1,
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 4),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                       decoration: BoxDecoration(
                         color: Colors.red.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(4),
@@ -1677,111 +1682,196 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       child: Text(
                         _selectedSection == 'En Vivo' ? 'LIVE' : _selectedSection.toUpperCase(),
-                        style: const TextStyle(color: Colors.red, fontSize: 8.5, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1E293B),
-                        borderRadius: BorderRadius.circular(5),
-                        border: Border.all(color: const Color(0x3300E5FF)),
-                      ),
-                      child: Text(
-                        _currentTime.isNotEmpty ? _currentTime : '--:--',
-                        style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 10, fontWeight: FontWeight.bold),
+                        style: const TextStyle(color: Colors.red, fontSize: 8, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],
                 ),
 
-                const Spacer(),
+                const SizedBox(width: 6),
 
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                  padding: EdgeInsets.zero,
-                  icon: Badge(
-                    isLabelVisible: _activeAlarms.isNotEmpty,
-                    label: Text(
-                      '${_activeAlarms.length}',
-                      style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                // 2. ICONOS DE ACCIONES DESLIZABLES HORIZONTALMENTE (SLIDER TÁCTIL Y FLUIDO)
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // SI ES ADMINISTRADOR: BOTÓN DESTACADO ORO "PANEL ADMIN"
+                        if (AuthService.isAdmin) ...[
+                          Material(
+                            color: const Color(0xFFFFD600),
+                            borderRadius: BorderRadius.circular(16),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => AdminPanelScreen(
+                                      onLogout: widget.onLogout,
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.shield, color: Colors.black, size: 14),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'PANEL ADMIN',
+                                      style: TextStyle(
+                                        color: Colors.black,
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+
+                        // SUBIR / CARGAR LISTAS M3U
+                        _buildTopBarActionItem(
+                          icon: Icons.playlist_add,
+                          color: const Color(0xFF00E5FF),
+                          tooltip: 'Cargar Lista M3U / Guía EPG',
+                          onPressed: _openM3uDialog,
+                        ),
+
+                        const SizedBox(width: 4),
+
+                        // RELOJ DIGITAL
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E293B),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0x3300E5FF)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.access_time, color: Color(0xFF00E5FF), size: 11),
+                              const SizedBox(width: 4),
+                              Text(
+                                _currentTime.isNotEmpty ? _currentTime : '--:--',
+                                style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 10.5, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(width: 4),
+
+                        // GUÍA EPG & ALARMAS
+                        _buildTopBarActionItem(
+                          icon: Icons.calendar_month,
+                          color: Colors.white,
+                          badgeCount: _activeAlarms.length,
+                          tooltip: _activeAlarms.isNotEmpty
+                              ? '${_activeAlarms.length} alarmas activas • Toca para ver'
+                              : 'Guía EPG y Horarios',
+                          onPressed: () {
+                            if (activeChannel != null) {
+                              _openEpgScheduleModal(activeChannel);
+                            } else if (_channels.isNotEmpty) {
+                              _openEpgScheduleModal(_channels.first);
+                            }
+                          },
+                        ),
+
+                        const SizedBox(width: 4),
+
+                        // BUSCADOR DE CANALES
+                        _buildTopBarActionItem(
+                          icon: Icons.search,
+                          color: const Color(0xFFC77DFF),
+                          tooltip: 'Buscar en $_selectedSection',
+                          onPressed: () => setState(() => _isSearching = true),
+                        ),
+
+                        const SizedBox(width: 4),
+
+                        // ASISTENTE DE VOZ ALEXA
+                        _buildTopBarActionItem(
+                          icon: Icons.mic,
+                          color: const Color(0xFF00E5FF),
+                          isGlowing: true,
+                          tooltip: 'Asistente Alexa de Voz',
+                          onPressed: _startVoiceSearch,
+                        ),
+
+                        const SizedBox(width: 4),
+
+                        // MI CUENTA & DISPOSITIVO VIP
+                        _buildTopBarActionItem(
+                          icon: Icons.verified_user,
+                          color: const Color(0xFF00E676),
+                          tooltip: 'Mi Cuenta VIP / Estado Hardware',
+                          onPressed: _showAccountProfileModal,
+                        ),
+                      ],
                     ),
-                    backgroundColor: const Color(0xFFFFB703),
-                    child: const Icon(Icons.calendar_month, color: Color(0xFF00E5FF), size: 19),
                   ),
-                  tooltip: _activeAlarms.isNotEmpty 
-                      ? '${_activeAlarms.length} alarmas activas • Toca para abrir' 
-                      : 'Guía EPG',
-                  onPressed: () {
-                    if (activeChannel != null) {
-                      _openEpgScheduleModal(activeChannel);
-                    } else if (_channels.isNotEmpty) {
-                      _openEpgScheduleModal(_channels.first);
-                    }
-                  },
                 ),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                  padding: EdgeInsets.zero,
-                  icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 19),
-                  tooltip: 'Buscar en $_selectedSection',
-                  onPressed: () => setState(() => _isSearching = true),
-                ),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                  padding: EdgeInsets.zero,
-                  icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 19),
-                  tooltip: 'Cargar M3U / Guía EPG',
-                  onPressed: _openM3uDialog,
-                ),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                  padding: EdgeInsets.zero,
-                  icon: Container(
+              ],
+            ),
+    );
+  }
+
+  Widget _buildTopBarActionItem({
+    required IconData icon,
+    required Color color,
+    required String tooltip,
+    required VoidCallback onPressed,
+    int badgeCount = 0,
+    bool isGlowing = false,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+            child: isGlowing
+                ? Container(
                     padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF00E5FF).withOpacity(0.5),
+                          color: color.withOpacity(0.5),
                           blurRadius: 6,
                         ),
                       ],
                     ),
-                    child: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 17),
-                  ),
-                  tooltip: 'Asistente Alexa de Voz',
-                  onPressed: _startVoiceSearch,
-                ),
-                if (AuthService.isAdmin)
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(Icons.admin_panel_settings, color: Color(0xFFFFD600), size: 19),
-                    tooltip: 'Panel Administrador & Hardware',
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
-                      );
-                    },
-                  ),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                  padding: EdgeInsets.zero,
-                  icon: const Icon(Icons.verified_user, color: Color(0xFF00E676), size: 18),
-                  tooltip: 'Mi Cuenta & Dispositivo Blindado',
-                  onPressed: _showAccountProfileModal,
-                ),
-              ],
-            ),
+                    child: Icon(icon, color: color, size: 17),
+                  )
+                : badgeCount > 0
+                    ? Badge(
+                        label: Text(
+                          '$badgeCount',
+                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                        ),
+                        backgroundColor: const Color(0xFFFFB703),
+                        child: Icon(icon, color: color, size: 18),
+                      )
+                    : Icon(icon, color: color, size: 18),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1859,7 +1949,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         Navigator.pop(ctx);
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
+                          MaterialPageRoute(
+                            builder: (_) => AdminPanelScreen(
+                              onLogout: widget.onLogout,
+                            ),
+                          ),
                         );
                       },
                       icon: const Icon(Icons.admin_panel_settings, size: 18),
