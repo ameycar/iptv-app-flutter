@@ -9,10 +9,15 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import 'package:firebase_core/firebase_core.dart';
 
 import 'models/channel_model.dart';
+import 'models/user_model.dart';
 import 'services/m3u_sanitizer_service.dart';
 import 'services/epg_service.dart';
+import 'services/auth_service.dart';
+import 'screens/login_screen.dart';
+import 'screens/admin_panel_screen.dart';
 import 'widgets/alexa_voice_sheet.dart';
 import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
@@ -109,6 +114,11 @@ void main() async {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
     try {
+      await Firebase.initializeApp();
+    } catch (e) {
+      debugPrint('Error seguro en Firebase.initializeApp: $e');
+    }
+    try {
       await NotificationService.initialize();
     } catch (e) {
       debugPrint('Error seguro en NotificationService: $e');
@@ -119,8 +129,41 @@ void main() async {
   });
 }
 
-class AmeycarTVApp extends StatelessWidget {
+class AmeycarTVApp extends StatefulWidget {
   const AmeycarTVApp({super.key});
+
+  @override
+  State<AmeycarTVApp> createState() => _AmeycarTVAppState();
+}
+
+class _AmeycarTVAppState extends State<AmeycarTVApp> {
+  bool _isCheckingAuth = true;
+  bool _isAuthenticated = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _verifyInitialSession();
+  }
+
+  Future<void> _verifyInitialSession() async {
+    try {
+      final res = await AuthService.checkAutoLogin();
+      if (mounted) {
+        setState(() {
+          _isAuthenticated = res.isSuccess;
+          _isCheckingAuth = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isAuthenticated = false;
+          _isCheckingAuth = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -136,13 +179,36 @@ class AmeycarTVApp extends StatelessWidget {
           surface: Color(0xFF0F172A),
         ),
       ),
-      home: const HomeScreen(),
+      home: _isCheckingAuth
+          ? const Scaffold(
+              backgroundColor: Color(0xFF070A10),
+              body: Center(
+                child: CircularProgressIndicator(color: Color(0xFF00E5FF)),
+              ),
+            )
+          : _isAuthenticated
+              ? HomeScreen(
+                  onLogout: () {
+                    setState(() {
+                      _isAuthenticated = false;
+                    });
+                  },
+                )
+              : LoginScreen(
+                  onLoginSuccess: () {
+                    setState(() {
+                      _isAuthenticated = true;
+                    });
+                  },
+                ),
     );
   }
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final VoidCallback? onLogout;
+
+  const HomeScreen({super.key, this.onLogout});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -180,15 +246,55 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _clockTimer;
   String _currentTime = '';
 
+  // Suscripción en vivo al blindaje de cuenta / hardware del usuario actual
+  StreamSubscription<UserModel?>? _accountGuardSub;
+
   @override
   void initState() {
     super.initState();
     EpgService.ensureInitialized();
     _startClockTimer();
+    _startAccountHardwareGuard();
     _loadSavedChannels();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       NotificationService.requestPermissionsSafely();
     });
+  }
+
+  /// Vigila en tiempo real si el admin desactiva la cuenta, vence la suscripción
+  /// o si la cuenta es vinculada a otro Hardware ID para expulsar sesiones clonadas al instante.
+  void _startAccountHardwareGuard() async {
+    final user = AuthService.currentUser;
+    if (user == null || user.isAdmin) return;
+    final myHwId = await AuthService.getDeviceHardwareId();
+
+    _accountGuardSub?.cancel();
+    _accountGuardSub = AuthService.listenToUserRealtime(user.id).listen((liveUser) async {
+      if (!mounted) return;
+      if (liveUser == null || !liveUser.isActive || liveUser.isExpired) {
+        await _forceLogoutWithReason('Tu cuenta ha sido suspendida o ha vencido.');
+        return;
+      }
+      final boundHw = liveUser.registeredHardwareId;
+      if (boundHw != null && boundHw.isNotEmpty && boundHw != myHwId) {
+        await _forceLogoutWithReason('Sesión cerrada: Esta cuenta se vinculó a un nuevo dispositivo autorizado.');
+      }
+    });
+  }
+
+  Future<void> _forceLogoutWithReason(String reason) async {
+    _accountGuardSub?.cancel();
+    _videoPlayerController?.pause();
+    await AuthService.logout();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(reason),
+        backgroundColor: Colors.redAccent,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+    widget.onLogout?.call();
   }
 
   void _startClockTimer() {
@@ -227,7 +333,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (_channels.isNotEmpty) {
         _selectedChannelIndex = (lastIndex < _channels.length && lastIndex >= 0) ? lastIndex : 0;
-        _initializeVideo(_channels[_selectedChannelIndex].streamUrl);
+        final activeCh = _channels[_selectedChannelIndex];
+        EpgService.onChannelTuned(activeCh, neighborChannels: _channels);
+        _initializeVideo(activeCh.streamUrl);
         _triggerOsdTimer();
       }
       if (mounted) setState(() {});
@@ -466,6 +574,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _isVideoLoading = true;
       }
     });
+
+    // Activar motor multicapa EPG al sintonizar el canal
+    EpgService.onChannelTuned(ch, neighborChannels: _filteredChannels);
 
     _triggerOsdTimer();
 
@@ -1465,6 +1576,14 @@ class _HomeScreenState extends State<HomeScreen> {
               _buildSideMenuItem(Icons.search, 'Buscar', () => setState(() => _isSearching = !_isSearching)),
               _buildSideMenuItem(Icons.mic, 'Asistente Alexa', _startVoiceSearch),
               _buildSideMenuItem(Icons.playlist_add, 'Listas M3U', _openM3uDialog),
+              if (AuthService.isAdmin)
+                _buildSideMenuItem(Icons.admin_panel_settings, 'Panel Admin VIP', () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
+                  );
+                }),
+              _buildSideMenuItem(Icons.verified_user, 'Mi Cuenta VIP', _showAccountProfileModal),
             ],
           ),
         ),
@@ -1586,7 +1705,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 IconButton(
                   visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
                   padding: EdgeInsets.zero,
                   icon: Badge(
                     isLabelVisible: _activeAlarms.isNotEmpty,
@@ -1595,7 +1714,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
                     ),
                     backgroundColor: const Color(0xFFFFB703),
-                    child: const Icon(Icons.calendar_month, color: Color(0xFF00E5FF), size: 20),
+                    child: const Icon(Icons.calendar_month, color: Color(0xFF00E5FF), size: 19),
                   ),
                   tooltip: _activeAlarms.isNotEmpty 
                       ? '${_activeAlarms.length} alarmas activas • Toca para abrir' 
@@ -1610,23 +1729,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 IconButton(
                   visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
                   padding: EdgeInsets.zero,
-                  icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 20),
+                  icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 19),
                   tooltip: 'Buscar en $_selectedSection',
                   onPressed: () => setState(() => _isSearching = true),
                 ),
                 IconButton(
                   visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
                   padding: EdgeInsets.zero,
-                  icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 20),
+                  icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 19),
                   tooltip: 'Cargar M3U / Guía EPG',
                   onPressed: _openM3uDialog,
                 ),
                 IconButton(
                   visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
                   padding: EdgeInsets.zero,
                   icon: Container(
                     padding: const EdgeInsets.all(4),
@@ -1639,13 +1758,145 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ],
                     ),
-                    child: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 18),
+                    child: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 17),
                   ),
                   tooltip: 'Asistente Alexa de Voz',
                   onPressed: _startVoiceSearch,
                 ),
+                if (AuthService.isAdmin)
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.admin_panel_settings, color: Color(0xFFFFD600), size: 19),
+                    tooltip: 'Panel Administrador & Hardware',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
+                      );
+                    },
+                  ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.verified_user, color: Color(0xFF00E676), size: 18),
+                  tooltip: 'Mi Cuenta & Dispositivo Blindado',
+                  onPressed: _showAccountProfileModal,
+                ),
               ],
             ),
+    );
+  }
+
+  void _showAccountProfileModal() async {
+    final user = AuthService.currentUser;
+    final hwId = await AuthService.getDeviceHardwareId();
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF101726),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.verified_user, color: Color(0xFF00E676), size: 26),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Cuenta Blindada: ${user?.username ?? "Invitado"}',
+                    style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                if (user?.isVip == true)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFD600),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text(
+                      'VIP',
+                      style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 11),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Estado: ${user?.isActive == true ? "ACTIVO" : "INACTIVO"} • Días restantes: ${user?.daysRemaining ?? 0}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Hardware ID Vinculado: $hwId',
+                    style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                if (AuthService.isAdmin) ...[
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
+                        );
+                      },
+                      icon: const Icon(Icons.admin_panel_settings, size: 18),
+                      label: const Text('Panel Admin'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFD600),
+                        foregroundColor: Colors.black,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      _videoPlayerController?.pause();
+                      await AuthService.logout();
+                      widget.onLogout?.call();
+                    },
+                    icon: const Icon(Icons.logout, color: Color(0xFFFF5252), size: 18),
+                    label: const Text('Cerrar Sesión', style: TextStyle(color: Color(0xFFFF5252))),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFFFF5252)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -2316,6 +2567,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _accountGuardSub?.cancel();
     _clockTimer?.cancel();
     _osdHideTimer?.cancel();
     _videoPlayerController?.dispose();
