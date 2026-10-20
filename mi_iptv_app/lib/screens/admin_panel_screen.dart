@@ -5,7 +5,8 @@ import '../models/user_model.dart';
 import '../services/auth_service.dart';
 
 class AdminPanelScreen extends StatefulWidget {
-  const AdminPanelScreen({super.key});
+  final VoidCallback? onLogout;
+  const AdminPanelScreen({super.key, this.onLogout});
 
   @override
   State<AdminPanelScreen> createState() => _AdminPanelScreenState();
@@ -13,7 +14,7 @@ class AdminPanelScreen extends StatefulWidget {
 
 class _AdminPanelScreenState extends State<AdminPanelScreen> {
   final _searchController = TextEditingController();
-  String _selectedFilter = 'todos'; // 'todos' | 'pendientes' | 'activos' | 'vencidos'
+  String _selectedFilter = 'todos';
 
   @override
   void dispose() {
@@ -49,17 +50,20 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             tooltip: 'Cerrar Sesión',
             onPressed: () async {
               await AuthService.logout();
-              if (mounted) Navigator.pop(context);
+              if (mounted) {
+                Navigator.pop(context);
+                widget.onLogout?.call();
+              }
             },
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showCreateUserModal,
+        onPressed: _showCreateOptionsModal,
         backgroundColor: const Color(0xFF00E5FF),
         foregroundColor: Colors.black,
-        icon: const Icon(Icons.person_add_alt_1),
-        label: const Text('Nuevo Cliente', style: TextStyle(fontWeight: FontWeight.bold)),
+        icon: const Icon(Icons.add_circle_outline),
+        label: const Text('Nuevo Registro', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
       body: StreamBuilder<List<UserModel>>(
         stream: AuthService.getUsersStream(),
@@ -68,27 +72,23 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             return const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF)));
           }
 
-          if (snapshot.hasError) {
-            return Center(
-              child: Text('Error cargando clientes: ${snapshot.error}', style: const TextStyle(color: Colors.red)),
-            );
-          }
-
           final allUsers = snapshot.data ?? [];
-
-          // Filtrar admins y usuarios según búsqueda y tabs
           final clientUsers = allUsers.where((u) => !u.isAdmin).toList();
+          final familyAdminUsers = clientUsers.where((u) => u.isFamilyAdmin).toList();
+          final individualUsers = clientUsers.where((u) => !u.isPartOfFamily).toList();
           final pendingHwUsers = clientUsers.where((u) => u.hardwareResetRequested).toList();
           final activeUsers = clientUsers.where((u) => u.isActive && !u.isExpired).toList();
           final expiredUsers = clientUsers.where((u) => u.isExpired).toList();
 
-          // Filtro de búsqueda
           final searchTerm = _searchController.text.trim().toLowerCase();
           final filteredUsers = clientUsers.where((u) {
             final matchesSearch = u.username.toLowerCase().contains(searchTerm) ||
-                (u.deviceName ?? '').toLowerCase().contains(searchTerm);
+                (u.deviceName ?? '').toLowerCase().contains(searchTerm) ||
+                (u.familyId ?? '').toLowerCase().contains(searchTerm);
             if (!matchesSearch) return false;
 
+            if (_selectedFilter == 'familias') return u.isFamilyAdmin;
+            if (_selectedFilter == 'individuales') return !u.isPartOfFamily;
             if (_selectedFilter == 'pendientes') return u.hardwareResetRequested;
             if (_selectedFilter == 'activos') return u.isActive && !u.isExpired;
             if (_selectedFilter == 'vencidos') return u.isExpired;
@@ -97,61 +97,70 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
 
           return CustomScrollView(
             slivers: [
-              // 1. Tarjetas de Resumen
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Banner informativo de modo local / nube
-                      if (!AuthService.isFirebaseAvailable)
-                        Container(
-                          margin: const EdgeInsets.only(bottom: 14),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF00E5FF).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.35)),
-                          ),
-                          child: const Row(
-                            children: [
-                              Icon(Icons.shield, color: Color(0xFF00E5FF), size: 18),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Modo Autónomo Local Activo (Base de datos segura en este equipo).',
-                                  style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
-                                ),
-                              ),
-                            ],
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 14),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: AuthService.isFirebaseAvailable
+                              ? const Color(0xFF00E676).withOpacity(0.12)
+                              : const Color(0xFF00E5FF).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: AuthService.isFirebaseAvailable
+                                ? const Color(0xFF00E676).withOpacity(0.4)
+                                : const Color(0xFF00E5FF).withOpacity(0.35),
                           ),
                         ),
-
+                        child: Row(
+                          children: [
+                            Icon(
+                              AuthService.isFirebaseAvailable ? Icons.cloud_done : Icons.shield,
+                              color: AuthService.isFirebaseAvailable ? const Color(0xFF00E676) : const Color(0xFF00E5FF),
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                AuthService.isFirebaseAvailable
+                                    ? 'Sincronización en la Nube Activa (Base de datos Firestore en vivo).'
+                                    : 'Modo Autónomo Local Activo (Base de datos segura en este equipo).',
+                                style: TextStyle(
+                                  color: AuthService.isFirebaseAvailable ? const Color(0xFF00E676) : const Color(0xFF00E5FF),
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                       _buildStatsRow(
                         total: clientUsers.length,
-                        active: activeUsers.length,
-                        expired: expiredUsers.length,
+                        families: familyAdminUsers.length,
+                        individuals: individualUsers.length,
                         pendingHw: pendingHwUsers.length,
                       ),
                       const SizedBox(height: 16),
-
-                      // 2. BANNER DE SOLICITUDES DE HARDWARE URGENTES
                       if (pendingHwUsers.isNotEmpty) ...[
                         _buildPendingHardwareAlertSection(pendingHwUsers),
                         const SizedBox(height: 16),
                       ],
-
-                      // 3. Barra de Búsqueda y Filtros
                       _buildSearchBar(),
                       const SizedBox(height: 12),
-                      _buildFilterChips(pendingHwCount: pendingHwUsers.length),
+                      _buildFilterChips(
+                        pendingHwCount: pendingHwUsers.length,
+                        familyCount: familyAdminUsers.length,
+                        individualCount: individualUsers.length,
+                      ),
                     ],
                   ),
                 ),
               ),
-
-              // 4. Lista de Clientes
               if (filteredUsers.isEmpty)
                 const SliverFillRemaining(
                   hasScrollBody: false,
@@ -163,16 +172,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                         children: [
                           Icon(Icons.person_outline, color: Colors.white24, size: 48),
                           SizedBox(height: 8),
-                          Text(
-                            'No hay clientes registrados aún.',
-                            style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold),
-                          ),
+                          Text('No hay registros aún.', style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
                           SizedBox(height: 4),
-                          Text(
-                            'Toca "Nuevo Cliente" abajo a la derecha para crear tu primer usuario.',
-                            style: TextStyle(color: Colors.white38, fontSize: 12),
-                            textAlign: TextAlign.center,
-                          ),
+                          Text('Toca "Nuevo Registro" para crear clientes o familias.', style: TextStyle(color: Colors.white38, fontSize: 12)),
                         ],
                       ),
                     ),
@@ -183,12 +185,17 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   sliver: SliverList(
                     delegate: SliverChildBuilderDelegate(
-                      (context, index) => _buildUserCard(filteredUsers[index]),
+                      (context, index) {
+                        final user = filteredUsers[index];
+                        if (user.isFamilyAdmin) {
+                          return _buildFamilyGroupCard(user, allUsers);
+                        }
+                        return _buildUserCard(user);
+                      },
                       childCount: filteredUsers.length,
                     ),
                   ),
                 ),
-
               const SliverToBoxAdapter(child: SizedBox(height: 80)),
             ],
           );
@@ -197,58 +204,47 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
 
-  Widget _buildStatsRow({
-    required int total,
-    required int active,
-    required int expired,
-    required int pendingHw,
-  }) {
+  Widget _buildStatsRow({required int total, required int families, required int individuals, required int pendingHw}) {
     return Row(
       children: [
-        _buildStatCard('Total', total.toString(), const Color(0xFF00E5FF), Icons.people),
+        _buildStatCard('Pantallas', total.toString(), const Color(0xFF00E5FF), Icons.devices),
         const SizedBox(width: 8),
-        _buildStatCard('Activos', active.toString(), const Color(0xFF00E676), Icons.check_circle_outline),
+        _buildStatCard('Familias (5)', families.toString(), const Color(0xFFC77DFF), Icons.family_restroom),
         const SizedBox(width: 8),
-        _buildStatCard('Vencidos', expired.toString(), const Color(0xFFFF5252), Icons.timer_off_outlined),
+        _buildStatCard('Individual', individuals.toString(), const Color(0xFF00E676), Icons.person),
         const SizedBox(width: 8),
-        _buildStatCard(
-          'HW Reset',
-          pendingHw.toString(),
-          pendingHw > 0 ? const Color(0xFFFFD600) : Colors.white38,
-          Icons.phonelink_lock,
-          highlight: pendingHw > 0,
-        ),
+        _buildStatCard('HW Reset', pendingHw.toString(), pendingHw > 0 ? const Color(0xFFFFD600) : Colors.white38, Icons.phonelink_lock, highlight: pendingHw > 0),
       ],
     );
   }
 
-  Widget _buildStatCard(String label, String value, Color color, IconData icon, {bool highlight = false}) {
+  Widget _buildStatCard(String title, String value, Color color, IconData icon, {bool highlight = false}) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         decoration: BoxDecoration(
-          color: highlight ? const Color(0xFFFFD600).withOpacity(0.15) : const Color(0xFF131A29),
+          color: highlight ? color.withOpacity(0.18) : const Color(0xFF101726),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: highlight ? const Color(0xFFFFD600) : Colors.white12),
+          border: Border.all(color: highlight ? color : Colors.white10),
         ),
         child: Column(
           children: [
-            Icon(icon, size: 20, color: color),
+            Icon(icon, color: color, size: 20),
             const SizedBox(height: 4),
             Text(value, style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
-            Text(label, style: const TextStyle(color: Colors.white60, fontSize: 10)),
+            const SizedBox(height: 2),
+            Text(title, style: const TextStyle(color: Colors.white60, fontSize: 10), maxLines: 1),
           ],
         ),
       ),
     );
   }
 
-  /// ⚡ ALERTA EXPRESS: Solicitudes de cambio de equipo en tiempo real
-  Widget _buildPendingHardwareAlertSection(List<UserModel> pendingList) {
+  Widget _buildPendingHardwareAlertSection(List<UserModel> pendingUsers) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFD600).withOpacity(0.12),
+        color: const Color(0xFFFFD600).withOpacity(0.15),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFFFD600), width: 1.5),
       ),
@@ -257,56 +253,23 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.bolt, color: Color(0xFFFFD600), size: 24),
+              const Icon(Icons.notification_important, color: Color(0xFFFFD600), size: 20),
               const SizedBox(width: 8),
-              Text(
-                '⚡ ${pendingList.length} Solicitud(es) de Cambio de Hardware',
-                style: const TextStyle(color: Color(0xFFFFD600), fontWeight: FontWeight.bold, fontSize: 14),
-              ),
+              Text('${pendingUsers.length} SOLICITUD(ES) DE RESET DE HARDWARE', style: const TextStyle(color: Color(0xFFFFD600), fontWeight: FontWeight.bold, fontSize: 12)),
             ],
           ),
-          const SizedBox(height: 10),
-          ...pendingList.map((user) => Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF101726),
-                  borderRadius: BorderRadius.circular(10),
-                ),
+          const SizedBox(height: 8),
+          ...pendingUsers.map((u) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            user.username,
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                          ),
-                          Text(
-                            user.deviceName ?? 'Equipo sin nombre',
-                            style: const TextStyle(color: Colors.white54, fontSize: 11),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Botón 1-Toque Liberar
+                    Text(u.username, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                     ElevatedButton.icon(
-                      onPressed: () => _quickResetHardware(user),
-                      icon: const Icon(Icons.lock_open, size: 16),
-                      label: const Text('Liberar (1-Toque)', style: TextStyle(fontSize: 11)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00E676),
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    // Botón PIN Express WhatsApp
-                    IconButton(
-                      icon: const Icon(Icons.send_to_mobile, color: Color(0xFF00E5FF)),
-                      tooltip: 'Generar PIN para WhatsApp',
-                      onPressed: () => _generatePinAndShare(user),
+                      icon: const Icon(Icons.flash_on, size: 14),
+                      label: const Text('Liberar en 1 Toque', style: TextStyle(fontSize: 11)),
+                      onPressed: () => _quickResetHardware(u),
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFD600), foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
                     ),
                   ],
                 ),
@@ -320,65 +283,167 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     return TextField(
       controller: _searchController,
       onChanged: (_) => setState(() {}),
-      style: const TextStyle(color: Colors.white),
+      style: const TextStyle(color: Colors.white, fontSize: 14),
       decoration: InputDecoration(
-        hintText: 'Buscar por usuario o dispositivo...',
-        hintStyle: const TextStyle(color: Colors.white30, fontSize: 13),
+        hintText: 'Buscar por usuario, equipo o familia...',
+        hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
         prefixIcon: const Icon(Icons.search, color: Color(0xFF00E5FF), size: 20),
+        suffixIcon: _searchController.text.isNotEmpty
+            ? IconButton(icon: const Icon(Icons.clear, color: Colors.white54, size: 18), onPressed: () { _searchController.clear(); setState(() {}); })
+            : null,
         filled: true,
-        fillColor: const Color(0xFF131A29),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        fillColor: const Color(0xFF101726),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
       ),
     );
   }
 
-  Widget _buildFilterChips({required int pendingHwCount}) {
-    final filters = [
-      {'key': 'todos', 'label': 'Todos'},
-      {'key': 'pendientes', 'label': '⚡ HW Reset ($pendingHwCount)'},
-      {'key': 'activos', 'label': 'Activos'},
-      {'key': 'vencidos', 'label': 'Vencidos'},
-    ];
-
+  Widget _buildFilterChips({required int pendingHwCount, required int familyCount, required int individualCount}) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
-        children: filters.map((f) {
-          final isSelected = _selectedFilter == f['key'];
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ChoiceChip(
-              label: Text(f['label']!),
-              selected: isSelected,
-              onSelected: (_) => setState(() => _selectedFilter = f['key']!),
-              selectedColor: const Color(0xFF00E5FF),
-              backgroundColor: const Color(0xFF131A29),
-              labelStyle: TextStyle(
-                color: isSelected ? Colors.black : Colors.white70,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                fontSize: 12,
-              ),
+        children: [
+          _buildFilterChip('todos', 'Todos'),
+          const SizedBox(width: 8),
+          _buildFilterChip('familias', 'Familias ($familyCount)'),
+          const SizedBox(width: 8),
+          _buildFilterChip('individuales', 'Individuales ($individualCount)'),
+          const SizedBox(width: 8),
+          _buildFilterChip('pendientes', 'HW Reset ($pendingHwCount)', isWarning: pendingHwCount > 0),
+          const SizedBox(width: 8),
+          _buildFilterChip('activos', 'Activos'),
+          const SizedBox(width: 8),
+          _buildFilterChip('vencidos', 'Vencidos'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String key, String label, {bool isWarning = false}) {
+    final isSelected = _selectedFilter == key;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (_) => setState(() => _selectedFilter = key),
+      selectedColor: isWarning ? const Color(0xFFFFD600) : const Color(0xFF00E5FF),
+      backgroundColor: const Color(0xFF101726),
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.black : (isWarning ? const Color(0xFFFFD600) : Colors.white70),
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        fontSize: 12,
+      ),
+    );
+  }
+
+  Widget _buildFamilyGroupCard(UserModel familyAdmin, List<UserModel> allUsers) {
+    final familyId = familyAdmin.familyId ?? '';
+    final members = allUsers.where((u) => u.familyId == familyId).toList();
+    final usedScreens = members.length;
+    final isVip = familyAdmin.isVip;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131A29),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: isVip ? const Color(0xFFC77DFF) : const Color(0xFF00E5FF), width: 1.5),
+      ),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.all(12),
+        leading: CircleAvatar(
+          backgroundColor: isVip ? const Color(0xFFC77DFF).withOpacity(0.2) : const Color(0xFF00E5FF).withOpacity(0.2),
+          child: Icon(Icons.family_restroom, color: isVip ? const Color(0xFFC77DFF) : const Color(0xFF00E5FF)),
+        ),
+        title: Row(
+          children: [
+            Expanded(child: Text('FAMILIA: ${familyAdmin.username.toUpperCase()}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15))),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(color: isVip ? Colors.amber.withOpacity(0.2) : Colors.blueGrey.withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
+              child: Text(isVip ? 'FAMILIA VIP' : 'ESTÁNDAR', style: TextStyle(color: isVip ? Colors.amber : Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
             ),
-          );
-        }).toList(),
+          ],
+        ),
+        subtitle: Text('Pantallas: $usedScreens / 5 en uso • Vence: ${_formatDate(familyAdmin.expirationDate)} (${familyAdmin.daysRemaining} días)', style: const TextStyle(color: Colors.white60, fontSize: 12)),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Divider(color: Colors.white12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Miembros y Dispositivos:', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+                    Row(
+                      children: [
+                        TextButton.icon(
+                          icon: const Icon(Icons.add_circle, size: 14, color: Color(0xFF00E5FF)),
+                          label: const Text('+30 Días', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11)),
+                          onPressed: () async {
+                            await AuthService.renewFamilyGroup(familyId, 30);
+                            setState(() {});
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plan familiar renovado +30 días.')));
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_forever, color: Colors.redAccent, size: 18),
+                          tooltip: 'Eliminar Familia Completa',
+                          onPressed: () => _deleteUser(familyAdmin),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                ...members.map((m) {
+                  final isHead = m.isFamilyAdmin;
+                  final hasHw = m.registeredHardwareId != null && m.registeredHardwareId!.isNotEmpty;
+                  return Container(
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.04), borderRadius: BorderRadius.circular(8)),
+                    child: Row(
+                      children: [
+                        Icon(isHead ? Icons.admin_panel_settings : Icons.tv, size: 16, color: isHead ? const Color(0xFFC77DFF) : const Color(0xFF00E5FF)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('${m.username} (${m.deviceName ?? "Sin asignar"})', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                              Text(hasHw ? 'Vinculado: ${m.registeredHardwareId}' : 'Esperando primer inicio', style: TextStyle(color: hasHw ? const Color(0xFF00E676) : Colors.orangeAccent, fontSize: 10)),
+                            ],
+                          ),
+                        ),
+                        if (hasHw)
+                          IconButton(icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), tooltip: 'Reset HW', onPressed: () => _quickResetHardware(m)),
+                      ],
+                    ),
+                  );
+                }),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildUserCard(UserModel user) {
     final isLocked = user.registeredHardwareId != null && user.registeredHardwareId!.isNotEmpty;
+    final isPendingHw = user.hardwareResetRequested;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFF131A29),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: user.hardwareResetRequested
-              ? const Color(0xFFFFD600)
-              : (user.isExpired ? const Color(0xFFFF5252).withOpacity(0.5) : Colors.white10),
+          color: isPendingHw ? const Color(0xFFFFD600) : (user.isExpired ? const Color(0xFFFF5252).withOpacity(0.5) : Colors.white10),
         ),
       ),
       child: Column(
@@ -389,11 +454,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               CircleAvatar(
                 radius: 18,
                 backgroundColor: user.isActive ? const Color(0xFF00E5FF).withOpacity(0.2) : Colors.white12,
-                child: Icon(
-                  Icons.person,
-                  color: user.isActive ? const Color(0xFF00E5FF) : Colors.white38,
-                  size: 20,
-                ),
+                child: Icon(Icons.person, color: user.isActive ? const Color(0xFF00E5FF) : Colors.white38, size: 20),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -402,36 +463,22 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                   children: [
                     Row(
                       children: [
-                        Text(
-                          user.username,
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                        ),
+                        Text(user.username, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
                         if (user.isVip) ...[
                           const SizedBox(width: 6),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFD600),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
+                            decoration: BoxDecoration(color: const Color(0xFFFFD600), borderRadius: BorderRadius.circular(4)),
                             child: const Text('VIP', style: TextStyle(color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold)),
                           ),
                         ],
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      'Vence: ${_formatDate(user.expirationDate)} (${user.daysRemaining} días restantes)',
-                      style: TextStyle(
-                        color: user.isExpired ? const Color(0xFFFF5252) : Colors.white54,
-                        fontSize: 11,
-                      ),
-                    ),
+                    Text('Vence: ${_formatDate(user.expirationDate)} (${user.daysRemaining} días restantes)', style: TextStyle(color: user.isExpired ? const Color(0xFFFF5252) : Colors.white54, fontSize: 11)),
                   ],
                 ),
               ),
-
-              // Switch Activo/Desactivado
               Switch(
                 value: user.isActive,
                 activeColor: const Color(0xFF00E676),
@@ -442,61 +489,24 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               ),
             ],
           ),
-
           const SizedBox(height: 10),
           const Divider(color: Colors.white10, height: 1),
           const SizedBox(height: 10),
-
-          // Estado del Dispositivo Blindado
           Row(
             children: [
-              Icon(
-                isLocked ? Icons.phonelink_lock : Icons.phonelink_erase,
-                size: 16,
-                color: isLocked ? const Color(0xFF00E5FF) : Colors.white38,
-              ),
+              Icon(isLocked ? Icons.phonelink_lock : Icons.phonelink_erase, size: 16, color: isLocked ? const Color(0xFF00E5FF) : Colors.white38),
               const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  isLocked ? 'Vinculado: ${user.deviceName ?? user.registeredHardwareId}' : 'Sin dispositivo asignado',
-                  style: const TextStyle(color: Colors.white70, fontSize: 11),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
+              Expanded(child: Text(isLocked ? 'Vinculado: ${user.deviceName ?? user.registeredHardwareId}' : 'Sin dispositivo asignado (Libre)', style: const TextStyle(color: Colors.white70, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis)),
             ],
           ),
-
           const SizedBox(height: 10),
-
-          // Botones de Acción Rápida
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              // Botón 1: Resetear Hardware
-              TextButton.icon(
-                onPressed: () => _quickResetHardware(user),
-                icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)),
-                label: const Text('Reset HW', style: TextStyle(color: Color(0xFFFFD600), fontSize: 11)),
-              ),
-              // Botón 2: +30 Días
-              TextButton.icon(
-                onPressed: () => _extendSubscription(user, 30),
-                icon: const Icon(Icons.add_circle_outline, size: 16, color: Color(0xFF00E676)),
-                label: const Text('+30 Días', style: TextStyle(color: Color(0xFF00E676), fontSize: 11)),
-              ),
-              // Botón 3: Generar PIN WhatsApp
-              IconButton(
-                icon: const Icon(Icons.pin, size: 18, color: Color(0xFF00E5FF)),
-                tooltip: 'Generar PIN Express',
-                onPressed: () => _generatePinAndShare(user),
-              ),
-              // Botón 4: Eliminar
-              IconButton(
-                icon: const Icon(Icons.delete_outline, size: 18, color: Colors.white38),
-                tooltip: 'Eliminar usuario',
-                onPressed: () => _deleteUser(user),
-              ),
+              TextButton.icon(onPressed: () => _quickResetHardware(user), icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), label: const Text('Reset HW', style: TextStyle(color: Color(0xFFFFD600), fontSize: 11))),
+              TextButton.icon(onPressed: () => _extendSubscription(user, 30), icon: const Icon(Icons.add_circle_outline, size: 16, color: Color(0xFF00E676)), label: const Text('+30 Días', style: TextStyle(color: Color(0xFF00E676), fontSize: 11))),
+              IconButton(onPressed: () => _generatePinAndShare(user), icon: const Icon(Icons.pin, size: 18, color: Color(0xFF00E5FF)), tooltip: 'PIN Express'),
+              IconButton(onPressed: () => _deleteUser(user), icon: const Icon(Icons.delete_outline, size: 18, color: Colors.white38), tooltip: 'Eliminar'),
             ],
           ),
         ],
@@ -505,15 +515,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   }
 
   Future<void> _quickResetHardware(UserModel user) async {
-    final ok = await AuthService.adminResetHardware(user.id);
-    if (mounted) {
+    final success = await AuthService.adminResetHardware(user.id);
+    if (success && mounted) {
       setState(() {});
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: ok ? const Color(0xFF00C853) : Colors.red,
-          content: Text(ok ? '⚡ Hardware de ${user.username} liberado al instante.' : 'Error liberando hardware.'),
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: const Color(0xFF00C853), content: Text('Dispositivo liberado para ${user.username}')));
     }
   }
 
@@ -527,33 +532,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
         builder: (ctx) => AlertDialog(
           backgroundColor: const Color(0xFF131A29),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text('PIN Generado para ${user.username}', style: const TextStyle(color: Colors.white, fontSize: 16)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Copiado al portapapeles. Pégalo en WhatsApp:', style: TextStyle(color: Colors.white70, fontSize: 13)),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF00E5FF).withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFF00E5FF)),
-                ),
-                child: Text(
-                  pin,
-                  style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 28, letterSpacing: 8, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx),
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E5FF)),
-              child: const Text('Listo', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-            ),
-          ],
+          title: Text('PIN para ${user.username}', style: const TextStyle(color: Colors.white, fontSize: 16)),
+          content: Text(pin, style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 28, letterSpacing: 8, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+          actions: [ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text('Listo'))],
         ),
       );
     }
@@ -561,15 +542,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
 
   Future<void> _extendSubscription(UserModel user, int days) async {
     final newExp = user.isExpired ? DateTime.now().add(Duration(days: days)) : user.expirationDate.add(Duration(days: days));
-    await AuthService.updateClientUser(user.id, {
-      'expirationDate': newExp.millisecondsSinceEpoch,
-      'isActive': true,
-    });
+    await AuthService.updateClientUser(user.id, {'expirationDate': newExp.toIso8601String(), 'isActive': true});
     if (mounted) {
       setState(() {});
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: const Color(0xFF00C853), content: Text('Suscripción de ${user.username} extendida +$days días.')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: const Color(0xFF00C853), content: Text('Suscripción extendida +$days días.')));
     }
   }
 
@@ -578,23 +554,164 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF131A29),
-        title: const Text('Eliminar Cliente', style: TextStyle(color: Colors.white)),
-        content: Text('¿Estás seguro de eliminar al usuario "${user.username}"?', style: const TextStyle(color: Colors.white70)),
+        title: const Text('¿Eliminar Registro?', style: TextStyle(color: Colors.white)),
+        content: Text('¿Seguro de eliminar a "${user.username}"?', style: const TextStyle(color: Colors.white70)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar', style: TextStyle(color: Colors.white54))),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Eliminar', style: TextStyle(color: Colors.white)),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red), child: const Text('Eliminar')),
         ],
       ),
     );
-
     if (confirm == true) {
       await AuthService.deleteClientUser(user.id);
       if (mounted) setState(() {});
     }
+  }
+
+  void _showCreateOptionsModal() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF101726),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('¿Qué tipo de cuenta deseas crear?', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            ListTile(
+              tileColor: const Color(0xFF131A29),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFF00E5FF))),
+              leading: const Icon(Icons.person_add, color: Color(0xFF00E5FF)),
+              title: const Text('Cliente Individual (1 Pantalla)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              subtitle: const Text('Vinculado a un solo teléfono o TV', style: TextStyle(color: Colors.white60, fontSize: 12)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showCreateUserModal();
+              },
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              tileColor: const Color(0xFF131A29),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFFC77DFF))),
+              leading: const Icon(Icons.family_restroom, color: Color(0xFFC77DFF)),
+              title: const Text('Grupo Familiar (Hasta 5 Pantallas)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              subtitle: const Text('El Jefe de Familia administra hasta 4 pantallas adicionales.', style: TextStyle(color: Colors.white60, fontSize: 12)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showCreateFamilyModal();
+              },
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showCreateFamilyModal() {
+    final familyNameCtrl = TextEditingController();
+    final adminUserCtrl = TextEditingController();
+    final adminPassCtrl = TextEditingController();
+    int selectedMonths = 1;
+    bool isVip = true;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF101726),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Padding(
+          padding: EdgeInsets.only(left: 20, right: 20, top: 20, bottom: MediaQuery.of(ctx).viewInsets.bottom + 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.family_restroom, color: Color(0xFFC77DFF)),
+                  SizedBox(width: 8),
+                  Text('Nuevo Grupo Familiar (5 Pantallas)', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: familyNameCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(labelText: 'Nombre de la Familia (Ej: Garcia, Acosta)', filled: true, fillColor: Colors.white.withOpacity(0.04), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: adminUserCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(labelText: 'Usuario del Jefe de Familia', filled: true, fillColor: Colors.white.withOpacity(0.04), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: adminPassCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(labelText: 'Contraseña del Jefe de Familia', filled: true, fillColor: Colors.white.withOpacity(0.04), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))),
+              ),
+              const SizedBox(height: 12),
+              const Text('Duración del Plan Familiar:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(height: 6),
+              Row(
+                children: [1, 3, 6, 12].map((months) {
+                  final sel = selectedMonths == months;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text('$months ${months == 1 ? "mes" : "meses"}'),
+                      selected: sel,
+                      onSelected: (_) => setModalState(() => selectedMonths = months),
+                      selectedColor: const Color(0xFFC77DFF),
+                      labelStyle: TextStyle(color: sel ? Colors.black : Colors.white70, fontWeight: sel ? FontWeight.bold : FontWeight.normal),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 10),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Paquete Familia VIP', style: TextStyle(color: Colors.white)),
+                subtitle: const Text('Si se apaga, será Familia Estándar', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                value: isVip,
+                activeColor: Colors.amber,
+                onChanged: (v) => setModalState(() => isVip = v),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () async {
+                  final famName = familyNameCtrl.text.trim();
+                  final uname = adminUserCtrl.text.trim();
+                  final pwd = adminPassCtrl.text.trim();
+                  if (famName.isEmpty || uname.isEmpty || pwd.isEmpty) return;
+
+                  await AuthService.createFamilyGroup(
+                    familyName: famName,
+                    adminUsername: uname,
+                    adminPassword: pwd,
+                    isVip: isVip,
+                    expirationDate: DateTime.now().add(Duration(days: selectedMonths * 30)),
+                  );
+
+                  if (context.mounted) {
+                    Navigator.pop(ctx);
+                    setState(() {});
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('¡Grupo Familiar "$famName" creado!')));
+                  }
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC77DFF), foregroundColor: Colors.black, minimumSize: const Size(double.infinity, 44)),
+                child: const Text('CREAR GRUPO FAMILIAR (5 CUPOS)', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _showCreateUserModal() {
@@ -610,12 +727,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => StatefulBuilder(
         builder: (context, setModalState) => Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-          ),
+          padding: EdgeInsets.only(left: 20, right: 20, top: 20, bottom: MediaQuery.of(context).viewInsets.bottom + 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -624,32 +736,20 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                 children: [
                   Icon(Icons.person_add, color: Color(0xFF00E5FF)),
                   SizedBox(width: 8),
-                  Text('Nuevo Cliente VIP', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text('Nuevo Cliente Individual (1 Pantalla)', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
                 ],
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: usernameCtrl,
                 style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'Nombre de Usuario',
-                  labelStyle: const TextStyle(color: Colors.white60),
-                  filled: true,
-                  fillColor: Colors.white.withOpacity(0.04),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                ),
+                decoration: InputDecoration(labelText: 'Nombre de Usuario', filled: true, fillColor: Colors.white.withOpacity(0.04), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: passwordCtrl,
                 style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'Contraseña',
-                  labelStyle: const TextStyle(color: Colors.white60),
-                  filled: true,
-                  fillColor: Colors.white.withOpacity(0.04),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                ),
+                decoration: InputDecoration(labelText: 'Contraseña', filled: true, fillColor: Colors.white.withOpacity(0.04), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))),
               ),
               const SizedBox(height: 14),
               const Text('Duración de Suscripción:', style: TextStyle(color: Colors.white70, fontSize: 12)),
@@ -700,11 +800,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     setState(() {});
                   }
                 },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00E5FF),
-                  foregroundColor: Colors.black,
-                  minimumSize: const Size(double.infinity, 44),
-                ),
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E5FF), foregroundColor: Colors.black, minimumSize: const Size(double.infinity, 44)),
                 child: const Text('CREAR Y GUARDAR CLIENTE', style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ],

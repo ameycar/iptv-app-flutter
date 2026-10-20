@@ -16,7 +16,7 @@ class UserModel {
   final DateTime? createdAt;
   final DateTime? lastActiveAt;
 
-  // Extensiones seguras para Grupos Familiares (Opcionales con valores por defecto)
+  // Campos para Grupos Familiares (Hasta 5 dispositivos)
   final String? familyId;
   final bool isFamilyAdmin;
   final String? familyPlan;
@@ -58,9 +58,9 @@ class UserModel {
 
   /// Verifica si el hardware actual coincide con el registrado (Tu método original)
   bool isHardwareAuthorized(String currentHardwareId) {
-    if (isAdmin) return true; // El administrador puede entrar desde cualquier dispositivo
+    if (isAdmin) return true;
     if (registeredHardwareId == null || registeredHardwareId!.isEmpty) {
-      return true; // Aún no tiene hardware asignado, se asignará el actual en el primer inicio
+      return true;
     }
     return registeredHardwareId == currentHardwareId;
   }
