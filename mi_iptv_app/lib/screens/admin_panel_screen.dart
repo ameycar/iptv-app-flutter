@@ -1,7 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 
@@ -62,10 +61,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
         icon: const Icon(Icons.person_add_alt_1),
         label: const Text('Nuevo Cliente', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('users').snapshots(),
+      body: StreamBuilder<List<UserModel>>(
+        stream: AuthService.getUsersStream(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+          if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
             return const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF)));
           }
 
@@ -75,8 +74,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             );
           }
 
-          final docs = snapshot.data?.docs ?? [];
-          final allUsers = docs.map((d) => UserModel.fromMap(d.id, d.data() as Map<String, dynamic>)).toList();
+          final allUsers = snapshot.data ?? [];
 
           // Filtrar admins y usuarios según búsqueda y tabs
           final clientUsers = allUsers.where((u) => !u.isAdmin).toList();
@@ -106,6 +104,30 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Banner informativo de modo local / nube
+                      if (!AuthService.isFirebaseAvailable)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 14),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF00E5FF).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.35)),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.shield, color: Color(0xFF00E5FF), size: 18),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Modo Autónomo Local Activo (Base de datos segura en este equipo).',
+                                  style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
                       _buildStatsRow(
                         total: clientUsers.length,
                         active: activeUsers.length,
@@ -134,7 +156,26 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                 const SliverFillRemaining(
                   hasScrollBody: false,
                   child: Center(
-                    child: Text('No hay clientes en esta categoría.', style: TextStyle(color: Colors.white54)),
+                    child: Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.person_outline, color: Colors.white24, size: 48),
+                          SizedBox(height: 8),
+                          Text(
+                            'No hay clientes registrados aún.',
+                            style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Toca "Nuevo Cliente" abajo a la derecha para crear tu primer usuario.',
+                            style: TextStyle(color: Colors.white38, fontSize: 12),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 )
               else
@@ -394,8 +435,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               Switch(
                 value: user.isActive,
                 activeColor: const Color(0xFF00E676),
-                onChanged: (val) {
-                  FirebaseFirestore.instance.collection('users').doc(user.id).update({'isActive': val});
+                onChanged: (val) async {
+                  await AuthService.updateClientUser(user.id, {'isActive': val});
+                  setState(() {});
                 },
               ),
             ],
@@ -465,6 +507,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   Future<void> _quickResetHardware(UserModel user) async {
     final ok = await AuthService.adminResetHardware(user.id);
     if (mounted) {
+      setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: ok ? const Color(0xFF00C853) : Colors.red,
@@ -477,6 +520,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   Future<void> _generatePinAndShare(UserModel user) async {
     final pin = await AuthService.adminGenerateExpressPin(user.id);
     if (pin != null && mounted) {
+      setState(() {});
       Clipboard.setData(ClipboardData(text: pin));
       showDialog(
         context: context,
@@ -517,11 +561,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
 
   Future<void> _extendSubscription(UserModel user, int days) async {
     final newExp = user.isExpired ? DateTime.now().add(Duration(days: days)) : user.expirationDate.add(Duration(days: days));
-    await FirebaseFirestore.instance.collection('users').doc(user.id).update({
-      'expirationDate': Timestamp.fromDate(newExp),
+    await AuthService.updateClientUser(user.id, {
+      'expirationDate': newExp.millisecondsSinceEpoch,
       'isActive': true,
     });
     if (mounted) {
+      setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(backgroundColor: const Color(0xFF00C853), content: Text('Suscripción de ${user.username} extendida +$days días.')),
       );
@@ -547,7 +592,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
 
     if (confirm == true) {
-      await FirebaseFirestore.instance.collection('users').doc(user.id).delete();
+      await AuthService.deleteClientUser(user.id);
+      if (mounted) setState(() {});
     }
   }
 
@@ -638,9 +684,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                   final pwd = passwordCtrl.text.trim();
                   if (uname.isEmpty || pwd.isEmpty) return;
 
-                  final docRef = FirebaseFirestore.instance.collection('users').doc();
+                  final id = 'usr_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(9999)}';
                   final newUser = UserModel(
-                    id: docRef.id,
+                    id: id,
                     username: uname,
                     password: pwd,
                     role: 'user',
@@ -648,8 +694,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     isVip: isVip,
                     expirationDate: DateTime.now().add(Duration(days: selectedMonths * 30)),
                   );
-                  await docRef.set(newUser.toMap());
-                  if (context.mounted) Navigator.pop(ctx);
+                  await AuthService.createClientUser(newUser);
+                  if (context.mounted) {
+                    Navigator.pop(ctx);
+                    setState(() {});
+                  }
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF00E5FF),
