@@ -17,14 +17,35 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _deviceNameCtrl = TextEditingController();
+  final _voucherCtrl = TextEditingController();
   bool _memberIsVip = false;
   bool _isSaving = false;
+  int _selectedAvatar = 1;
+
+  final List<Color> _avatarColors = [
+    const Color(0xFF00E5FF),
+    const Color(0xFF7B2CBF),
+    const Color(0xFFFF007A),
+    const Color(0xFF00E676),
+    const Color(0xFFFFD600),
+    const Color(0xFFFF5252),
+  ];
+
+  final List<IconData> _avatarIcons = [
+    Icons.face,
+    Icons.sentiment_very_satisfied,
+    Icons.pets,
+    Icons.sports_esports,
+    Icons.rocket_launch,
+    Icons.movie,
+  ];
 
   @override
   void dispose() {
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
     _deviceNameCtrl.dispose();
+    _voucherCtrl.dispose();
     super.dispose();
   }
 
@@ -42,7 +63,8 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
     _usernameCtrl.clear();
     _passwordCtrl.clear();
     _deviceNameCtrl.clear();
-    _memberIsVip = adminUser.familyPlan == 'vip';
+    _selectedAvatar = currentCount % _avatarIcons.length;
+    _memberIsVip = adminUser.familyPlan == 'vip' || adminUser.isVip;
 
     showModalBottomSheet(
       context: context,
@@ -100,7 +122,35 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 18),
+
+                  const Text('Elige un Ícono / Avatar:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: List.generate(_avatarIcons.length, (idx) {
+                      final isSelected = _selectedAvatar == idx;
+                      final col = _avatarColors[idx];
+                      return GestureDetector(
+                        onTap: () => setModalState(() => _selectedAvatar = idx),
+                        child: Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: col.withOpacity(isSelected ? 0.35 : 0.12),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isSelected ? col : Colors.white24,
+                              width: isSelected ? 2.5 : 1,
+                            ),
+                          ),
+                          child: Icon(_avatarIcons[idx], color: col, size: 22),
+                        ),
+                      );
+                    }),
+                  ),
+
+                  const SizedBox(height: 18),
                   TextFormField(
                     controller: _deviceNameCtrl,
                     style: const TextStyle(color: Colors.white),
@@ -146,7 +196,7 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                     validator: (v) => v == null || v.trim().length < 4 ? 'Mínimo 4 caracteres' : null,
                   ),
                   const SizedBox(height: 16),
-                  if (adminUser.familyPlan == 'vip') ...[
+                  if (adminUser.familyPlan == 'vip' || adminUser.isVip) ...[
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: _memberIsVip,
@@ -170,14 +220,16 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                         setModalState(() => _isSaving = true);
                         try {
                           await AuthService.addFamilyMember(
-                            familyId: adminUser.familyId!,
+                            familyId: adminUser.effectiveFamilyId,
                             username: _usernameCtrl.text,
                             password: _passwordCtrl.text,
                             memberName: _deviceNameCtrl.text,
                             overrideVip: _memberIsVip,
+                            avatarIndex: _selectedAvatar,
                           );
                           if (mounted) {
                             Navigator.pop(modalCtx);
+                            setState(() {});
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 backgroundColor: Color(0xFF10B981),
@@ -207,10 +259,80 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
     );
   }
 
+  void _showRedeemVoucherModal(BuildContext context, UserModel currentUser) {
+    _voucherCtrl.clear();
+    showDialog(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF161B26),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xFF00E676), width: 1.5),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.confirmation_number_outlined, color: Color(0xFF00E676)),
+            SizedBox(width: 10),
+            Text('Renovar Plan Familiar', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Ingresa tu PIN de activación o código prepago (WhatsApp / Mercado Pago) para extender las 5 pantallas al mismo tiempo:',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _voucherCtrl,
+              textCapitalization: TextCapitalization.characters,
+              style: const TextStyle(color: Color(0xFF00E676), fontSize: 18, letterSpacing: 2, fontWeight: FontWeight.bold),
+              decoration: InputDecoration(
+                hintText: 'AMEY-30D-XXXX',
+                hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 1),
+                filled: true,
+                fillColor: Colors.black38,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676), foregroundColor: Colors.black),
+            onPressed: () async {
+              final code = _voucherCtrl.text.trim();
+              if (code.isEmpty) return;
+              Navigator.pop(dCtx);
+
+              final res = await AuthService.redeemActivationPin(code);
+              if (mounted) {
+                setState(() {});
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    backgroundColor: res.isSuccess ? const Color(0xFF00E676) : Colors.redAccent,
+                    content: Text(res.message, style: TextStyle(color: res.isSuccess ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                );
+              }
+            },
+            child: const Text('Canjear Código', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUser = AuthService.currentUser;
-    if (currentUser == null || !currentUser.isFamilyGroupAdmin || currentUser.familyId == null) {
+    if (currentUser == null || !currentUser.isFamilyGroupAdmin || currentUser.effectiveFamilyId.isEmpty) {
       return Scaffold(
         backgroundColor: const Color(0xFF0D1117),
         appBar: AppBar(title: const Text('Panel Familiar'), backgroundColor: Colors.transparent),
@@ -220,8 +342,8 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
       );
     }
 
-    final familyId = currentUser.familyId!;
-    final isVipPlan = currentUser.familyPlan == 'vip';
+    final familyId = currentUser.effectiveFamilyId;
+    final isVipPlan = currentUser.familyPlan == 'vip' || currentUser.isVip;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0B0F17),
@@ -251,6 +373,16 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Renovar con PIN / Voucher',
+            icon: const Icon(Icons.confirmation_number_outlined, color: Color(0xFF00E676)),
+            onPressed: () => _showRedeemVoucherModal(context, currentUser),
+          ),
+          IconButton(
+            tooltip: 'Actualizar',
+            icon: const Icon(Icons.refresh, color: Colors.white70),
+            onPressed: () => setState(() {}),
+          ),
           IconButton(
             tooltip: 'Cerrar Sesión',
             icon: const Icon(Icons.logout, color: Colors.white70),
@@ -361,6 +493,8 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                   itemBuilder: (ctx, idx) {
                     final member = members[idx];
                     final isHeadOfFamily = member.isFamilyAdmin;
+                    final avatarColor = _avatarColors[member.avatarIndex % _avatarColors.length];
+                    final avatarIcon = _avatarIcons[member.avatarIndex % _avatarIcons.length];
 
                     return Card(
                       color: const Color(0xFF161B26),
@@ -378,20 +512,41 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                           children: [
                             Row(
                               children: [
-                                Icon(
-                                  isHeadOfFamily ? Icons.star_rounded : Icons.tv_rounded,
-                                  color: isHeadOfFamily ? const Color(0xFFFFD600) : const Color(0xFF8B5CF6),
-                                  size: 24,
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: avatarColor.withOpacity(0.2),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: avatarColor, width: 1.5),
+                                  ),
+                                  child: Icon(avatarIcon, color: avatarColor, size: 22),
                                 ),
-                                const SizedBox(width: 10),
+                                const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        member.deviceName ?? member.username,
-                                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            member.deviceName ?? member.username,
+                                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                                          ),
+                                          if (isHeadOfFamily) ...[
+                                            const SizedBox(width: 6),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFF8B5CF6).withOpacity(0.2),
+                                                borderRadius: BorderRadius.circular(6),
+                                              ),
+                                              child: const Text('JEFE', style: TextStyle(color: Color(0xFFC4B5FD), fontSize: 9.5, fontWeight: FontWeight.bold)),
+                                            ),
+                                          ],
+                                        ],
                                       ),
+                                      const SizedBox(height: 2),
                                       Text(
                                         'Usuario: ${member.username} | Clave: ${member.password}',
                                         style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
@@ -444,9 +599,12 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                                     ),
                                     onPressed: () async {
                                       await AuthService.adminResetHardware(member.id);
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('Dispositivo desvinculado. Puede conectarse en otro TV.')),
-                                      );
+                                      if (mounted) {
+                                        setState(() {});
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('Dispositivo desvinculado. Puede conectarse en otro TV.')),
+                                        );
+                                      }
                                     },
                                     icon: const Icon(Icons.refresh, size: 14),
                                     label: const Text('Cambiar TV / Liberar', style: TextStyle(fontSize: 11)),
@@ -471,6 +629,7 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                                       );
                                       if (confirm == true) {
                                         await AuthService.deleteClientUser(member.id);
+                                        if (mounted) setState(() {});
                                       }
                                     },
                                   ),

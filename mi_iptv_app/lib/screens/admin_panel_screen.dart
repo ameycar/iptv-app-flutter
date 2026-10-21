@@ -41,6 +41,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.confirmation_number_outlined, color: Color(0xFF00E676)),
+            tooltip: 'Pines de Activación 24/7',
+            onPressed: () => _showPinsManagerModal(context),
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh, color: Colors.white70),
             tooltip: 'Refrescar',
             onPressed: () => setState(() {}),
@@ -579,7 +584,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('¿Qué tipo de cuenta deseas crear?', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+            const Text('¿Qué tipo de registro deseas realizar?', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
             ListTile(
               tileColor: const Color(0xFF131A29),
@@ -602,6 +607,18 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               onTap: () {
                 Navigator.pop(ctx);
                 _showCreateFamilyModal();
+              },
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              tileColor: const Color(0xFF131A29),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFF00E676))),
+              leading: const Icon(Icons.confirmation_number_outlined, color: Color(0xFF00E676)),
+              title: const Text('Generar Pines de Activación 24/7 (Vouchers)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              subtitle: const Text('Códigos prepagados para WhatsApp, Mercadolibre o revendedores.', style: TextStyle(color: Colors.white60, fontSize: 12)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showPinsManagerModal(context);
               },
             ),
             const SizedBox(height: 10),
@@ -804,6 +821,254 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                 child: const Text('CREAR Y GUARDAR CLIENTE', style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showPinsManagerModal(BuildContext context) {
+    int count = 5;
+    int days = 30;
+    bool isVip = true;
+    bool isGenerating = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF101726),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.85,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.confirmation_number, color: Color(0xFF00E676)),
+                        SizedBox(width: 8),
+                        Text(
+                          'Pines de Activación 24/7',
+                          style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white54),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Genera lotes de códigos para clientes o revendedores. Al canjearlos en la app, la cuenta se extiende automáticamente.',
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+                const SizedBox(height: 14),
+
+                // GENERADOR RÁPIDO
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF131A29),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Generar Nuevo Lote:', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              value: count,
+                              dropdownColor: const Color(0xFF131A29),
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              decoration: InputDecoration(
+                                labelText: 'Cantidad',
+                                labelStyle: const TextStyle(color: Colors.white60, fontSize: 11),
+                                filled: true,
+                                fillColor: Colors.black26,
+                                isDense: true,
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 1, child: Text('1 PIN')),
+                                DropdownMenuItem(value: 5, child: Text('5 Pines')),
+                                DropdownMenuItem(value: 10, child: Text('10 Pines')),
+                                DropdownMenuItem(value: 25, child: Text('25 Pines')),
+                              ],
+                              onChanged: (v) => setModalState(() => count = v ?? 5),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              value: days,
+                              dropdownColor: const Color(0xFF131A29),
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                              decoration: InputDecoration(
+                                labelText: 'Duración',
+                                labelStyle: const TextStyle(color: Colors.white60, fontSize: 11),
+                                filled: true,
+                                fillColor: Colors.black26,
+                                isDense: true,
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 30, child: Text('30 Días (1M)')),
+                                DropdownMenuItem(value: 90, child: Text('90 Días (3M)')),
+                                DropdownMenuItem(value: 365, child: Text('365 Días (1A)')),
+                              ],
+                              onChanged: (v) => setModalState(() => days = v ?? 30),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Checkbox(
+                                value: isVip,
+                                activeColor: Colors.amber,
+                                onChanged: (v) => setModalState(() => isVip = v ?? true),
+                              ),
+                              const Text('VIP', style: TextStyle(color: Colors.white, fontSize: 12)),
+                            ],
+                          ),
+                          ElevatedButton.icon(
+                            icon: const Icon(Icons.bolt, size: 16),
+                            label: Text(isGenerating ? 'Generando...' : 'Crear Pines'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF00E676),
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            ),
+                            onPressed: isGenerating
+                                ? null
+                                : () async {
+                                    setModalState(() => isGenerating = true);
+                                    final codes = await AuthService.generateActivationPins(
+                                      count: count,
+                                      days: days,
+                                      isVip: isVip,
+                                    );
+                                    setModalState(() => isGenerating = false);
+                                    if (ctx.mounted) {
+                                      Clipboard.setData(ClipboardData(text: codes.join('\n')));
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('¡${count} Pines generados y copiados al portapapeles!'),
+                                          backgroundColor: const Color(0xFF00E676),
+                                        ),
+                                      );
+                                    }
+                                  },
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text('Pines en el Sistema:', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+
+                // LISTA DE PINES EN TIEMPO REAL
+                Expanded(
+                  child: StreamBuilder<List<ActivationPinModel>>(
+                    stream: AuthService.getActivationPinsStream(),
+                    builder: (context, snapshot) {
+                      final pins = snapshot.data ?? [];
+                      if (pins.isEmpty) {
+                        return const Center(
+                          child: Text(
+                            'No hay pines generados aún.\nGenera el primer lote arriba.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white38, fontSize: 13),
+                          ),
+                        );
+                      }
+
+                      return ListView.builder(
+                        itemCount: pins.length,
+                        itemBuilder: (ctx, i) {
+                          final pin = pins[i];
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF131A29),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: pin.isUsed ? Colors.white10 : const Color(0xFF00E676).withOpacity(0.3),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  pin.isUsed ? Icons.check_circle_outline : Icons.confirmation_number_outlined,
+                                  color: pin.isUsed ? Colors.white38 : const Color(0xFF00E676),
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        pin.code,
+                                        style: TextStyle(
+                                          color: pin.isUsed ? Colors.white54 : Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                          letterSpacing: 1,
+                                          decoration: pin.isUsed ? TextDecoration.lineThrough : null,
+                                        ),
+                                      ),
+                                      Text(
+                                        pin.isUsed
+                                            ? 'Canjeado por ${pin.usedBy ?? "Cliente"}'
+                                            : '+${pin.days} Días • ${pin.isVip ? "VIP" : "Estándar"} • Disponible',
+                                        style: TextStyle(
+                                          color: pin.isUsed ? Colors.white38 : const Color(0xFF00E5FF),
+                                          fontSize: 10.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.copy, size: 16, color: Colors.white54),
+                                  tooltip: 'Copiar PIN',
+                                  onPressed: () {
+                                    Clipboard.setData(ClipboardData(text: pin.code));
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('PIN ${pin.code} copiado')),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -12,6 +12,7 @@ enum AuthStatus {
   invalidCredentials,
   accountDisabled,
   subscriptionExpired,
+  accountExpired,
   hardwareMismatch,
   adminDeviceUnauthorized,
   error,
@@ -33,19 +34,27 @@ class AuthResponse {
 
 class AuthService {
   static const String _usersCollection = 'users';
-  static const String _sessionCollection = 'active_sessions';
+  static const String _pinsCollection = 'activation_pins';
   static const String _kLocalUsersDbKey = 'local_mock_users_db_v2';
+  static const String _kActivationPinsKey = 'ameycar_activation_pins_db_v1';
   static const String _kSessionUserKey = 'current_logged_user_id';
+  static const String _kActiveProfileKey = 'current_active_profile_id';
   static const String _kAdminDeviceIdKey = 'authorized_superadmin_hwid';
 
   // LLAVE MAESTRA DE EMERGENCIA (Para autorizar un nuevo dispositivo del Admin)
   static const String superAdminMasterKey = 'AMEYCAR-ROOT-2026';
+  static const String masterRecoveryKey = 'AMEYCAR-ROOT-2026';
 
   static UserModel? _currentUser;
+  static UserModel? _currentActiveProfile;
   static UserModel? get currentUser => _currentUser;
+  static UserModel? get currentActiveProfile => _currentActiveProfile ?? _currentUser;
 
   static final StreamController<List<UserModel>> _localUsersStreamController =
       StreamController<List<UserModel>>.broadcast();
+
+  static final StreamController<List<ActivationPinModel>> _localPinsStreamController =
+      StreamController<List<ActivationPinModel>>.broadcast();
 
   static bool get isFirebaseAvailable {
     try {
@@ -55,8 +64,16 @@ class AuthService {
     }
   }
 
+  static bool get isLoggedIn => _currentUser != null;
   static bool get isAdmin => _currentUser?.isAdmin ?? false;
   static bool get isFamilyAdmin => _currentUser?.isFamilyGroupAdmin ?? false;
+
+  /// Establece el perfil activo de la familia (Disney+ Style)
+  static Future<void> setActiveProfile(UserModel profile) async {
+    _currentActiveProfile = profile;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kActiveProfileKey, profile.id);
+  }
 
   /// Obtiene o genera el Hardware ID único del dispositivo
   static Future<String> getDeviceHardwareId() async {
@@ -202,6 +219,7 @@ class AuthService {
           }
 
           _currentUser = user;
+          _currentActiveProfile = user;
           await _saveSession(user.id);
           return AuthResponse(status: AuthStatus.success, user: user, message: 'Bienvenido Administrador');
         }
@@ -214,6 +232,7 @@ class AuthService {
             'lastActiveAt': FieldValue.serverTimestamp(),
           });
           _currentUser = user.copyWith(registeredHardwareId: hardwareId);
+          _currentActiveProfile = _currentUser;
           await _saveSession(user.id);
           return AuthResponse(status: AuthStatus.success, user: _currentUser, message: 'Dispositivo vinculado con éxito.');
         } else if (user.registeredHardwareId != hardwareId) {
@@ -228,6 +247,7 @@ class AuthService {
           'lastActiveAt': FieldValue.serverTimestamp(),
         });
         _currentUser = user;
+        _currentActiveProfile = user;
         await _saveSession(user.id);
         return AuthResponse(status: AuthStatus.success, user: user, message: 'Acceso concedido.');
       }
@@ -278,6 +298,7 @@ class AuthService {
         }
 
         _currentUser = user;
+        _currentActiveProfile = user;
         await _saveSession(user.id);
         return AuthResponse(status: AuthStatus.success, user: user, message: 'Bienvenido Administrador');
       }
@@ -286,6 +307,7 @@ class AuthService {
         final updatedUser = user.copyWith(registeredHardwareId: hardwareId);
         await _saveLocalUser(updatedUser);
         _currentUser = updatedUser;
+        _currentActiveProfile = updatedUser;
         await _saveSession(user.id);
         return AuthResponse(status: AuthStatus.success, user: _currentUser, message: 'Dispositivo vinculado.');
       } else if (user.registeredHardwareId != hardwareId) {
@@ -297,6 +319,7 @@ class AuthService {
       }
 
       _currentUser = user;
+      _currentActiveProfile = user;
       await _saveSession(user.id);
       return AuthResponse(status: AuthStatus.success, user: user, message: 'Acceso concedido.');
     } catch (e) {
@@ -305,7 +328,7 @@ class AuthService {
   }
 
   // ============================================================
-  // GESTIÓN DE PLANES FAMILIARES (HASTA 5 DISPOSITIVOS)
+  // GESTIÓN DE PLANES FAMILIARES (HASTA 5 DISPOSITIVOS) DISNEY+
   // ============================================================
 
   static Future<void> createFamilyGroup({
@@ -325,11 +348,13 @@ class AuthService {
       isActive: true,
       isVip: isVip,
       expirationDate: expirationDate,
+      deviceName: 'Pantalla Principal ($adminUsername)',
       maxScreens: 5,
       familyId: familyId,
       isFamilyAdmin: true,
       familyPlan: isVip ? 'vip' : 'standard',
       familyAdminUsername: adminUsername.trim(),
+      avatarIndex: 0,
       createdAt: DateTime.now(),
       lastActiveAt: DateTime.now(),
     );
@@ -346,54 +371,107 @@ class AuthService {
     }
   }
 
-  static Future<void> addFamilyMember({
+  /// Agrega un perfil/pantalla al grupo familiar (máximo 5 pantallas en total)
+  static Future<bool> addFamilyMember({
     required String familyId,
     required String username,
     required String password,
-    required String familyAdminUsername,
-    required bool isVip,
-    required DateTime expirationDate,
+    String? memberName,
+    String? familyAdminUsername,
+    bool? isVip,
+    bool? overrideVip,
+    DateTime? expirationDate,
+    int avatarIndex = 1,
+    String? pinCode,
   }) async {
+    final currentMembers = await getFamilyMembers(familyId);
+    if (currentMembers.length >= 5) {
+      throw Exception('Límite alcanzado: Este grupo familiar ya tiene el cupo máximo de 5 pantallas activas.');
+    }
+
+    final familyAdmin = currentMembers.firstWhere(
+      (u) => u.isFamilyAdmin,
+      orElse: () => currentMembers.isNotEmpty ? currentMembers.first : _currentUser!,
+    );
+
+    final bool isMemberVip = overrideVip ?? isVip ?? familyAdmin.isVip;
+    final expDate = expirationDate ?? familyAdmin.expirationDate;
+
     final memberUser = UserModel(
-      id: isFirebaseAvailable ? FirebaseFirestore.instance.collection(_usersCollection).doc().id : 'member_${DateTime.now().millisecondsSinceEpoch}',
+      id: isFirebaseAvailable
+          ? FirebaseFirestore.instance.collection(_usersCollection).doc().id
+          : 'member_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
       username: username.trim().toLowerCase(),
       password: password.trim(),
       role: 'user',
       isActive: true,
-      isVip: isVip,
-      expirationDate: expirationDate,
+      isVip: isMemberVip,
+      expirationDate: expDate,
+      deviceName: memberName ?? username,
       maxScreens: 1,
       familyId: familyId,
       isFamilyAdmin: false,
-      familyPlan: isVip ? 'vip' : 'standard',
-      familyAdminUsername: familyAdminUsername,
+      familyPlan: familyAdmin.familyPlan ?? (isMemberVip ? 'vip' : 'standard'),
+      familyAdminUsername: familyAdminUsername ?? familyAdmin.username,
+      avatarIndex: avatarIndex,
+      pinCode: pinCode,
       createdAt: DateTime.now(),
       lastActiveAt: DateTime.now(),
     );
 
-    if (isFirebaseAvailable) {
-      await FirebaseFirestore.instance
-          .collection(_usersCollection)
-          .doc(memberUser.id)
-          .set(memberUser.toMap());
-    } else {
-      final list = await _getLocalUsers();
-      list.add(memberUser);
-      await _saveLocalUsers(list);
-    }
+    await createClientUser(memberUser);
+    return true;
   }
 
+  /// Obtiene los miembros de una familia específica
+  static Future<List<UserModel>> getFamilyMembers(String familyId) async {
+    final cleanId = familyId.trim();
+    if (isFirebaseAvailable) {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection(_usersCollection)
+            .where('familyId', isEqualTo: cleanId)
+            .get();
+        if (snap.docs.isNotEmpty) {
+          return snap.docs.map((d) => UserModel.fromMap(d.id, d.data())).toList();
+        }
+      } catch (e) {
+        debugPrint('Error en getFamilyMembers Firestore: $e');
+      }
+    }
+    final all = await _getLocalUsers();
+    final list = all.where((u) => u.effectiveFamilyId == cleanId || u.familyId == cleanId).toList();
+    if (list.isEmpty && _currentUser != null && _currentUser!.effectiveFamilyId == cleanId) {
+      list.add(_currentUser!);
+    }
+    return list;
+  }
+
+  /// Stream reactivo de los miembros de una familia
   static Stream<List<UserModel>> getFamilyMembersStream(String familyId) {
+    final cleanId = familyId.trim();
     if (isFirebaseAvailable) {
       return FirebaseFirestore.instance
           .collection(_usersCollection)
-          .where('familyId', isEqualTo: familyId)
+          .where('familyId', isEqualTo: cleanId)
           .snapshots()
           .map((snap) => snap.docs.map((d) => UserModel.fromMap(d.id, d.data())).toList());
     } else {
-      return _localUsersStreamController.stream.map(
-        (users) => users.where((u) => u.familyId == familyId).toList(),
-      );
+      final controller = StreamController<List<UserModel>>.broadcast();
+      getFamilyMembers(cleanId).then((initialList) {
+        if (!controller.isClosed) controller.add(initialList);
+      });
+      final sub = _localUsersStreamController.stream.listen((allUsers) {
+        if (!controller.isClosed) {
+          final list = allUsers.where((u) => u.effectiveFamilyId == cleanId || u.familyId == cleanId).toList();
+          if (list.isEmpty && _currentUser != null && _currentUser!.effectiveFamilyId == cleanId) {
+            list.add(_currentUser!);
+          }
+          controller.add(list);
+        }
+      });
+      controller.onCancel = () => sub.cancel();
+      return controller.stream;
     }
   }
 
@@ -415,12 +493,219 @@ class AuthService {
     } else {
       final list = await _getLocalUsers();
       for (int i = 0; i < list.length; i++) {
-        if (list[i].familyId == familyId) {
+        if (list[i].familyId == familyId || list[i].effectiveFamilyId == familyId) {
           final base = list[i].expirationDate.isAfter(DateTime.now()) ? list[i].expirationDate : DateTime.now();
           list[i] = list[i].copyWith(expirationDate: base.add(Duration(days: additionalDays)));
         }
       }
       await _saveLocalUsers(list);
+    }
+  }
+
+  // ============================================================
+  // SISTEMA FINTECH: PINES PREPAGO 24/7 Y AUTORRENOVACIÓN
+  // ============================================================
+
+  /// Canjea un PIN Prepago de Activación (30, 90, 365 días)
+  static Future<AuthResponse> redeemActivationPin({
+    required String pinCode,
+    String? userId,
+  }) async {
+    try {
+      final cleanCode = pinCode.trim().toUpperCase();
+      if (cleanCode.isEmpty) {
+        return AuthResponse(status: AuthStatus.error, message: 'Ingresa un código de PIN válido.');
+      }
+
+      final pins = await getActivationPins();
+      final pinIdx = pins.indexWhere((p) => p.code == cleanCode);
+
+      if (pinIdx == -1) {
+        return AuthResponse(status: AuthStatus.error, message: 'El PIN ingresado no existe en el sistema.');
+      }
+
+      final pin = pins[pinIdx];
+      if (pin.isUsed) {
+        return AuthResponse(status: AuthStatus.error, message: 'Este PIN ya fue utilizado previamente.');
+      }
+
+      final targetUser = userId != null
+          ? (await _getLocalUsers()).firstWhere((u) => u.id == userId, orElse: () => _currentUser!)
+          : _currentUser;
+
+      if (targetUser == null) {
+        return AuthResponse(status: AuthStatus.error, message: 'No hay usuario autenticado para aplicar el PIN.');
+      }
+
+      // Marcar PIN como usado
+      final updatedPin = ActivationPinModel(
+        code: pin.code,
+        days: pin.days,
+        isVip: pin.isVip,
+        isUsed: true,
+        usedBy: targetUser.username,
+        usedAt: DateTime.now(),
+        createdAt: pin.createdAt,
+      );
+      pins[pinIdx] = updatedPin;
+      await _saveLocalPins(pins);
+
+      // Aplicar días a la cuenta
+      final baseDate = targetUser.isExpired ? DateTime.now() : targetUser.expirationDate;
+      final newExpiration = baseDate.add(Duration(days: pin.days));
+
+      // Si es parte de una familia, renueva a toda la familia
+      if (targetUser.isFamilyAdmin && targetUser.isPartOfFamily) {
+        await renewFamilyGroup(targetUser.effectiveFamilyId, pin.days);
+      } else {
+        await updateClientUser(targetUser.id, {
+          'expirationDate': newExpiration.toIso8601String(),
+          'isActive': true,
+          if (pin.isVip) 'isVip': true,
+        });
+      }
+
+      if (_currentUser?.id == targetUser.id) {
+        _currentUser = _currentUser?.copyWith(
+          expirationDate: newExpiration,
+          isActive: true,
+          isVip: pin.isVip ? true : _currentUser?.isVip,
+        );
+      }
+
+      return AuthResponse(
+        status: AuthStatus.success,
+        user: _currentUser,
+        message: '¡Suscripción renovada exitosamente por +${pin.days} días!',
+      );
+    } catch (e) {
+      return AuthResponse(status: AuthStatus.error, message: 'Error procesando PIN: $e');
+    }
+  }
+
+  /// Genera lote de Pines Prepago para que el CEO los venda por WhatsApp o revendedores
+  static Future<List<String>> generateActivationPins({
+    required int count,
+    required int days,
+    bool isVip = true,
+  }) async {
+    final existingPins = await getActivationPins();
+    final List<String> newCodes = [];
+    final random = Random();
+
+    for (int i = 0; i < count; i++) {
+      final suffix = random.nextInt(9000) + 1000;
+      final code = 'AMEY-${days}D-$suffix';
+      final pin = ActivationPinModel(
+        code: code,
+        days: days,
+        isVip: isVip,
+        isUsed: false,
+        createdAt: DateTime.now(),
+      );
+      existingPins.insert(0, pin);
+      newCodes.add(code);
+    }
+
+    await _saveLocalPins(existingPins);
+    return newCodes;
+  }
+
+  /// Obtiene la lista de todos los Pines generados
+  static Future<List<ActivationPinModel>> getActivationPins() async {
+    if (isFirebaseAvailable) {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection(_pinsCollection)
+            .orderBy('createdAt', descending: true)
+            .get();
+        if (snap.docs.isNotEmpty) {
+          return snap.docs.map((d) => ActivationPinModel.fromMap(d.data())).toList();
+        }
+      } catch (_) {}
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString(_kActivationPinsKey);
+    if (jsonStr == null || jsonStr.isEmpty) return [];
+    try {
+      final list = jsonDecode(jsonStr) as List;
+      return list.map((m) => ActivationPinModel.fromMap(Map<String, dynamic>.from(m))).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Stream en tiempo real de Pines
+  static Stream<List<ActivationPinModel>> getActivationPinsStream() {
+    final controller = StreamController<List<ActivationPinModel>>.broadcast();
+    getActivationPins().then((list) {
+      if (!controller.isClosed) controller.add(list);
+    });
+    final sub = _localPinsStreamController.stream.listen((list) {
+      if (!controller.isClosed) controller.add(list);
+    });
+    controller.onCancel = () => sub.cancel();
+    return controller.stream;
+  }
+
+  static Future<void> _saveLocalPins(List<ActivationPinModel> pins) async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(pins.map((p) => p.toMap()).toList());
+    await prefs.setString(_kActivationPinsKey, encoded);
+    _localPinsStreamController.add(pins);
+
+    if (isFirebaseAvailable) {
+      try {
+        for (final p in pins) {
+          await FirebaseFirestore.instance
+              .collection(_pinsCollection)
+              .doc(p.code)
+              .set(p.toMap(), SetOptions(merge: true));
+        }
+      } catch (_) {}
+    }
+  }
+
+  /// Simulación / Webhook de Pago Automático (Mercado Pago / Binance Pay)
+  static Future<AuthResponse> simulateAutomaticPayment({
+    required String userId,
+    required int days,
+    String paymentMethod = 'Pago Automático 24/7',
+  }) async {
+    try {
+      final users = await _getLocalUsers();
+      final idx = users.indexWhere((u) => u.id == userId);
+      if (idx == -1) {
+        return AuthResponse(status: AuthStatus.error, message: 'Usuario no encontrado.');
+      }
+
+      UserModel user = users[idx];
+      final baseDate = user.isExpired ? DateTime.now() : user.expirationDate;
+      final newExpiration = baseDate.add(Duration(days: days));
+
+      if (user.isFamilyAdmin && user.isPartOfFamily) {
+        await renewFamilyGroup(user.effectiveFamilyId, days);
+      } else {
+        await updateClientUser(user.id, {
+          'expirationDate': newExpiration.toIso8601String(),
+          'isActive': true,
+        });
+      }
+
+      if (_currentUser?.id == user.id) {
+        _currentUser = _currentUser?.copyWith(
+          expirationDate: newExpiration,
+          isActive: true,
+        );
+      }
+
+      return AuthResponse(
+        status: AuthStatus.success,
+        user: _currentUser,
+        message: '¡Pago recibido vía $paymentMethod! Suscripción extendida +$days días.',
+      );
+    } catch (e) {
+      return AuthResponse(status: AuthStatus.error, message: 'Error al procesar pago: $e');
     }
   }
 
@@ -532,6 +817,7 @@ class AuthService {
           'lastActiveAt': FieldValue.serverTimestamp(),
         });
         _currentUser = user.copyWith(registeredHardwareId: hardwareId);
+        _currentActiveProfile = _currentUser;
         await _saveSession(user.id);
         return AuthResponse(status: AuthStatus.success, user: _currentUser, message: '¡Hardware desbloqueado!');
       } else {
@@ -553,27 +839,12 @@ class AuthService {
         users[idx] = user;
         await _saveLocalUsers(users);
         _currentUser = user;
+        _currentActiveProfile = user;
         await _saveSession(user.id);
         return AuthResponse(status: AuthStatus.success, user: _currentUser, message: '¡Hardware desbloqueado!');
       }
     } catch (e) {
       return AuthResponse(status: AuthStatus.error, message: 'Error al canjear PIN: $e');
-    }
-  }
-
-  /// Escucha en tiempo real si el administrador liberó el hardware
-  static Stream<UserModel?> listenToUserRealtime(String userId) {
-    if (isFirebaseAvailable) {
-      return FirebaseFirestore.instance
-          .collection(_usersCollection)
-          .doc(userId)
-          .snapshots()
-          .map((doc) => doc.exists ? UserModel.fromMap(doc.id, doc.data()!) : null);
-    } else {
-      return _localUsersStreamController.stream.map((users) {
-        final found = users.where((u) => u.id == userId);
-        return found.isNotEmpty ? found.first : null;
-      });
     }
   }
 
@@ -585,11 +856,15 @@ class AuthService {
           .snapshots()
           .map((snap) => snap.docs.map((d) => UserModel.fromMap(d.id, d.data())).toList());
     } else {
-      Future.microtask(() async {
-        final list = await _getLocalUsers();
-        _localUsersStreamController.add(list);
+      final controller = StreamController<List<UserModel>>.broadcast();
+      _getLocalUsers().then((list) {
+        if (!controller.isClosed) controller.add(list);
       });
-      return _localUsersStreamController.stream;
+      final sub = _localUsersStreamController.stream.listen((list) {
+        if (!controller.isClosed) controller.add(list);
+      });
+      controller.onCancel = () => sub.cancel();
+      return controller.stream;
     }
   }
 
@@ -627,6 +902,9 @@ class AuthService {
         currentMap.addAll(updates);
         list[idx] = UserModel.fromMap(userId, currentMap);
         await _saveLocalUsers(list);
+        if (_currentUser?.id == userId) {
+          _currentUser = list[idx];
+        }
       }
     }
   }
@@ -662,6 +940,7 @@ class AuthService {
         }
 
         _currentUser = user;
+        _currentActiveProfile = user;
         return user;
       } else {
         final users = await _getLocalUsers();
@@ -680,6 +959,7 @@ class AuthService {
         }
 
         _currentUser = user;
+        _currentActiveProfile = user;
         return user;
       }
     } catch (e) {
@@ -690,8 +970,10 @@ class AuthService {
   /// Cierra sesión
   static Future<void> logout() async {
     _currentUser = null;
+    _currentActiveProfile = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kSessionUserKey);
+    await prefs.remove(_kActiveProfileKey);
   }
 
   // ==========================================

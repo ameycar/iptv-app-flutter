@@ -6,7 +6,7 @@ import '../services/auth_service.dart';
 import 'admin_panel_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  final VoidCallback onLoginSuccess;
+  final void Function({Widget? directScreen}) onLoginSuccess;
 
   const LoginScreen({
     super.key,
@@ -76,7 +76,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (res.isSuccess) {
       if (res.user?.isAdmin == true) {
-        // Redirigir al panel o entrar
+        // Redirigir al panel o entrar a ver canales
         _showAdminChoiceDialog();
       } else {
         widget.onLoginSuccess();
@@ -125,10 +125,7 @@ class _LoginScreenState extends State<LoginScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(ctx);
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
-              );
+              widget.onLoginSuccess(directScreen: const AdminPanelScreen());
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF00E5FF),
@@ -144,11 +141,10 @@ class _LoginScreenState extends State<LoginScreen> {
   void _showHardwareLockDialog(UserModel user) {
     _pendingUserId = user.id;
 
-    // Iniciar escucha en tiempo real: si el admin da 1 toque en su panel, se entra automáticamente
+    // Escucha en tiempo real: si el admin da 1 toque en su panel, se entra automáticamente
     _userRealtimeSub?.cancel();
     _userRealtimeSub = AuthService.listenToUserRealtime(user.id).listen((updatedUser) {
       if (updatedUser != null && updatedUser.registeredHardwareId == null) {
-        // ¡El admin liberó el hardware! Reintentar login automático
         if (mounted && Navigator.canPop(context)) {
           Navigator.pop(context);
         }
@@ -320,12 +316,12 @@ class _LoginScreenState extends State<LoginScreen> {
             onPressed: () async {
               final pin = _pinController.text.trim();
               if (pin.length != 4) return;
-              Navigator.pop(ctx); // Cerrar diálogo PIN
+              Navigator.pop(ctx);
 
               final res = await AuthService.unlockWithExpressPin(userId: userId, pin: pin);
               if (res.isSuccess) {
                 if (mounted && Navigator.canPop(context)) {
-                  Navigator.pop(context); // Cerrar diálogo HW Lock
+                  Navigator.pop(context);
                 }
                 widget.onLoginSuccess();
               } else {
@@ -357,7 +353,6 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Logo / Ícono de Marca
                   Container(
                     width: 76,
                     height: 76,
@@ -397,7 +392,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const SizedBox(height: 28),
 
-                  // Caja de Formulario
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -439,7 +433,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           const SizedBox(height: 16),
                         ],
 
-                        // Campo Usuario
                         const Text('Usuario', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 6),
                         TextField(
@@ -457,7 +450,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         const SizedBox(height: 16),
 
-                        // Campo Contraseña
                         const Text('Contraseña', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 6),
                         TextField(
@@ -483,7 +475,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         const SizedBox(height: 22),
 
-                        // Botón Ingresar
                         ElevatedButton(
                           onPressed: _isLoading ? null : _doLogin,
                           style: ElevatedButton.styleFrom(
@@ -510,7 +501,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const SizedBox(height: 20),
 
-                  // Chip de Hardware ID del dispositivo
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(

@@ -18,6 +18,8 @@ import 'services/epg_service.dart';
 import 'services/auth_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/admin_panel_screen.dart';
+import 'screens/family_panel_screen.dart';
+import 'screens/profile_selector_screen.dart';
 import 'widgets/alexa_voice_sheet.dart';
 import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
@@ -139,6 +141,8 @@ class AmeycarTVApp extends StatefulWidget {
 class _AmeycarTVAppState extends State<AmeycarTVApp> {
   bool _isCheckingAuth = true;
   bool _isAuthenticated = false;
+  bool _hasSelectedProfile = false;
+  Widget? _customDirectScreen;
 
   @override
   void initState() {
@@ -152,6 +156,8 @@ class _AmeycarTVAppState extends State<AmeycarTVApp> {
       if (mounted) {
         setState(() {
           _isAuthenticated = res != null;
+          _hasSelectedProfile = false;
+          _customDirectScreen = null;
           _isCheckingAuth = false;
         });
       }
@@ -159,6 +165,8 @@ class _AmeycarTVAppState extends State<AmeycarTVApp> {
       if (mounted) {
         setState(() {
           _isAuthenticated = false;
+          _hasSelectedProfile = false;
+          _customDirectScreen = null;
           _isCheckingAuth = false;
         });
       }
@@ -187,17 +195,39 @@ class _AmeycarTVAppState extends State<AmeycarTVApp> {
               ),
             )
           : _isAuthenticated
-              ? HomeScreen(
-                  onLogout: () {
-                    setState(() {
-                      _isAuthenticated = false;
-                    });
-                  },
-                )
+              ? (_customDirectScreen != null)
+                  ? _customDirectScreen!
+                  : (AuthService.currentUser?.isPartOfFamily == true && !_hasSelectedProfile)
+                      ? ProfileSelectorScreen(
+                          onLogout: () {
+                            setState(() {
+                              _isAuthenticated = false;
+                              _hasSelectedProfile = false;
+                              _customDirectScreen = null;
+                            });
+                          },
+                          onProfileSelected: () {
+                            setState(() {
+                              _hasSelectedProfile = true;
+                              _customDirectScreen = null;
+                            });
+                          },
+                        )
+                      : HomeScreen(
+                          onLogout: () {
+                            setState(() {
+                              _isAuthenticated = false;
+                              _hasSelectedProfile = false;
+                              _customDirectScreen = null;
+                            });
+                          },
+                        )
               : LoginScreen(
-                  onLoginSuccess: () {
+                  onLoginSuccess: ({Widget? directScreen}) {
                     setState(() {
                       _isAuthenticated = true;
+                      _hasSelectedProfile = false;
+                      _customDirectScreen = directScreen;
                     });
                   },
                 ),
@@ -883,7 +913,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
   void _openEpgScheduleModal(ChannelModel channel) {
     final schedule = EpgService.getUpcomingPrograms(channel.name, channel.groupCategory);
 
@@ -1571,6 +1600,35 @@ class _HomeScreenState extends State<HomeScreen> {
               _buildSideMenuItem(Icons.search, 'Buscar', () => setState(() => _isSearching = !_isSearching)),
               _buildSideMenuItem(Icons.mic, 'Asistente Alexa', _startVoiceSearch),
               _buildSideMenuItem(Icons.playlist_add, 'Listas M3U', _openM3uDialog),
+
+              // ACCESO A PERFILES FAMILIARES (DISNEY+) EN DRAWER
+              if (AuthService.currentUser?.isPartOfFamily == true)
+                _buildSideMenuItem(Icons.account_circle, 'Cambiar Perfil', () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ProfileSelectorScreen(
+                        onLogout: widget.onLogout,
+                        onProfileSelected: () {
+                          Navigator.pop(context);
+                          setState(() {});
+                        },
+                      ),
+                    ),
+                  );
+                }),
+
+              // ACCESO A GRUPO FAMILIAR (5) EN DRAWER
+              if (AuthService.isFamilyAdmin)
+                _buildSideMenuItem(Icons.family_restroom, 'Mi Familia (5)', () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => FamilyPanelScreen(onLogout: widget.onLogout),
+                    ),
+                  ).then((_) => setState(() {}));
+                }),
+
               if (AuthService.isAdmin)
                 _buildSideMenuItem(Icons.admin_panel_settings, 'Panel Admin VIP', () {
                   Navigator.push(
@@ -1584,6 +1642,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                   });
                 }),
+              _buildSideMenuItem(Icons.confirmation_number_outlined, 'Renovar / PIN', _showRenewSubscriptionModal),
               _buildSideMenuItem(Icons.verified_user, 'Mi Cuenta VIP', _showAccountProfileModal),
             ],
           ),
@@ -1743,6 +1802,120 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 6),
                         ],
 
+                        // BOTÓN PERFILES FAMILIARES ESTILO DISNEY+
+                        if (AuthService.currentUser?.isPartOfFamily == true) ...[
+                          Material(
+                            color: const Color(0xFF00E5FF),
+                            borderRadius: BorderRadius.circular(16),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ProfileSelectorScreen(
+                                      onLogout: widget.onLogout,
+                                      onProfileSelected: () {
+                                        Navigator.pop(context);
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.account_circle, color: Colors.black, size: 14),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      AuthService.currentActiveProfile?.deviceName ?? 'PERFILES',
+                                      style: const TextStyle(
+                                        color: Colors.black,
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+
+                        // BOTÓN MORADO VIOLETA "MI FAMILIA" (SI ES ADMIN DE GRUPO FAMILIAR)
+                        if (AuthService.isFamilyAdmin) ...[
+                          Material(
+                            color: const Color(0xFFC77DFF),
+                            borderRadius: BorderRadius.circular(16),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => FamilyPanelScreen(onLogout: widget.onLogout),
+                                  ),
+                                ).then((_) => setState(() {}));
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.family_restroom, color: Colors.black, size: 14),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'MI FAMILIA (5)',
+                                      style: TextStyle(
+                                        color: Colors.black,
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+
+                        // BOTÓN RENOVAR / PIN 24/7
+                        Material(
+                          color: const Color(0xFF00E676),
+                          borderRadius: BorderRadius.circular(16),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: _showRenewSubscriptionModal,
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.confirmation_number_outlined, color: Colors.black, size: 14),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'RENOVAR',
+                                    style: TextStyle(
+                                      color: Colors.black,
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+
                         // SUBIR / CARGAR LISTAS M3U
                         _buildTopBarActionItem(
                           icon: Icons.playlist_add,
@@ -1879,6 +2052,79 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showRenewSubscriptionModal() {
+    final pinCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF131A29),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xFF00E676), width: 1.5),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.confirmation_number_outlined, color: Color(0xFF00E676)),
+            SizedBox(width: 8),
+            Text('Renovar Suscripción 24/7', style: TextStyle(color: Colors.white, fontSize: 16)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Ingresa el PIN de activación prepago recibido por WhatsApp o Mercado Pago para extender tu servicio de inmediato:',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: pinCtrl,
+              textCapitalization: TextCapitalization.characters,
+              style: const TextStyle(color: Color(0xFF00E676), fontSize: 18, letterSpacing: 2, fontWeight: FontWeight.bold),
+              decoration: InputDecoration(
+                hintText: 'AMEY-30D-XXXX',
+                hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 1),
+                filled: true,
+                fillColor: Colors.black38,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00E676),
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () async {
+              final code = pinCtrl.text.trim();
+              if (code.isEmpty) return;
+              Navigator.pop(ctx);
+
+              final res = await AuthService.redeemActivationPin(code);
+              if (mounted) {
+                setState(() {});
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    backgroundColor: res.isSuccess ? const Color(0xFF00E676) : Colors.redAccent,
+                    content: Text(res.message, style: TextStyle(color: res.isSuccess ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                );
+              }
+            },
+            child: const Text('Canjear PIN', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showAccountProfileModal() async {
     final user = AuthService.currentUser;
     final hwId = await AuthService.getDeviceHardwareId();
@@ -1994,7 +2240,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
   Widget _buildActiveSearchBar() {
     return Row(
       children: [
