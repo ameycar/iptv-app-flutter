@@ -507,8 +507,10 @@ class AuthService {
   // ============================================================
 
   /// Canjea un PIN Prepago de Activación (30, 90, 365 días)
-  static Future<AuthResponse> redeemActivationPin({
-    required String pinCode,
+  /// Acepta llamada posicional: redeemActivationPin(code)
+  /// y opcionalmente con userId: redeemActivationPin(code, userId: id)
+  static Future<AuthResponse> redeemActivationPin(
+    String pinCode, {
     String? userId,
   }) async {
     try {
@@ -845,6 +847,34 @@ class AuthService {
       }
     } catch (e) {
       return AuthResponse(status: AuthStatus.error, message: 'Error al canjear PIN: $e');
+    }
+  }
+
+  /// Escucha en tiempo real los cambios de un usuario específico (Cloud Firestore o Local)
+  static Stream<UserModel?> listenToUserRealtime(String userId) {
+    final cleanId = userId.trim();
+    if (isFirebaseAvailable) {
+      return FirebaseFirestore.instance
+          .collection(_usersCollection)
+          .doc(cleanId)
+          .snapshots()
+          .map((doc) => doc.exists ? UserModel.fromMap(doc.id, doc.data()!) : null);
+    } else {
+      final controller = StreamController<UserModel?>.broadcast();
+      _getLocalUsers().then((list) {
+        if (!controller.isClosed) {
+          final idx = list.indexWhere((u) => u.id == cleanId);
+          controller.add(idx != -1 ? list[idx] : (_currentUser?.id == cleanId ? _currentUser : null));
+        }
+      });
+      final sub = _localUsersStreamController.stream.listen((allUsers) {
+        if (!controller.isClosed) {
+          final idx = allUsers.indexWhere((u) => u.id == cleanId);
+          controller.add(idx != -1 ? allUsers[idx] : (_currentUser?.id == cleanId ? _currentUser : null));
+        }
+      });
+      controller.onCancel = () => sub.cancel();
+      return controller.stream;
     }
   }
 
