@@ -556,7 +556,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
             Row(
               children: [
                 const Icon(Icons.edit, color: Color(0xFFC77DFF)),
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Text('Editar: ${member.deviceName ?? member.username}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
               ],
             ),
@@ -699,7 +699,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                                   final code = pinCtrl.text.trim();
                                   if (code.isEmpty) return;
                                   setModalState(() => isProcessing = true);
-                                  final res = await AuthService.redeemActivationPin(pinCode: code);
+                                  final res = await AuthService.redeemActivationPin(code);
                                   setModalState(() => isProcessing = false);
                                   if (context.mounted) {
                                     Navigator.pop(ctx);
@@ -743,7 +743,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                         final res = await AuthService.simulateAutomaticPayment(
                           userId: _currentUser?.id ?? '',
                           days: 30,
-                          paymentMethod: 'Mercado Pago (Aprobado 24/7)',
+                          paymentMethod: 'Mercado Pago Checkout',
                         );
                         setModalState(() => isProcessing = false);
                         if (context.mounted) {
@@ -759,10 +759,10 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: OutlinedButton.icon(
-                      icon: const Icon(Icons.currency_bitcoin, color: Color(0xFFF7931A), size: 16),
-                      label: const Text('Binance USDT', style: TextStyle(color: Color(0xFFF7931A), fontSize: 11)),
+                      icon: const Icon(Icons.currency_bitcoin, color: Colors.amber, size: 16),
+                      label: const Text('Binance Pay', style: TextStyle(color: Colors.amber, fontSize: 11)),
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFFF7931A)),
+                        side: const BorderSide(color: Colors.amber),
                         padding: const EdgeInsets.symmetric(vertical: 10),
                       ),
                       onPressed: () async {
@@ -770,7 +770,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                         final res = await AuthService.simulateAutomaticPayment(
                           userId: _currentUser?.id ?? '',
                           days: 30,
-                          paymentMethod: 'Binance Pay USDT (Aprobado 24/7)',
+                          paymentMethod: 'Binance Pay USDT',
                         );
                         setModalState(() => isProcessing = false);
                         if (context.mounted) {
@@ -785,7 +785,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
             ],
           ),
         ),
@@ -795,13 +794,12 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
 
   UserModel _dummyUser() {
     return UserModel(
-      id: 'default_head',
-      username: 'jefe',
+      id: 'default',
+      username: 'cacosta',
       password: '',
-      role: 'family_admin',
-      isFamilyAdmin: true,
       expirationDate: DateTime.now().add(const Duration(days: 30)),
-      deviceName: 'Mi Pantalla Principal',
+      isFamilyAdmin: true,
+      maxScreens: 5,
     );
   }
 }
