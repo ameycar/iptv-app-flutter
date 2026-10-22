@@ -59,6 +59,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
   @override
   Widget build(BuildContext context) {
     final familyId = _currentUser?.effectiveFamilyId ?? '';
+    final bool isHeadUser = _currentUser?.isFamilyAdmin ?? false;
 
     return Scaffold(
       backgroundColor: const Color(0xFF070A10),
@@ -69,7 +70,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
             final members = snapshot.data ?? [_currentUser ?? _dummyUser()];
             final usedScreens = members.length;
             const maxScreens = 5;
-            final canAddMore = usedScreens < maxScreens && (_currentUser?.isFamilyAdmin ?? false);
+            final canAddMore = usedScreens < maxScreens && isHeadUser;
 
             return Column(
               children: [
@@ -124,8 +125,8 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                           ),
                         ],
                       ),
-                      // BOTÓN ADMINISTRAR PERFILES
-                      if (_currentUser?.isFamilyAdmin == true)
+                      // BOTÓN ADMINISTRAR PERFILES (SOLO VISIBLE PARA EL JEFE)
+                      if (isHeadUser)
                         OutlinedButton.icon(
                           onPressed: () {
                             setState(() {
@@ -207,18 +208,18 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // RENOVAR SUSCRIPCIÓN CON MODAL ELEGANTE MULTI-PAGO
+                      // RENOVAR PLAN: Si es el Jefe ve todo el panel; si es secundario solo ve canjear PIN
                       TextButton.icon(
-                        icon: const Icon(Icons.credit_card, color: Color(0xFF00E676), size: 16),
-                        label: const Text(
-                          'Renovar Plan',
-                          style: TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 13),
+                        icon: const Icon(Icons.confirmation_number, color: Color(0xFF00E676), size: 16),
+                        label: Text(
+                          isHeadUser ? 'Renovar Plan' : 'Canjear PIN',
+                          style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 13),
                         ),
-                        onPressed: () => _showPaymentOptionsModal(context),
+                        onPressed: () => _showPaymentOptionsModal(context, isHead: isHeadUser),
                       ),
 
-                      // GESTIONAR PANTALLAS (RESET HW)
-                      if (_currentUser?.isFamilyAdmin == true)
+                      // GESTIONAR PANTALLAS (SOLO JEFE)
+                      if (isHeadUser)
                         ElevatedButton.icon(
                           onPressed: () {
                             Navigator.push(
@@ -261,7 +262,8 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
   Widget _buildProfileItem(UserModel member) {
     final avatar = _avatarStyles[member.avatarIndex % _avatarStyles.length];
     final bool isHead = member.isFamilyAdmin;
-    final bool hasPinLock = (member.pinCode != null && member.pinCode!.isNotEmpty);
+    // EL JEFE SIEMPRE TIENE CANDADO DE PRIVACIDAD
+    final bool hasPinLock = isHead || (member.pinCode != null && member.pinCode!.isNotEmpty);
 
     return GestureDetector(
       onTap: () {
@@ -315,6 +317,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   ),
                   child: const Icon(Icons.edit, color: Colors.white, size: 26),
                 ),
+              // CANDADO DE PRIVACIDAD (Dorado para el Jefe, Blanco para secundarios con PIN)
               if (hasPinLock && !_isManageMode)
                 Positioned(
                   top: 0,
@@ -325,7 +328,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                       color: Color(0xFF131A29),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.lock, color: Color(0xFFFFD700), size: 14),
+                    child: Icon(
+                      Icons.lock,
+                      color: isHead ? const Color(0xFFFFD700) : Colors.white70,
+                      size: 14,
+                    ),
                   ),
                 ),
               if (isHead)
@@ -374,29 +381,36 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     );
   }
 
-  /// Maneja la selección de un perfil verificando contraseña/PIN si está protegido
+  /// Maneja la selección de un perfil: EL JEFE NUNCA ENTRA SIN CLAVE
   void _handleProfileSelection(UserModel member) {
-    // Si ya es el perfil activo en este dispositivo, entra directo
+    final bool isHead = member.isFamilyAdmin;
+    final bool hasPin = member.pinCode != null && member.pinCode!.isNotEmpty;
+
+    // 1. REGLA DE ORO: Si es el Jefe, SIEMPRE pide contraseña o PIN (nunca bypass)
+    if (isHead) {
+      _showProfilePasswordDialog(member, isHead: true);
+      return;
+    }
+
+    // 2. Si es una pantalla secundaria y ya estaba activa en este dispositivo, entra directo
     if (AuthService.currentActiveProfile?.id == member.id) {
       AuthService.setActiveProfile(member);
       widget.onProfileSelected();
       return;
     }
 
-    final hasPin = member.pinCode != null && member.pinCode!.isNotEmpty;
-    final hasCustomPassword = member.password.isNotEmpty && member.password != '1234' && !member.password.startsWith('tv');
-
-    // Si tiene PIN o contraseña personalizada, solicita autenticación
-    if (hasPin || hasCustomPassword) {
-      _showProfilePasswordDialog(member);
+    // 3. Si la pantalla secundaria tiene PIN configurado, solicitarlo
+    if (hasPin) {
+      _showProfilePasswordDialog(member, isHead: false);
     } else {
+      // Pantalla libre sin PIN (niños, invitados, tv sala)
       AuthService.setActiveProfile(member);
       widget.onProfileSelected();
     }
   }
 
   /// Diálogo de bloqueo de perfil por contraseña o PIN de 4 dígitos
-  void _showProfilePasswordDialog(UserModel member) {
+  void _showProfilePasswordDialog(UserModel member, {required bool isHead}) {
     final passCtrl = TextEditingController();
     String? errorText;
 
@@ -407,15 +421,18 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
           backgroundColor: const Color(0xFF101726),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: Color(0xFF7B2CBF), width: 1.5),
+            side: BorderSide(
+              color: isHead ? const Color(0xFFFFD700) : const Color(0xFF7B2CBF),
+              width: 1.5,
+            ),
           ),
           title: Row(
             children: [
-              const Icon(Icons.lock, color: Color(0xFFFFD700)),
+              Icon(Icons.lock, color: isHead ? const Color(0xFFFFD700) : const Color(0xFF00E5FF)),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Perfil Privado: ${member.deviceName ?? member.username}',
+                  isHead ? 'Perfil Jefe (Protegido)' : 'Perfil Privado: ${member.deviceName ?? member.username}',
                   style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -426,18 +443,21 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Ingresa el PIN o contraseña de este perfil para iniciar sesión:',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
+              Text(
+                isHead
+                    ? 'Ingresa tu PIN de 4 dígitos o la contraseña de tu cuenta:'
+                    : 'Ingresa el PIN de 4 dígitos asignado a este perfil:',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
               ),
               const SizedBox(height: 14),
               TextField(
                 controller: passCtrl,
                 obscureText: true,
                 autofocus: true,
+                keyboardType: TextInputType.text,
                 style: const TextStyle(color: Colors.white, letterSpacing: 2),
                 decoration: InputDecoration(
-                  hintText: 'PIN o Contraseña',
+                  hintText: isHead ? 'PIN o Contraseña' : 'PIN (4 dígitos)',
                   hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 0),
                   filled: true,
                   fillColor: const Color(0xFF131A29),
@@ -445,12 +465,13 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   errorText: errorText,
                 ),
               ),
-              const SizedBox(height: 8),
-              if (_currentUser?.isFamilyAdmin == true && !member.isFamilyAdmin)
+              if (!isHead) ...[
+                const SizedBox(height: 8),
                 const Text(
-                  'Nota: Como Jefe de Familia, puedes ingresar con tu propia clave de Jefe.',
+                  'El Jefe de Familia también puede acceder con su clave.',
                   style: TextStyle(color: Colors.white38, fontSize: 11),
                 ),
+              ],
             ],
           ),
           actions: [
@@ -461,22 +482,34 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
             ElevatedButton(
               onPressed: () {
                 final input = passCtrl.text.trim();
-                final bool matchPin = (member.pinCode != null && member.pinCode == input);
-                final bool matchPass = (member.password == input);
-                final bool matchHead = (_currentUser?.isFamilyAdmin == true && _currentUser?.password == input);
+                bool isAuthorized = false;
 
-                if (matchPin || matchPass || matchHead) {
+                if (isHead) {
+                  // El jefe puede entrar con su PIN (si configuró uno) O con su contraseña principal
+                  final hasPin = member.pinCode != null && member.pinCode!.isNotEmpty;
+                  final matchPin = hasPin && member.pinCode == input;
+                  final matchPassword = member.password == input;
+                  isAuthorized = matchPin || matchPassword;
+                } else {
+                  // Perfil secundario: coincide con su PIN o con la clave maestra del Jefe
+                  final matchPin = member.pinCode != null && member.pinCode == input;
+                  final matchHeadPass = _currentUser?.password == input;
+                  final matchHeadPin = _currentUser?.pinCode != null && _currentUser?.pinCode == input;
+                  isAuthorized = matchPin || matchHeadPass || matchHeadPin;
+                }
+
+                if (isAuthorized) {
                   Navigator.pop(ctx);
                   AuthService.setActiveProfile(member);
                   widget.onProfileSelected();
                 } else {
                   setDialogState(() {
-                    errorText = 'Contraseña o PIN incorrecto.';
+                    errorText = isHead ? 'Contraseña o PIN de Jefe incorrecto' : 'PIN incorrecto';
                   });
                 }
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00E5FF),
+                backgroundColor: isHead ? const Color(0xFFFFD700) : const Color(0xFF00E5FF),
                 foregroundColor: Colors.black,
               ),
               child: const Text('Acceder', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -565,7 +598,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 controller: nameCtrl,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  labelText: 'Nombre del Perfil (Ej: TV Sala, Mamá, Habitación)',
+                  labelText: 'Nombre del Perfil (Ej: TV Sala, Habitación, Juan)',
                   labelStyle: const TextStyle(color: Colors.white60),
                   filled: true,
                   fillColor: const Color(0xFF131A29),
@@ -688,6 +721,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
   void _showEditProfileModal(UserModel member) {
     final nameCtrl = TextEditingController(text: member.deviceName ?? member.username);
     final pinCtrl = TextEditingController(text: member.pinCode ?? '');
+    final bool isHead = member.isFamilyAdmin;
 
     showModalBottomSheet(
       context: context,
@@ -707,23 +741,27 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
           children: [
             Row(
               children: [
-                const Icon(Icons.edit, color: Color(0xFFC77DFF)),
+                Icon(Icons.edit, color: isHead ? const Color(0xFFFFD700) : const Color(0xFFC77DFF)),
                 const SizedBox(width: 8),
-                Text('Editar: ${member.deviceName ?? member.username}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                Text(
+                  isHead ? 'Configurar Privacidad del Jefe' : 'Editar: ${member.deviceName ?? member.username}',
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                ),
               ],
             ),
             const SizedBox(height: 12),
-            TextField(
-              controller: nameCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'Nombre de la Pantalla',
-                labelStyle: const TextStyle(color: Colors.white60),
-                filled: true,
-                fillColor: const Color(0xFF131A29),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            if (!isHead)
+              TextField(
+                controller: nameCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Nombre de la Pantalla',
+                  labelStyle: const TextStyle(color: Colors.white60),
+                  filled: true,
+                  fillColor: const Color(0xFF131A29),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
               ),
-            ),
             const SizedBox(height: 10),
             TextField(
               controller: pinCtrl,
@@ -731,8 +769,8 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
               maxLength: 4,
               style: const TextStyle(color: Colors.white, letterSpacing: 2),
               decoration: InputDecoration(
-                labelText: 'PIN de Bloqueo Privado (4 dígitos - Opcional)',
-                hintText: 'Dejar vacío si no deseas pedir PIN',
+                labelText: isHead ? 'PIN Rápido del Jefe (4 dígitos)' : 'PIN de Bloqueo Privado (4 dígitos - Opcional)',
+                hintText: isHead ? 'Ej: 1985 (Si lo dejas vacío, usará tu contraseña)' : 'Dejar vacío si no deseas pedir PIN',
                 hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 0),
                 counterText: '',
                 labelStyle: const TextStyle(color: Colors.white60),
@@ -744,40 +782,44 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
             const SizedBox(height: 14),
             Row(
               children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.phonelink_erase, size: 14, color: Colors.orangeAccent),
-                    label: const Text('Liberar Equipo', style: TextStyle(color: Colors.orangeAccent, fontSize: 12)),
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      await AuthService.adminResetHardware(member.id);
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Dispositivo liberado. Ahora puede vincularse en un nuevo televisor.')),
-                        );
-                      }
-                    },
+                if (!isHead)
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.phonelink_erase, size: 14, color: Colors.orangeAccent),
+                      label: const Text('Liberar Equipo', style: TextStyle(color: Colors.orangeAccent, fontSize: 12)),
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await AuthService.adminResetHardware(member.id);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Dispositivo liberado. Ahora puede vincularse en un nuevo televisor.')),
+                          );
+                        }
+                      },
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
+                if (!isHead) const SizedBox(width: 10),
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () async {
                       Navigator.pop(ctx);
                       final updates = <String, dynamic>{
-                        'deviceName': nameCtrl.text.trim(),
+                        if (!isHead) 'deviceName': nameCtrl.text.trim(),
                         'pinCode': pinCtrl.text.trim().isNotEmpty ? pinCtrl.text.trim() : null,
                       };
                       await AuthService.updateClientUser(member.id, updates);
                       if (mounted) setState(() {});
                     },
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E5FF), foregroundColor: Colors.black),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isHead ? const Color(0xFFFFD700) : const Color(0xFF00E5FF),
+                      foregroundColor: Colors.black,
+                    ),
                     child: const Text('Guardar'),
                   ),
                 ),
               ],
             ),
-            if (!member.isFamilyAdmin) ...[
+            if (!isHead) ...[
               const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
@@ -798,8 +840,8 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     );
   }
 
-  /// Modal de métodos de pago y renovación (Fintech, Yape, PayPal, WhatsApp CEO)
-  void _showPaymentOptionsModal(BuildContext context) {
+  /// Modal de renovación: Si es el Jefe ve pasarelas + PIN. Si es un secundario, SOLO ve canjear PIN.
+  void _showPaymentOptionsModal(BuildContext context, {required bool isHead}) {
     final pinCtrl = TextEditingController();
     bool isProcessing = false;
 
@@ -835,26 +877,28 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 const SizedBox(height: 14),
 
                 // TÍTULO MODAL
-                const Row(
+                Row(
                   children: [
-                    Icon(Icons.stars, color: Color(0xFFFFD700), size: 24),
-                    SizedBox(width: 8),
+                    Icon(isHead ? Icons.stars : Icons.confirmation_number, color: const Color(0xFFFFD700), size: 24),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Renovación & Métodos de Pago',
-                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
+                        isHead ? 'Renovación & Métodos de Pago' : 'Canjear PIN de Activación',
+                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'Elige tu método preferido para activar o extender tu suscripción al instante.',
-                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                Text(
+                  isHead
+                      ? 'Elige tu método preferido para extender tu suscripción familiar.'
+                      : 'Ingresa el código proporcionado por el titular o proveedor para activar tu pantalla.',
+                  style: const TextStyle(color: Colors.white60, fontSize: 12),
                 ),
                 const SizedBox(height: 16),
 
-                // SECCIÓN 1: CANJEAR PIN DE ACTIVACIÓN (24/7 AUTOMÁTICO)
+                // SECCIÓN ÚNICA PARA CUENTAS SECUNDARIAS / GENERAL: CANJEAR PIN
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
@@ -870,14 +914,14 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                           Icon(Icons.confirmation_number, color: Color(0xFF00E5FF), size: 18),
                           SizedBox(width: 8),
                           Text(
-                            '¿Tienes un PIN o Voucher Prepago?',
+                            'Ingresar PIN o Voucher Prepago',
                             style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
                       const SizedBox(height: 6),
                       const Text(
-                        'Si compraste un código a un revendedor o por WhatsApp, ingrésalo aquí:',
+                        'Si recibiste un PIN de activación de tu proveedor, ingrésalo aquí:',
                         style: TextStyle(color: Colors.white54, fontSize: 11),
                       ),
                       const SizedBox(height: 10),
@@ -934,151 +978,149 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 16),
-
-                // SECCIÓN 2: PASARELAS DE PAGO INMEDIATAS
-                const Text('Pagar en Línea (Acreditación Automática):', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.payment, color: Colors.black, size: 16),
-                        label: const Text('Mercado Pago', style: TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF00E5FF),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
-                        onPressed: () async {
-                          setModalState(() => isProcessing = true);
-                          final res = await AuthService.simulateAutomaticPayment(
-                            userId: _currentUser?.id ?? '',
-                            days: 30,
-                            paymentMethod: 'Mercado Pago Checkout',
-                          );
-                          setModalState(() => isProcessing = false);
-                          if (context.mounted) {
-                            Navigator.pop(ctx);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(res.message), backgroundColor: const Color(0xFF00E676)),
-                            );
-                            setState(() {});
-                          }
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.currency_bitcoin, color: Colors.black, size: 16),
-                        label: const Text('Binance USDT', style: TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFFFD700),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
-                        onPressed: () async {
-                          setModalState(() => isProcessing = true);
-                          final res = await AuthService.simulateAutomaticPayment(
-                            userId: _currentUser?.id ?? '',
-                            days: 30,
-                            paymentMethod: 'Binance Pay USDT',
-                          );
-                          setModalState(() => isProcessing = false);
-                          if (context.mounted) {
-                            Navigator.pop(ctx);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(res.message), backgroundColor: const Color(0xFF00E676)),
-                            );
-                            setState(() {});
-                          }
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 16),
-
-                // SECCIÓN 3: YAPE, PLIN, PAYPAL O TRANSFERENCIA
-                const Text('Transferencias Directas & Pagos Locales:', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-
-                _buildPaymentTile(
-                  icon: Icons.phone_android,
-                  color: const Color(0xFF7B2CBF),
-                  title: 'Yape / Plin (Perú)',
-                  subtitle: '+51 987 654 321 • Titular: AMEYCAR TV',
-                  copyText: '+51987654321',
-                  context: context,
-                ),
-
-                const SizedBox(height: 8),
-
-                _buildPaymentTile(
-                  icon: Icons.account_balance_wallet,
-                  color: const Color(0xFF0072FF),
-                  title: 'PayPal Internacional',
-                  subtitle: 'pagos@ameycargroup.com',
-                  copyText: 'pagos@ameycargroup.com',
-                  context: context,
-                ),
-
-                const SizedBox(height: 16),
-
-                // SECCIÓN 4: BOTÓN SOLICITAR PIN AL CEO / WHATSAPP
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E283D),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF25D366).withOpacity(0.4)),
-                  ),
-                  child: Column(
+                // PASARELAS DE PAGO Y WHATSAPP (SOLO VISIBLES SI ES EL JEFE)
+                if (isHead) ...[
+                  const SizedBox(height: 16),
+                  const Text('Pagar en Línea (Acreditación Automática):', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
                     children: [
-                      const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.support_agent, color: Color(0xFF25D366), size: 20),
-                          SizedBox(width: 8),
-                          Text(
-                            '¿Deseas pagar y que el CEO emita tu PIN?',
-                            style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.payment, color: Colors.black, size: 16),
+                          label: const Text('Mercado Pago', style: TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00E5FF),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        'Envía tu comprobante de Yape, PayPal o transferencia al Administrador para recibir tu PIN de inmediato.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.white60, fontSize: 11),
-                      ),
-                      const SizedBox(height: 10),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.chat, color: Colors.white, size: 16),
-                        label: const Text('Copiar Mensaje para WhatsApp del CEO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF25D366),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          onPressed: () async {
+                            setModalState(() => isProcessing = true);
+                            final res = await AuthService.simulateAutomaticPayment(
+                              userId: _currentUser?.id ?? '',
+                              days: 30,
+                              paymentMethod: 'Mercado Pago Checkout',
+                            );
+                            setModalState(() => isProcessing = false);
+                            if (context.mounted) {
+                              Navigator.pop(ctx);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(res.message), backgroundColor: const Color(0xFF00E676)),
+                              );
+                              setState(() {});
+                            }
+                          },
                         ),
-                        onPressed: () {
-                          final msg = '¡Hola CEO de AMEYCAR TV! Deseo renovar mi suscripción. Mi usuario es: ${_currentUser?.username ?? "cliente"} (Familia: ${_currentUser?.effectiveFamilyId ?? ""}). Adjunto mi comprobante de pago.';
-                          Clipboard.setData(ClipboardData(text: msg));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('¡Mensaje copiado al portapapeles! Pégalo en tu chat con el Administrador.'),
-                              backgroundColor: Color(0xFF25D366),
-                            ),
-                          );
-                        },
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.currency_bitcoin, color: Colors.black, size: 16),
+                          label: const Text('Binance USDT', style: TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFFD700),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          onPressed: () async {
+                            setModalState(() => isProcessing = true);
+                            final res = await AuthService.simulateAutomaticPayment(
+                              userId: _currentUser?.id ?? '',
+                              days: 30,
+                              paymentMethod: 'Binance Pay USDT',
+                            );
+                            setModalState(() => isProcessing = false);
+                            if (context.mounted) {
+                              Navigator.pop(ctx);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(res.message), backgroundColor: const Color(0xFF00E676)),
+                              );
+                              setState(() {});
+                            }
+                          },
+                        ),
                       ),
                     ],
                   ),
-                ),
+
+                  const SizedBox(height: 16),
+                  const Text('Transferencias Directas:', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+
+                  _buildPaymentTile(
+                    icon: Icons.phone_android,
+                    color: const Color(0xFF7B2CBF),
+                    title: 'Yape / Plin (Perú)',
+                    subtitle: '+51 987 654 321 • Titular: AMEYCAR TV',
+                    copyText: '+51987654321',
+                    context: context,
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  _buildPaymentTile(
+                    icon: Icons.account_balance_wallet,
+                    color: const Color(0xFF0072FF),
+                    title: 'PayPal Internacional',
+                    subtitle: 'pagos@ameycargroup.com',
+                    copyText: 'pagos@ameycargroup.com',
+                    context: context,
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E283D),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFF25D366).withOpacity(0.4)),
+                    ),
+                    child: Column(
+                      children: [
+                        const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.support_agent, color: Color(0xFF25D366), size: 20),
+                            SizedBox(width: 8),
+                            Text(
+                              '¿Deseas pagar y que el CEO emita tu PIN?',
+                              style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Envía tu comprobante de pago al Administrador para recibir tu PIN de inmediato.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white60, fontSize: 11),
+                        ),
+                        const SizedBox(height: 10),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.chat, color: Colors.white, size: 16),
+                          label: const Text('Contactar por WhatsApp', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF25D366),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: () {
+                            final msg = '¡Hola! Deseo renovar mi plan familiar. Mi usuario es: ${_currentUser?.username ?? "cliente"}. Adjunto comprobante.';
+                            Clipboard.setData(ClipboardData(text: msg));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('¡Mensaje copiado! Pégalo en tu WhatsApp.'),
+                                backgroundColor: Color(0xFF25D366),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
