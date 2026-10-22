@@ -28,7 +28,6 @@ class _LoginScreenState extends State<LoginScreen> {
   String _hardwareId = 'Cargando...';
   String? _errorMessage;
 
-  // Escucha en tiempo real si el usuario está en espera de liberación de hardware
   StreamSubscription<UserModel?>? _userRealtimeSub;
   String? _pendingUserId;
 
@@ -65,12 +64,31 @@ class _LoginScreenState extends State<LoginScreen> {
       _errorMessage = null;
     });
 
+    // Validar límite de pantallas (Máximo 1 Celular y 1 TV por cuenta)
+    // Detectamos de forma inteligente el tipo de dispositivo por el ancho o plataforma
+    final isTvDevice = MediaQuery.of(context).size.width > 900; 
+    final deviceTypeName = isTvDevice ? 'Smart TV / TV Box' : 'Celular / Móvil';
+
     final res = await AuthService.login(
       username: _usernameController.text,
       password: _passwordController.text,
     );
 
     if (!mounted) return;
+
+    // Si el usuario es válido, validamos el cupo de pantallas simultáneas
+    if (res.isSuccess && res.user != null && !res.user!.isAdmin) {
+      final familyId = res.user!.effectiveFamilyId;
+      final canAccess = await AuthService.validateDeviceScreenLimit(familyId, deviceTypeName);
+      
+      if (!canAccess) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'Límite alcanzado: Ya tienes el cupo máximo de pantallas conectadas (1 Celular y 1 TV). Cierra sesión en el otro equipo para ingresar aquí.';
+        });
+        return;
+      }
+    }
 
     setState(() {
       _isLoading = false;
@@ -181,7 +199,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Por seguridad y regla de oro anti-piratería, tu cuenta está blindada para 1 solo dispositivo y actualmente está ligada a otro equipo.',
+                    'Por seguridad y regla anti-piratería, tu cuenta está configurada para máximo 2 pantallas simultáneas (1 Celular y 1 Smart TV).',
                     style: TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                   const SizedBox(height: 12),
@@ -206,7 +224,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    '¿Cambiaste de teléfono o TV Box?',
+                    '¿Cambiaste de dispositivo?',
                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                   ),
                   const SizedBox(height: 8),
@@ -338,7 +356,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  /// Diálogo selector de idiomas
   void _showLanguageSelectorDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -387,7 +404,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  /// Botón visual flotante del idioma actual
   Widget _buildLanguageButton() {
     final currentCode = LanguageService.currentLanguage.value;
     final currentLang = LanguageService.supportedLanguages.firstWhere(
@@ -438,7 +454,6 @@ class _LoginScreenState extends State<LoginScreen> {
           body: SafeArea(
             child: Stack(
               children: [
-                // BOTÓN SELECTOR DE IDIOMA EN LA ESQUINA SUPERIOR DERECHA
                 Positioned(
                   top: 14,
                   right: 18,

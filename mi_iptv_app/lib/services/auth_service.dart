@@ -71,7 +71,18 @@ class AuthService {
 
   static bool get isLoggedIn => _currentUser != null;
   static bool get isAdmin => _currentUser?.isAdmin ?? false;
-  static bool get isFamilyAdmin => _currentUser?.isFamilyGroupAdmin ?? false;
+  
+  /// NUEVO: Verifica estrictamente si el perfil actualmente seleccionado es el Administrador de la Familia
+  static bool get isFamilyAdmin {
+    if (_currentUser == null) return false;
+    if (_currentUser!.isAdmin) return true;
+    
+    // Si hay un perfil activo seleccionado (ej. Adriana), solo es admin si ESE perfil específico tiene el rol.
+    if (_currentActiveProfile != null) {
+      return _currentActiveProfile!.isFamilyAdmin || _currentActiveProfile!.role == 'family_admin';
+    }
+    return _currentUser!.isFamilyGroupAdmin ?? false;
+  }
 
   /// Establece el perfil activo de la familia (Disney+ Style) y lo recuerda
   static Future<void> setActiveProfile(UserModel profile) async {
@@ -99,6 +110,22 @@ class AuthService {
       await prefs.setString('device_unique_hw_id', hwId);
     }
     return hwId;
+  }
+
+  /// NUEVO: Valida que una cuenta familiar no exceda el límite de 1 Móvil y 1 TV conectados simultáneamente
+  static Future<bool> validateDeviceScreenLimit(String familyId, String deviceType) async {
+    final members = await getFamilyMembers(familyId);
+    int phonesCount = members.where((m) => m.deviceName?.toLowerCase().contains('celular') ?? false || m.deviceName?.toLowerCase().contains('phone') ?? false).length;
+    int tvsCount = members.where((m) => m.deviceName?.toLowerCase().contains('tv') ?? false || m.deviceName?.toLowerCase().contains('televisor') ?? false).length;
+
+    final reqType = deviceType.toLowerCase();
+    if ((reqType.contains('phone') || reqType.contains('celular')) && phonesCount >= 1) {
+      return false; // Ya hay un celular registrado
+    }
+    if ((reqType.contains('tv') || reqType.contains('televisor')) && tvsCount >= 1) {
+      return false; // Ya hay un TV registrado
+    }
+    return true;
   }
 
   /// Inicializa la cuenta SuperAdmin por defecto si no existe
@@ -236,7 +263,7 @@ class AuthService {
           return AuthResponse(status: AuthStatus.success, user: user, message: 'Bienvenido Administrador');
         }
 
-        // CONTROL DE BLINDAJE DE HARDWARE (1 DISPOSITIVO POR CUENTA)
+        // CONTROL DE BLINDAJE DE HARDWARE
         if (user.registeredHardwareId == null || user.registeredHardwareId!.isEmpty) {
           await FirebaseFirestore.instance.collection(_usersCollection).doc(user.id).update({
             'registeredHardwareId': hardwareId,
@@ -269,7 +296,6 @@ class AuthService {
       // ==========================================
       List<UserModel> localUsers = await _getLocalUsers();
 
-      // Si el usuario no está en la memoria local de este teléfono, consulta la Base de Datos Cloud Sync
       var matched = localUsers.where((u) => u.username.toLowerCase() == cleanUsername);
       if (matched.isEmpty) {
         final cloudUsers = await _fetchUsersFromCloud();
@@ -396,7 +422,7 @@ class AuthService {
     }
   }
 
-  /// Agrega un perfil/pantalla al grupo familiar (máximo 5 pantallas en total)
+  /// Agrega un perfil al grupo familiar 
   static Future<bool> addFamilyMember({
     required String familyId,
     required String username,
@@ -448,7 +474,6 @@ class AuthService {
     return true;
   }
 
-  /// Obtiene los miembros de una familia específica
   static Future<List<UserModel>> getFamilyMembers(String familyId) async {
     final cleanId = familyId.trim();
     if (isFirebaseAvailable) {
@@ -472,7 +497,6 @@ class AuthService {
     return list;
   }
 
-  /// Stream reactivo de los miembros de una familia
   static Stream<List<UserModel>> getFamilyMembersStream(String familyId) {
     final cleanId = familyId.trim();
     if (isFirebaseAvailable) {
@@ -531,7 +555,6 @@ class AuthService {
   // SISTEMA FINTECH: PINES PREPAGO 24/7 Y AUTORRENOVACIÓN
   // ============================================================
 
-  /// Canjea un PIN Prepago de Activación (30, 90, 365 días)
   static Future<AuthResponse> redeemActivationPin(
     String pinCode, {
     String? userId,
@@ -562,7 +585,6 @@ class AuthService {
         return AuthResponse(status: AuthStatus.error, message: 'No hay usuario autenticado para aplicar el PIN.');
       }
 
-      // Marcar PIN como usado
       final updatedPin = ActivationPinModel(
         code: pin.code,
         days: pin.days,
@@ -575,11 +597,9 @@ class AuthService {
       pins[pinIdx] = updatedPin;
       await _saveLocalPins(pins);
 
-      // Aplicar días a la cuenta
       final baseDate = targetUser.isExpired ? DateTime.now() : targetUser.expirationDate;
       final newExpiration = baseDate.add(Duration(days: pin.days));
 
-      // Si es parte de una familia, renueva a toda la familia
       if (targetUser.isFamilyAdmin && targetUser.isPartOfFamily) {
         await renewFamilyGroup(targetUser.effectiveFamilyId, pin.days);
       } else {
@@ -608,7 +628,6 @@ class AuthService {
     }
   }
 
-  /// Genera lote de Pines Prepago para que el CEO los venda por WhatsApp o revendedores
   static Future<List<String>> generateActivationPins({
     required int count,
     required int days,
@@ -636,7 +655,6 @@ class AuthService {
     return newCodes;
   }
 
-  /// Obtiene la lista de todos los Pines generados
   static Future<List<ActivationPinModel>> getActivationPins() async {
     if (isFirebaseAvailable) {
       try {
@@ -667,7 +685,6 @@ class AuthService {
     }
   }
 
-  /// Stream en tiempo real de Pines
   static Stream<List<ActivationPinModel>> getActivationPinsStream() {
     final controller = StreamController<List<ActivationPinModel>>.broadcast();
     getActivationPins().then((list) {
@@ -685,8 +702,6 @@ class AuthService {
     final encoded = jsonEncode(pins.map((p) => p.toMap()).toList());
     await prefs.setString(_kActivationPinsKey, encoded);
     _localPinsStreamController.add(pins);
-
-    // Sincronizar en Cloud REST de respaldo
     _syncPinsToCloud(pins);
 
     if (isFirebaseAvailable) {
@@ -701,7 +716,6 @@ class AuthService {
     }
   }
 
-  /// Simulación / Webhook de Pago Automático (Mercado Pago / Binance Pay)
   static Future<AuthResponse> simulateAutomaticPayment({
     required String userId,
     required int days,
@@ -748,7 +762,6 @@ class AuthService {
   // LIBERACIÓN EXPRESS DE HARDWARE
   // ============================================================
 
-  /// El usuario solicita cambio de equipo con 1 toque
   static Future<bool> requestHardwareReset(String userId) async {
     try {
       if (isFirebaseAvailable) {
@@ -771,7 +784,6 @@ class AuthService {
     }
   }
 
-  /// El Administrador libera el hardware con 1 toque
   static Future<bool> adminResetHardware(String userId) async {
     try {
       if (isFirebaseAvailable) {
@@ -801,7 +813,6 @@ class AuthService {
     }
   }
 
-  /// Genera un PIN express de 4 dígitos para vincular el nuevo equipo
   static Future<String?> adminGenerateExpressPin(String userId) async {
     try {
       final pin = (Random().nextInt(9000) + 1000).toString();
@@ -827,7 +838,6 @@ class AuthService {
     }
   }
 
-  /// El usuario ingresa el PIN de 4 dígitos y se vincula al instante
   static Future<AuthResponse> unlockWithExpressPin({
     required String userId,
     required String pin,
@@ -883,7 +893,6 @@ class AuthService {
     }
   }
 
-  /// Escucha en tiempo real los cambios de un usuario específico (Cloud Firestore o Cloud REST)
   static Stream<UserModel?> listenToUserRealtime(String userId) {
     final cleanId = userId.trim();
     if (isFirebaseAvailable) {
@@ -901,7 +910,6 @@ class AuthService {
         }
       });
 
-      // Escucha local reactiva
       final sub = _localUsersStreamController.stream.listen((allUsers) {
         if (!controller.isClosed) {
           final idx = allUsers.indexWhere((u) => u.id == cleanId);
@@ -909,7 +917,6 @@ class AuthService {
         }
       });
 
-      // Sondeo Cloud REST cada 3.5 segundos para detectar liberación de HW en vivo
       Timer? pollTimer;
       pollTimer = Timer.periodic(const Duration(milliseconds: 3500), (_) async {
         if (controller.isClosed) {
@@ -935,7 +942,6 @@ class AuthService {
     }
   }
 
-  /// Stream universal de usuarios para el Panel de Administrador (Cloud o Local)
   static Stream<List<UserModel>> getUsersStream() {
     if (isFirebaseAvailable) {
       return FirebaseFirestore.instance
@@ -955,7 +961,6 @@ class AuthService {
     }
   }
 
-  /// Crea un nuevo cliente en el Panel Admin (Cloud o Local)
   static Future<void> createClientUser(UserModel newUser) async {
     if (isFirebaseAvailable) {
       await FirebaseFirestore.instance.collection(_usersCollection).doc(newUser.id).set(newUser.toMap());
@@ -966,7 +971,6 @@ class AuthService {
     }
   }
 
-  /// Elimina un cliente o miembro en el Panel Admin (Cloud o Local)
   static Future<void> deleteClientUser(String userId) async {
     if (isFirebaseAvailable) {
       await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).delete();
@@ -977,7 +981,6 @@ class AuthService {
     }
   }
 
-  /// Actualiza un cliente en el Panel Admin (Cloud o Local)
   static Future<void> updateClientUser(String userId, Map<String, dynamic> updates) async {
     if (isFirebaseAvailable) {
       await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).update(updates);
@@ -996,13 +999,11 @@ class AuthService {
     }
   }
 
-  /// Guarda la sesión en preferencias locales
   static Future<void> _saveSession(String userId) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kSessionUserKey, userId);
   }
 
-  /// Recupera la sesión activa al abrir la app (soporta arranque directo a TV si hay perfil recordado)
   static Future<UserModel?> checkAutoLogin() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1067,7 +1068,6 @@ class AuthService {
     }
   }
 
-  /// Cierra sesión
   static Future<void> logout() async {
     _currentUser = null;
     _currentActiveProfile = null;
@@ -1084,7 +1084,6 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     final rawJson = prefs.getString(_kLocalUsersDbKey);
     if (rawJson == null || rawJson.isEmpty) {
-      // Si la memoria local está vacía (segundo dispositivo), descarga de Cloud Sync
       final cloudUsers = await _fetchUsersFromCloud();
       if (cloudUsers.isNotEmpty) {
         await _saveLocalUsers(cloudUsers);
@@ -1111,8 +1110,6 @@ class AuthService {
 
     await prefs.setString(_kLocalUsersDbKey, jsonEncode(mapped));
     _localUsersStreamController.add(users);
-
-    // Sincronizar en tiempo real con Cloud REST de respaldo
     _syncUsersToCloud(users);
   }
 
@@ -1127,7 +1124,6 @@ class AuthService {
     await _saveLocalUsers(users);
   }
 
-  /// Sincroniza la lista de usuarios con el servidor Cloud REST de respaldo
   static void _syncUsersToCloud(List<UserModel> users) {
     try {
       final payload = jsonEncode(users.map((u) {
@@ -1144,7 +1140,6 @@ class AuthService {
     } catch (_) {}
   }
 
-  /// Descarga la lista de usuarios del servidor Cloud REST
   static Future<List<UserModel>> _fetchUsersFromCloud() async {
     try {
       final res = await http.get(
@@ -1173,7 +1168,6 @@ class AuthService {
     return [];
   }
 
-  /// Sincroniza pines con el servidor Cloud REST
   static void _syncPinsToCloud(List<ActivationPinModel> pins) {
     try {
       final payload = jsonEncode(pins.map((p) => p.toMap()).toList());
@@ -1185,7 +1179,6 @@ class AuthService {
     } catch (_) {}
   }
 
-  /// Descarga pines del servidor Cloud REST
   static Future<List<ActivationPinModel>> _fetchPinsFromCloud() async {
     try {
       final res = await http.get(

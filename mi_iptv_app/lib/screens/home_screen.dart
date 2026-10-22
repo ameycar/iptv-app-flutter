@@ -48,10 +48,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       AuthService.currentUser?.username ??
       'Perfil';
 
-  bool get _isJefeProfile =>
-      (AuthService.currentUser?.isFamilyGroupAdmin == true &&
-          (AuthService.currentActiveProfile == null ||
-              AuthService.currentActiveProfile?.id == AuthService.currentUser?.id));
+  // RESTRICCIÓN ESTRICTA DE JEFE / ADMIN FAMILIAR
+  bool get _isJefeProfile => AuthService.isFamilyAdmin;
 
   @override
   void initState() {
@@ -369,7 +367,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         jsonEncode(updated.map((p) => p.toMap()).toList()),
       );
 
-      // Cargar los canales de esa lista específica
       final channelsKey = 'channels_${_currentProfileId}_${target.id}';
       final raw = prefs.getString(channelsKey);
 
@@ -413,10 +410,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         jsonEncode(_userPlaylists.map((p) => p.toMap()).toList()),
       );
 
-      // Limpiar sus canales guardados
       await prefs.remove('channels_${_currentProfileId}_${target.id}');
 
-      // Si era la lista activa, activar la primera restante
       if (target.isActive && _userPlaylists.isNotEmpty) {
         await _switchActivePlaylist(_userPlaylists.first);
       } else if (_userPlaylists.isEmpty) {
@@ -440,7 +435,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       MaterialPageRoute(builder: (context) => const ProfileSelectorScreen()),
     );
 
-    // Al volver del selector con otro perfil, recargamos las listas y canales aislados
     if (result != null || mounted) {
       _loadProfileChannelsAndPlaylists();
     }
@@ -872,38 +866,39 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
               onPressed: _openRemindersList,
             ),
-          // Botón del Gestor de Listas M3U (hasta 5 listas)
-          IconButton(
-            tooltip: 'Gestor de Listas M3U (hasta 5)',
-            icon: Stack(
-              children: [
-                const Icon(Icons.playlist_play, color: Colors.white, size: 26),
-                if (_userPlaylists.isNotEmpty)
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF8B5CF6),
-                        shape: BoxShape.circle,
-                      ),
-                      constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
-                      child: Text(
-                        '${_userPlaylists.length}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 8,
-                          fontWeight: FontWeight.bold,
+          // Botón del Gestor de Listas M3U (SOLO VISIBLE PARA EL JEFE/ADMIN FAMILIAR)
+          if (_isJefeProfile)
+            IconButton(
+              tooltip: 'Gestor de Listas M3U (hasta 5)',
+              icon: Stack(
+                children: [
+                  const Icon(Icons.playlist_play, color: Colors.white, size: 26),
+                  if (_userPlaylists.isNotEmpty)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF8B5CF6),
+                          shape: BoxShape.circle,
                         ),
-                        textAlign: TextAlign.center,
+                        constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+                        child: Text(
+                          '${_userPlaylists.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
+              onPressed: _openPlaylistManagerDialog,
             ),
-            onPressed: _openPlaylistManagerDialog,
-          ),
           Padding(
             padding: const EdgeInsets.only(right: 8.0),
             child: IconButton(
@@ -1016,19 +1011,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                       textAlign: TextAlign.center,
                                     ),
                                     const SizedBox(height: 24),
-                                    ElevatedButton.icon(
-                                      onPressed: _openPlaylistManagerDialog,
-                                      icon: const Icon(Icons.playlist_add, color: Colors.white),
-                                      label: const Text('Gestionar / Agregar Listas M3U',
-                                          style: TextStyle(color: Colors.white)),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFF651FFF),
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 20, vertical: 12),
-                                        shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12)),
+                                    if (_isJefeProfile)
+                                      ElevatedButton.icon(
+                                        onPressed: _openPlaylistManagerDialog,
+                                        icon: const Icon(Icons.playlist_add, color: Colors.white),
+                                        label: const Text('Gestionar / Agregar Listas M3U',
+                                            style: TextStyle(color: Colors.white)),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF651FFF),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 20, vertical: 12),
+                                          shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(12)),
+                                        ),
                                       ),
-                                    ),
                                   ],
                                 ),
                               ),
