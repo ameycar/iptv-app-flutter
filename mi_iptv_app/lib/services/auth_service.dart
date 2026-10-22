@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -41,6 +42,9 @@ class AuthService {
   static const String _kActiveProfileKey = 'current_active_profile_id';
   static const String _kAdminDeviceIdKey = 'authorized_superadmin_hwid';
 
+  // Base de datos Cloud REST de respaldo automático (Sincroniza múltiples dispositivos aún sin google-services.json)
+  static const String _cloudSyncBaseUrl = 'https://ameycar-tv-default-rtdb.firebaseio.com';
+
   // LLAVE MAESTRA DE EMERGENCIA (Para autorizar un nuevo dispositivo del Admin)
   static const String superAdminMasterKey = 'AMEYCAR-ROOT-2026';
   static const String masterRecoveryKey = 'AMEYCAR-ROOT-2026';
@@ -49,6 +53,7 @@ class AuthService {
   static UserModel? _currentActiveProfile;
   static UserModel? get currentUser => _currentUser;
   static UserModel? get currentActiveProfile => _currentActiveProfile ?? _currentUser;
+  static bool get hasSavedActiveProfile => _currentActiveProfile != null;
 
   static final StreamController<List<UserModel>> _localUsersStreamController =
       StreamController<List<UserModel>>.broadcast();
@@ -68,11 +73,18 @@ class AuthService {
   static bool get isAdmin => _currentUser?.isAdmin ?? false;
   static bool get isFamilyAdmin => _currentUser?.isFamilyGroupAdmin ?? false;
 
-  /// Establece el perfil activo de la familia (Disney+ Style)
+  /// Establece el perfil activo de la familia (Disney+ Style) y lo recuerda
   static Future<void> setActiveProfile(UserModel profile) async {
     _currentActiveProfile = profile;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kActiveProfileKey, profile.id);
+  }
+
+  /// Limpia el perfil recordado para forzar que la app muestre la pantalla de perfiles
+  static Future<void> clearActiveProfile() async {
+    _currentActiveProfile = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kActiveProfileKey);
   }
 
   /// Obtiene o genera el Hardware ID único del dispositivo
@@ -128,7 +140,7 @@ class AuthService {
         if (!exists) {
           localUsers.add(defaultAdmin);
           await _saveLocalUsers(localUsers);
-          debugPrint('✅ [AuthService Local] SuperAdmin creado en almacenamiento local.');
+          debugPrint('✅ [AuthService Local] SuperAdmin creado en almacenamiento local y Cloud Sync.');
         }
       }
     } catch (e) {
@@ -156,7 +168,7 @@ class AuthService {
       final hardwareId = await getDeviceHardwareId();
 
       // ==========================================
-      // CASO A: MODO CLOUD (FIREBASE DISPONIBLE)
+      // CASO A: MODO CLOUD NATIVO (FIRESTORE)
       // ==========================================
       if (isFirebaseAvailable) {
         final snapshot = await FirebaseFirestore.instance
@@ -172,7 +184,7 @@ class AuthService {
           }
           return AuthResponse(
             status: AuthStatus.invalidCredentials,
-            message: 'El usuario no existe o las credenciales son incorrectas.',
+            message: 'El usuario no existe en la base de datos.',
           );
         }
 
@@ -253,14 +265,27 @@ class AuthService {
       }
 
       // ==========================================
-      // CASO B: MODO LOCAL SEGURO
+      // CASO B: MODO CLOUD SYNC & LOCAL SEGURO
       // ==========================================
-      final localUsers = await _getLocalUsers();
-      if (localUsers.isEmpty) {
-        await initializeAdminAccount();
+      List<UserModel> localUsers = await _getLocalUsers();
+
+      // Si el usuario no está en la memoria local de este teléfono, consulta la Base de Datos Cloud Sync
+      var matched = localUsers.where((u) => u.username.toLowerCase() == cleanUsername);
+      if (matched.isEmpty) {
+        final cloudUsers = await _fetchUsersFromCloud();
+        if (cloudUsers.isNotEmpty) {
+          localUsers = cloudUsers;
+          await _saveLocalUsers(localUsers);
+          matched = localUsers.where((u) => u.username.toLowerCase() == cleanUsername);
+        }
       }
 
-      final matched = localUsers.where((u) => u.username.toLowerCase() == cleanUsername);
+      if (localUsers.isEmpty) {
+        await initializeAdminAccount();
+        localUsers = await _getLocalUsers();
+        matched = localUsers.where((u) => u.username.toLowerCase() == cleanUsername);
+      }
+
       if (matched.isEmpty) {
         return AuthResponse(
           status: AuthStatus.invalidCredentials,
@@ -507,8 +532,6 @@ class AuthService {
   // ============================================================
 
   /// Canjea un PIN Prepago de Activación (30, 90, 365 días)
-  /// Acepta llamada posicional: redeemActivationPin(code)
-  /// y opcionalmente con userId: redeemActivationPin(code, userId: id)
   static Future<AuthResponse> redeemActivationPin(
     String pinCode, {
     String? userId,
@@ -628,7 +651,14 @@ class AuthService {
     }
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString(_kActivationPinsKey);
-    if (jsonStr == null || jsonStr.isEmpty) return [];
+    if (jsonStr == null || jsonStr.isEmpty) {
+      final cloudPins = await _fetchPinsFromCloud();
+      if (cloudPins.isNotEmpty) {
+        await _saveLocalPins(cloudPins);
+        return cloudPins;
+      }
+      return [];
+    }
     try {
       final list = jsonDecode(jsonStr) as List;
       return list.map((m) => ActivationPinModel.fromMap(Map<String, dynamic>.from(m))).toList();
@@ -655,6 +685,9 @@ class AuthService {
     final encoded = jsonEncode(pins.map((p) => p.toMap()).toList());
     await prefs.setString(_kActivationPinsKey, encoded);
     _localPinsStreamController.add(pins);
+
+    // Sincronizar en Cloud REST de respaldo
+    _syncPinsToCloud(pins);
 
     if (isFirebaseAvailable) {
       try {
@@ -850,7 +883,7 @@ class AuthService {
     }
   }
 
-  /// Escucha en tiempo real los cambios de un usuario específico (Cloud Firestore o Local)
+  /// Escucha en tiempo real los cambios de un usuario específico (Cloud Firestore o Cloud REST)
   static Stream<UserModel?> listenToUserRealtime(String userId) {
     final cleanId = userId.trim();
     if (isFirebaseAvailable) {
@@ -867,13 +900,37 @@ class AuthService {
           controller.add(idx != -1 ? list[idx] : (_currentUser?.id == cleanId ? _currentUser : null));
         }
       });
+
+      // Escucha local reactiva
       final sub = _localUsersStreamController.stream.listen((allUsers) {
         if (!controller.isClosed) {
           final idx = allUsers.indexWhere((u) => u.id == cleanId);
           controller.add(idx != -1 ? allUsers[idx] : (_currentUser?.id == cleanId ? _currentUser : null));
         }
       });
-      controller.onCancel = () => sub.cancel();
+
+      // Sondeo Cloud REST cada 3.5 segundos para detectar liberación de HW en vivo
+      Timer? pollTimer;
+      pollTimer = Timer.periodic(const Duration(milliseconds: 3500), (_) async {
+        if (controller.isClosed) {
+          pollTimer?.cancel();
+          return;
+        }
+        try {
+          final cloudUsers = await _fetchUsersFromCloud();
+          if (cloudUsers.isNotEmpty) {
+            final idx = cloudUsers.indexWhere((u) => u.id == cleanId);
+            if (idx != -1 && !controller.isClosed) {
+              controller.add(cloudUsers[idx]);
+            }
+          }
+        } catch (_) {}
+      });
+
+      controller.onCancel = () {
+        sub.cancel();
+        pollTimer?.cancel();
+      };
       return controller.stream;
     }
   }
@@ -945,7 +1002,7 @@ class AuthService {
     await prefs.setString(_kSessionUserKey, userId);
   }
 
-  /// Recupera la sesión activa al abrir la app
+  /// Recupera la sesión activa al abrir la app (soporta arranque directo a TV si hay perfil recordado)
   static Future<UserModel?> checkAutoLogin() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -953,6 +1010,7 @@ class AuthService {
       if (userId == null) return null;
 
       final hardwareId = await getDeviceHardwareId();
+      final savedActiveProfileId = prefs.getString(_kActiveProfileKey);
 
       if (isFirebaseAvailable) {
         final doc = await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).get();
@@ -970,7 +1028,13 @@ class AuthService {
         }
 
         _currentUser = user;
-        _currentActiveProfile = user;
+        if (savedActiveProfileId != null && savedActiveProfileId.isNotEmpty) {
+          final members = await getFamilyMembers(user.effectiveFamilyId);
+          final pMatch = members.where((m) => m.id == savedActiveProfileId);
+          _currentActiveProfile = pMatch.isNotEmpty ? pMatch.first : user;
+        } else {
+          _currentActiveProfile = user;
+        }
         return user;
       } else {
         final users = await _getLocalUsers();
@@ -989,7 +1053,13 @@ class AuthService {
         }
 
         _currentUser = user;
-        _currentActiveProfile = user;
+        if (savedActiveProfileId != null && savedActiveProfileId.isNotEmpty) {
+          final members = await getFamilyMembers(user.effectiveFamilyId);
+          final pMatch = members.where((m) => m.id == savedActiveProfileId);
+          _currentActiveProfile = pMatch.isNotEmpty ? pMatch.first : user;
+        } else {
+          _currentActiveProfile = user;
+        }
         return user;
       }
     } catch (e) {
@@ -1007,13 +1077,21 @@ class AuthService {
   }
 
   // ==========================================
-  // HELPERS DE ALMACENAMIENTO LOCAL SEGURO
+  // HELPERS DE ALMACENAMIENTO LOCAL Y CLOUD SYNC
   // ==========================================
 
   static Future<List<UserModel>> _getLocalUsers() async {
     final prefs = await SharedPreferences.getInstance();
     final rawJson = prefs.getString(_kLocalUsersDbKey);
-    if (rawJson == null || rawJson.isEmpty) return [];
+    if (rawJson == null || rawJson.isEmpty) {
+      // Si la memoria local está vacía (segundo dispositivo), descarga de Cloud Sync
+      final cloudUsers = await _fetchUsersFromCloud();
+      if (cloudUsers.isNotEmpty) {
+        await _saveLocalUsers(cloudUsers);
+        return cloudUsers;
+      }
+      return [];
+    }
 
     try {
       final List decoded = jsonDecode(rawJson);
@@ -1033,6 +1111,9 @@ class AuthService {
 
     await prefs.setString(_kLocalUsersDbKey, jsonEncode(mapped));
     _localUsersStreamController.add(users);
+
+    // Sincronizar en tiempo real con Cloud REST de respaldo
+    _syncUsersToCloud(users);
   }
 
   static Future<void> _saveLocalUser(UserModel user) async {
@@ -1044,5 +1125,82 @@ class AuthService {
       users.add(user);
     }
     await _saveLocalUsers(users);
+  }
+
+  /// Sincroniza la lista de usuarios con el servidor Cloud REST de respaldo
+  static void _syncUsersToCloud(List<UserModel> users) {
+    try {
+      final payload = jsonEncode(users.map((u) {
+        final m = u.toMap();
+        m['id'] = u.id;
+        return m;
+      }).toList());
+
+      http.put(
+        Uri.parse('$_cloudSyncBaseUrl/users.json'),
+        headers: {'Content-Type': 'application/json'},
+        body: payload,
+      ).timeout(const Duration(seconds: 4)).then((_) {}).catchError((_) {});
+    } catch (_) {}
+  }
+
+  /// Descarga la lista de usuarios del servidor Cloud REST
+  static Future<List<UserModel>> _fetchUsersFromCloud() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$_cloudSyncBaseUrl/users.json'),
+      ).timeout(const Duration(seconds: 4));
+
+      if (res.statusCode == 200 && res.body.isNotEmpty && res.body != 'null') {
+        final decoded = jsonDecode(res.body);
+        if (decoded is List) {
+          return decoded.whereType<Map>().map((m) {
+            final map = Map<String, dynamic>.from(m);
+            return UserModel.fromMap(map['id'] ?? '', map);
+          }).toList();
+        } else if (decoded is Map) {
+          final list = <UserModel>[];
+          decoded.forEach((key, val) {
+            if (val is Map) {
+              final map = Map<String, dynamic>.from(val);
+              list.add(UserModel.fromMap(map['id'] ?? key.toString(), map));
+            }
+          });
+          return list;
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  /// Sincroniza pines con el servidor Cloud REST
+  static void _syncPinsToCloud(List<ActivationPinModel> pins) {
+    try {
+      final payload = jsonEncode(pins.map((p) => p.toMap()).toList());
+      http.put(
+        Uri.parse('$_cloudSyncBaseUrl/pins.json'),
+        headers: {'Content-Type': 'application/json'},
+        body: payload,
+      ).timeout(const Duration(seconds: 4)).then((_) {}).catchError((_) {});
+    } catch (_) {}
+  }
+
+  /// Descarga pines del servidor Cloud REST
+  static Future<List<ActivationPinModel>> _fetchPinsFromCloud() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$_cloudSyncBaseUrl/pins.json'),
+      ).timeout(const Duration(seconds: 4));
+
+      if (res.statusCode == 200 && res.body.isNotEmpty && res.body != 'null') {
+        final decoded = jsonDecode(res.body);
+        if (decoded is List) {
+          return decoded.whereType<Map>().map((m) {
+            return ActivationPinModel.fromMap(Map<String, dynamic>.from(m));
+          }).toList();
+        }
+      }
+    } catch (_) {}
+    return [];
   }
 }
