@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // NUEVO: Para leer la nube
 import '../models/playlist_item.dart';
 import '../models/playlist_model.dart';
 import '../services/auth_service.dart';
 import '../services/reminder_service.dart';
+import '../services/m3u_parser_service.dart'; // NUEVO: Para descargar listas M3U automáticamente
 import '../widgets/active_reminders_dialog.dart';
 import '../widgets/epg_modal.dart';
 import '../widgets/alexa_voice_sheet.dart';
@@ -86,17 +88,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     } catch (_) {}
   }
 
-  /// Carga de forma aislada las listas y los canales pertenecientes al perfil actual
+  /// Carga listas y canales del perfil actual (Incluye Sincronización Cloud Automática)
   Future<void> _loadProfileChannelsAndPlaylists() async {
     setState(() => _isLoadingChannels = true);
     try {
       final prefs = await SharedPreferences.getInstance();
-
-      // 1. Cargar las listas del perfil (hasta 5)
       final playlistsKey = 'saved_playlists_$_currentProfileId';
       final rawPlaylists = prefs.getString(playlistsKey);
       List<PlaylistModel> playlists = [];
 
+      // 1. Cargar las listas locales si existen
       if (rawPlaylists != null && rawPlaylists.isNotEmpty) {
         try {
           final List list = jsonDecode(rawPlaylists);
@@ -106,7 +107,41 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         }
       }
 
-      // 2. Cargar canales activos del perfil
+      // 2. MAGIA CLOUD: Buscar listas en Firestore (Ideal para nueva TV Box)
+      if (AuthService.isFirebaseAvailable && AuthService.currentUser != null) {
+        try {
+          final cloudSnap = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(AuthService.currentUser!.id)
+              .collection('profiles')
+              .doc(_currentProfileId)
+              .collection('playlists')
+              .get();
+
+          if (cloudSnap.docs.isNotEmpty) {
+            bool isLocalUpdated = false;
+            for (var doc in cloudSnap.docs) {
+              final cloudPl = PlaylistModel.fromMap(doc.data());
+              // Si la TV Box aún no tiene esta lista de la nube, la agrega
+              if (!playlists.any((p) => p.id == cloudPl.id)) {
+                playlists.add(cloudPl);
+                isLocalUpdated = true;
+              }
+            }
+
+            if (isLocalUpdated) {
+              if (playlists.isNotEmpty && !playlists.any((p) => p.isActive)) {
+                playlists[0] = playlists[0].copyWith(isActive: true);
+              }
+              await prefs.setString(playlistsKey, jsonEncode(playlists.map((p) => p.toMap()).toList()));
+            }
+          }
+        } catch (e) {
+          debugPrint('Error al sincronizar listas de Firestore: $e');
+        }
+      }
+
+      // 3. Cargar canales activos locales
       final channelsKey = 'active_channels_$_currentProfileId';
       final rawChannels = prefs.getString(channelsKey);
       List<PlaylistItem> loadedChannels = [];
@@ -120,14 +155,26 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         }
       }
 
-      // Si no hay canales en la clave activa pero sí hay una playlist activa, cargamos su lista
+      // 4. AUTO-DESCARGA: Si no hay canales locales pero SÍ hay una playlist (ej. recién bajada de la nube)
       if (loadedChannels.isEmpty && playlists.isNotEmpty) {
         final activePl = playlists.firstWhere((p) => p.isActive, orElse: () => playlists.first);
         final plChannelsKey = 'channels_${_currentProfileId}_${activePl.id}';
         final rawPlChannels = prefs.getString(plChannelsKey);
+
         if (rawPlChannels != null && rawPlChannels.isNotEmpty) {
           final List list = jsonDecode(rawPlChannels);
           loadedChannels = list.map((m) => PlaylistItem.fromMap(m)).toList();
+        } else {
+          // El TV no tiene los canales. Se conecta a la URL de la nube y los descarga automáticamente.
+          try {
+            loadedChannels = await M3UParserService.fetchAndParseM3U(activePl.url);
+            final encodedChannels = jsonEncode(loadedChannels.map((i) => i.toMap()).toList());
+            await prefs.setString(plChannelsKey, encodedChannels);
+            await prefs.setString('active_channels_$_currentProfileId', encodedChannels);
+            await prefs.setString('active_playlist_id_$_currentProfileId', activePl.id);
+          } catch (e) {
+            debugPrint('Error auto-descargando canales M3U: $e');
+          }
         }
       }
 
@@ -376,6 +423,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         newChannels = list.map((m) => PlaylistItem.fromMap(m)).toList();
         await prefs.setString('active_channels_$_currentProfileId', raw);
         await prefs.setString('active_playlist_id_$_currentProfileId', target.id);
+      } else {
+         // Si por alguna razón la lista no estaba procesada, la descargamos.
+         newChannels = await M3UParserService.fetchAndParseM3U(target.url);
+         final encodedChannels = jsonEncode(newChannels.map((i) => i.toMap()).toList());
+         await prefs.setString(channelsKey, encodedChannels);
+         await prefs.setString('active_channels_$_currentProfileId', encodedChannels);
+         await prefs.setString('active_playlist_id_$_currentProfileId', target.id);
       }
 
       setState(() {
@@ -398,7 +452,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-  /// Elimina una lista del perfil
+  /// Elimina una lista del perfil (Local y Nube)
   Future<void> _deletePlaylist(PlaylistModel target) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -411,6 +465,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       );
 
       await prefs.remove('channels_${_currentProfileId}_${target.id}');
+      
+      // ELIMINAR DE LA NUBE (Para que no reaparezca en otros dispositivos)
+      if (AuthService.isFirebaseAvailable && AuthService.currentUser != null) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(AuthService.currentUser!.id)
+              .collection('profiles')
+              .doc(_currentProfileId)
+              .collection('playlists')
+              .doc(target.id)
+              .delete();
+        } catch (_) {}
+      }
 
       if (target.isActive && _userPlaylists.isNotEmpty) {
         await _switchActivePlaylist(_userPlaylists.first);
@@ -608,7 +676,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ),
                 ),
                 Text(
-                  '${startHour.toString().padLeft(2, '0')}:00 - ${endHour.toString().padLeft(2, '0')}:00',
+                  '${startHour.toString().padLeft(2, '0')}:00 -${endHour.toString().padLeft(2, '0')}:00',
                   style: const TextStyle(
                       color: Color(0xFF00E5FF),
                       fontSize: 11,
@@ -787,7 +855,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                   ),
                   const Spacer(),
-                  // Botón del Perfil Activo (Estilo Disney+)
+                  // Botón del Perfil Activo
                   InkWell(
                     onTap: _switchProfile,
                     borderRadius: BorderRadius.circular(16),
@@ -866,7 +934,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
               onPressed: _openRemindersList,
             ),
-          // Botón del Gestor de Listas M3U (SOLO VISIBLE PARA EL JEFE/ADMIN FAMILIAR)
           if (_isJefeProfile)
             IconButton(
               tooltip: 'Gestor de Listas M3U (hasta 5)',
@@ -925,7 +992,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   CircularProgressIndicator(color: Color(0xFF8B5CF6)),
                   SizedBox(height: 16),
                   Text(
-                    'Cargando canales del perfil...',
+                    'Sincronizando canales...',
                     style: TextStyle(color: Colors.white70, fontSize: 14),
                   ),
                 ],
@@ -949,7 +1016,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     // Barra de EPG
                     _buildDynamicEPGBar(),
 
-                    // Filtro por categorías horizontales
+                    // Filtro por categorías
                     if (_channels.isNotEmpty)
                       Container(
                         height: 48,
@@ -1146,90 +1213,4 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   Widget _buildMoviesGrid(List<PlaylistItem> list) {
     return GridView.builder(
-      padding: EdgeInsets.fromLTRB(14, 14, 14, _pipChannel != null ? 80 : 14),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 0.72,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemCount: list.length,
-      itemBuilder: (context, index) {
-        final item = list[index];
-        return GestureDetector(
-          onTap: () => _playChannel(item),
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF1B1B33),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white10),
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: item.logoUrl != null && item.logoUrl!.isNotEmpty
-                      ? Image.network(
-                          item.logoUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Center(
-                            child: Icon(Icons.movie, color: Color(0xFF00E5FF), size: 50),
-                          ),
-                        )
-                      : const Center(
-                          child: Icon(Icons.movie, color: Color(0xFF00E5FF), size: 50),
-                        ),
-                ),
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.cyanAccent, width: 0.8),
-                    ),
-                    child: const Text('HD',
-                        style: TextStyle(
-                            color: Colors.cyanAccent,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.bottomCenter,
-                        end: Alignment.topCenter,
-                        colors: [Colors.black, Colors.transparent],
-                      ),
-                      borderRadius:
-                          BorderRadius.vertical(bottom: Radius.circular(14)),
-                    ),
-                    child: Text(
-                      item.name,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
+      padding: EdgeInsets.fromLTRB(14
