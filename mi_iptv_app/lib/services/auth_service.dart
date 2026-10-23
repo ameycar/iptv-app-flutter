@@ -77,21 +77,20 @@ class AuthService {
     if (_currentUser == null) return false;
     if (_currentUser!.isAdmin) return true;
     
-    // Si hay un perfil activo seleccionado (ej. Adriana), solo es admin si ESE perfil específico tiene el rol.
     if (_currentActiveProfile != null) {
       return _currentActiveProfile!.isFamilyAdmin || _currentActiveProfile!.role == 'family_admin';
     }
     return _currentUser!.isFamilyGroupAdmin ?? false;
   }
 
-  /// Establece el perfil activo de la familia (Disney+ Style) y lo recuerda
+  /// Establece el perfil activo de la familia y lo recuerda
   static Future<void> setActiveProfile(UserModel profile) async {
     _currentActiveProfile = profile;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kActiveProfileKey, profile.id);
   }
 
-  /// Limpia el perfil recordado para forzar que la app muestre la pantalla de perfiles
+  /// Limpia el perfil recordado
   static Future<void> clearActiveProfile() async {
     _currentActiveProfile = null;
     final prefs = await SharedPreferences.getInstance();
@@ -112,11 +111,19 @@ class AuthService {
     return hwId;
   }
 
-  /// NUEVO: Valida que una cuenta familiar no exceda el límite de 1 Móvil y 1 TV conectados simultáneamente
+  /// Valida que una cuenta familiar no exceda el límite de 1 Móvil y 1 TV conectados simultáneamente
   static Future<bool> validateDeviceScreenLimit(String familyId, String deviceType) async {
     final members = await getFamilyMembers(familyId);
-    int phonesCount = members.where((m) => m.deviceName?.toLowerCase().contains('celular') ?? false || m.deviceName?.toLowerCase().contains('phone') ?? false).length;
-    int tvsCount = members.where((m) => m.deviceName?.toLowerCase().contains('tv') ?? false || m.deviceName?.toLowerCase().contains('televisor') ?? false).length;
+    
+    int phonesCount = members.where((m) {
+      final name = m.deviceName?.toLowerCase() ?? '';
+      return name.contains('celular') || name.contains('phone');
+    }).length;
+
+    int tvsCount = members.where((m) {
+      final name = m.deviceName?.toLowerCase() ?? '';
+      return name.contains('tv') || name.contains('televisor');
+    }).length;
 
     final reqType = deviceType.toLowerCase();
     if ((reqType.contains('phone') || reqType.contains('celular')) && phonesCount >= 1) {
@@ -379,7 +386,7 @@ class AuthService {
   }
 
   // ============================================================
-  // GESTIÓN DE PLANES FAMILIARES (HASTA 5 DISPOSITIVOS) DISNEY+
+  // GESTIÓN DE PLANES FAMILIARES
   // ============================================================
 
   static Future<void> createFamilyGroup({
@@ -422,7 +429,6 @@ class AuthService {
     }
   }
 
-  /// Agrega un perfil al grupo familiar 
   static Future<bool> addFamilyMember({
     required String familyId,
     required String username,
@@ -552,7 +558,7 @@ class AuthService {
   }
 
   // ============================================================
-  // SISTEMA FINTECH: PINES PREPAGO 24/7 Y AUTORRENOVACIÓN
+  // PINES Y PAGOS
   // ============================================================
 
   static Future<AuthResponse> redeemActivationPin(
