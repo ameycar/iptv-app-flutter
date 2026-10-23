@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -16,7 +17,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.ameycartv.iptv"
+        applicationId = "com.example.mi_iptv_app"
         minSdk = 21
         targetSdk = 36
         versionCode = 1
