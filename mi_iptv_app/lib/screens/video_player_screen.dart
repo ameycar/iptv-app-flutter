@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../models/playlist_item.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
@@ -32,6 +33,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void initState() {
     super.initState();
+    WakelockPlus.enable(); // Mantiene la pantalla encendida
     _currentItem = widget.item;
     _initializePlayer();
   }
@@ -178,6 +180,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   @override
   void dispose() {
+    WakelockPlus.disable(); // Permite que la pantalla vuelva a apagarse normalmente
     _chewieController?.dispose();
     _videoPlayerController?.dispose();
     SystemChrome.setPreferredOrientations([

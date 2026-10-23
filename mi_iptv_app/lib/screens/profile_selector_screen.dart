@@ -262,8 +262,13 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
   Widget _buildProfileItem(UserModel member) {
     final avatar = _avatarStyles[member.avatarIndex % _avatarStyles.length];
     final bool isHead = member.isFamilyAdmin;
-    // EL JEFE SIEMPRE TIENE CANDADO DE PRIVACIDAD
     final bool hasPinLock = isHead || (member.pinCode != null && member.pinCode!.isNotEmpty);
+
+    // LÓGICA DE NOMBRE MEJORADA: Toma el nombre personalizado, o el usuario original si es el Jefe
+    String displayName = member.deviceName ?? member.username;
+    if (isHead && (displayName.contains('Dispositivo') || displayName.isEmpty)) {
+      displayName = member.username.toUpperCase();
+    }
 
     return GestureDetector(
       onTap: () {
@@ -317,7 +322,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   ),
                   child: const Icon(Icons.edit, color: Colors.white, size: 26),
                 ),
-              // CANDADO DE PRIVACIDAD (Dorado para el Jefe, Blanco para secundarios con PIN)
+              // CANDADO DE PRIVACIDAD
               if (hasPinLock && !_isManageMode)
                 Positioned(
                   top: 0,
@@ -356,7 +361,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
           SizedBox(
             width: 84,
             child: Text(
-              member.deviceName ?? member.username,
+              displayName, // VARIABLE CORREGIDA PARA MOSTRAR EL NOMBRE REAL
               textAlign: TextAlign.center,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -381,35 +386,29 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     );
   }
 
-  /// Maneja la selección de un perfil: EL JEFE NUNCA ENTRA SIN CLAVE
   void _handleProfileSelection(UserModel member) {
     final bool isHead = member.isFamilyAdmin;
     final bool hasPin = member.pinCode != null && member.pinCode!.isNotEmpty;
 
-    // 1. REGLA DE ORO: Si es el Jefe, SIEMPRE pide contraseña o PIN (nunca bypass)
     if (isHead) {
       _showProfilePasswordDialog(member, isHead: true);
       return;
     }
 
-    // 2. Si es una pantalla secundaria y ya estaba activa en este dispositivo, entra directo
     if (AuthService.currentActiveProfile?.id == member.id) {
       AuthService.setActiveProfile(member);
       widget.onProfileSelected();
       return;
     }
 
-    // 3. Si la pantalla secundaria tiene PIN configurado, solicitarlo
     if (hasPin) {
       _showProfilePasswordDialog(member, isHead: false);
     } else {
-      // Pantalla libre sin PIN (niños, invitados, tv sala)
       AuthService.setActiveProfile(member);
       widget.onProfileSelected();
     }
   }
 
-  /// Diálogo de bloqueo de perfil por contraseña o PIN de 4 dígitos
   void _showProfilePasswordDialog(UserModel member, {required bool isHead}) {
     final passCtrl = TextEditingController();
     String? errorText;
@@ -485,13 +484,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 bool isAuthorized = false;
 
                 if (isHead) {
-                  // El jefe puede entrar con su PIN (si configuró uno) O con su contraseña principal
                   final hasPin = member.pinCode != null && member.pinCode!.isNotEmpty;
                   final matchPin = hasPin && member.pinCode == input;
                   final matchPassword = member.password == input;
                   isAuthorized = matchPin || matchPassword;
                 } else {
-                  // Perfil secundario: coincide con su PIN o con la clave maestra del Jefe
                   final matchPin = member.pinCode != null && member.pinCode == input;
                   final matchHeadPass = _currentUser?.password == input;
                   final matchHeadPin = _currentUser?.pinCode != null && _currentUser?.pinCode == input;
@@ -719,7 +716,13 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
   }
 
   void _showEditProfileModal(UserModel member) {
-    final nameCtrl = TextEditingController(text: member.deviceName ?? member.username);
+    // Si es el Jefe y tiene nombre de dispositivo, mostramos su username real para editar, si no, mostramos el custom name
+    String defaultName = member.deviceName ?? member.username;
+    if (member.isFamilyAdmin && (defaultName.contains('Dispositivo') || defaultName.isEmpty)) {
+      defaultName = member.username.toUpperCase();
+    }
+    
+    final nameCtrl = TextEditingController(text: defaultName);
     final pinCtrl = TextEditingController(text: member.pinCode ?? '');
     final bool isHead = member.isFamilyAdmin;
 
@@ -744,25 +747,27 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 Icon(Icons.edit, color: isHead ? const Color(0xFFFFD700) : const Color(0xFFC77DFF)),
                 const SizedBox(width: 8),
                 Text(
-                  isHead ? 'Configurar Privacidad del Jefe' : 'Editar: ${member.deviceName ?? member.username}',
+                  isHead ? 'Configurar Perfil del Jefe' : 'Editar: $defaultName',
                   style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
             const SizedBox(height: 12),
-            if (!isHead)
-              TextField(
-                controller: nameCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'Nombre de la Pantalla',
-                  labelStyle: const TextStyle(color: Colors.white60),
-                  filled: true,
-                  fillColor: const Color(0xFF131A29),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                ),
+            
+            // AHORA EL JEFE TAMBIÉN PUEDE CAMBIAR EL NOMBRE VISUAL DE SU PROPIO PERFIL
+            TextField(
+              controller: nameCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: isHead ? 'Nombre del Jefe (Ej: Papá, Juan)' : 'Nombre de la Pantalla',
+                labelStyle: const TextStyle(color: Colors.white60),
+                filled: true,
+                fillColor: const Color(0xFF131A29),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
               ),
+            ),
             const SizedBox(height: 10),
+            
             TextField(
               controller: pinCtrl,
               keyboardType: TextInputType.number,
@@ -804,7 +809,8 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                     onPressed: () async {
                       Navigator.pop(ctx);
                       final updates = <String, dynamic>{
-                        if (!isHead) 'deviceName': nameCtrl.text.trim(),
+                        // AHORA SE GUARDA EL NOMBRE EDITADO SIN IMPORTAR SI ES JEFE O NO
+                        'deviceName': nameCtrl.text.trim(),
                         'pinCode': pinCtrl.text.trim().isNotEmpty ? pinCtrl.text.trim() : null,
                       };
                       await AuthService.updateClientUser(member.id, updates);
@@ -840,7 +846,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     );
   }
 
-  /// Modal de renovación: Si es el Jefe ve pasarelas + PIN. Si es un secundario, SOLO ve canjear PIN.
   void _showPaymentOptionsModal(BuildContext context, {required bool isHead}) {
     final pinCtrl = TextEditingController();
     bool isProcessing = false;
@@ -876,7 +881,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 ),
                 const SizedBox(height: 14),
 
-                // TÍTULO MODAL
                 Row(
                   children: [
                     Icon(isHead ? Icons.stars : Icons.confirmation_number, color: const Color(0xFFFFD700), size: 24),
@@ -898,7 +902,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // SECCIÓN ÚNICA PARA CUENTAS SECUNDARIAS / GENERAL: CANJEAR PIN
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
@@ -978,7 +981,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   ),
                 ),
 
-                // PASARELAS DE PAGO Y WHATSAPP (SOLO VISIBLES SI ES EL JEFE)
                 if (isHead) ...[
                   const SizedBox(height: 16),
                   const Text('Pagar en Línea (Acreditación Automática):', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
