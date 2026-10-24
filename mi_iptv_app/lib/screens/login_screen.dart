@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart'; // NUEVO: Para abrir WhatsApp
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import '../services/language_service.dart';
@@ -64,8 +65,6 @@ class _LoginScreenState extends State<LoginScreen> {
       _errorMessage = null;
     });
 
-    // Validar límite de pantallas (Máximo 1 Celular y 1 TV por cuenta)
-    // Detectamos de forma inteligente el tipo de dispositivo por el ancho o plataforma
     final isTvDevice = MediaQuery.of(context).size.width > 900; 
     final deviceTypeName = isTvDevice ? 'Smart TV / TV Box' : 'Celular / Móvil';
 
@@ -76,7 +75,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!mounted) return;
 
-    // Si el usuario es válido, validamos el cupo de pantallas simultáneas
     if (res.isSuccess && res.user != null && !res.user!.isAdmin) {
       final familyId = res.user!.effectiveFamilyId;
       final canAccess = await AuthService.validateDeviceScreenLimit(familyId, deviceTypeName);
@@ -107,6 +105,115 @@ class _LoginScreenState extends State<LoginScreen> {
         _errorMessage = res.message;
       });
     }
+  }
+
+  // MÉTODO NUEVO: Menú inferior de Soporte Técnico Directo vía WhatsApp para Login
+  void _openSupportMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161F36),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 20, left: 20, right: 20, bottom: 40),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.support_agent, color: Color(0xFF00E5FF), size: 28),
+                  SizedBox(width: 10),
+                  Text(
+                    'Soporte Técnico Directo',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Selecciona el motivo de tu consulta. Te atenderemos vía WhatsApp.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              const SizedBox(height: 20),
+              
+              _buildSupportOption(
+                icon: Icons.autorenew,
+                title: 'Renovar o recuperar mi servicio',
+                subtitle: 'Si tu proveedor anterior ya no responde',
+                message: 'Hola Ameycar TV, mi proveedor original ya no me atiende y deseo renovar mi perfil directamente con ustedes.',
+              ),
+              const SizedBox(height: 10),
+              _buildSupportOption(
+                icon: Icons.wifi_tethering_error_rounded,
+                title: 'Reportar problema de conexión',
+                subtitle: 'Fallas técnicas o cortes de señal',
+                message: 'Hola equipo, estoy experimentando fallas de conexión en mi dispositivo.',
+              ),
+              const SizedBox(height: 10),
+              _buildSupportOption(
+                icon: Icons.add_to_queue,
+                title: 'Solicitar acceso nuevo',
+                subtitle: 'Quiero contratar el servicio',
+                message: 'Hola, me interesa contratar un plan para ingresar a la plataforma.',
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // MÉTODO NUEVO: Widget de opciones de Soporte con enlace a WhatsApp
+  Widget _buildSupportOption({required IconData icon, required String title, required String subtitle, required String message}) {
+    return InkWell(
+      onTap: () async {
+        Navigator.pop(context); // Cierra el menú
+        final phoneNumber = "51905823660"; // COLOCA AQUÍ TU NÚMERO REAL
+        final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(message)}");
+        
+        try {
+          if (await canLaunchUrl(url)) {
+            await launchUrl(url);
+          } else {
+             final webUrl = Uri.parse("https://wa.me/$phoneNumber?text=${Uri.encodeComponent(message)}");
+             await launchUrl(webUrl, mode: LaunchMode.externalApplication);
+          }
+        } catch (e) {
+          debugPrint("Error al abrir WhatsApp: $e");
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: const Color(0xFF00E5FF).withOpacity(0.1), shape: BoxShape.circle),
+              child: Icon(icon, color: const Color(0xFF00E5FF), size: 20),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white38, size: 14),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showAdminChoiceDialog() {
@@ -617,6 +724,20 @@ class _LoginScreenState extends State<LoginScreen> {
                                           LanguageService.tr('btn_login'),
                                           style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 1),
                                         ),
+                                ),
+                                
+                                const SizedBox(height: 16),
+                                
+                                // NUEVO BOTÓN DE SOPORTE BAJO EL LOGIN
+                                Center(
+                                  child: TextButton.icon(
+                                    onPressed: _openSupportMenu,
+                                    icon: const Icon(Icons.support_agent, color: Color(0xFF00E5FF), size: 18),
+                                    label: const Text(
+                                      '¿Necesitas acceso o renovar? Contáctanos',
+                                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
