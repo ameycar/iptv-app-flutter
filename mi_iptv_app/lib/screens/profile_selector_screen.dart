@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart'; // NUEVO: Para abrir WhatsApp
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import 'family_panel_screen.dart';
@@ -56,6 +57,115 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     },
   ];
 
+  // NUEVO: Menú de Soporte Técnico Directo vía WhatsApp
+  void _openSupportMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161F36),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 20, left: 20, right: 20, bottom: 40),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.support_agent, color: Color(0xFF00E5FF), size: 28),
+                  SizedBox(width: 10),
+                  Text(
+                    'Soporte Técnico Directo',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Selecciona el motivo de tu consulta. Te atenderemos vía WhatsApp.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              const SizedBox(height: 20),
+              
+              _buildSupportOption(
+                icon: Icons.autorenew,
+                title: 'Renovar o recuperar mi servicio',
+                subtitle: 'Si tu proveedor anterior ya no responde',
+                message: 'Hola Ameycar TV, mi proveedor original ya no me atiende y deseo renovar mi perfil directamente con ustedes.',
+              ),
+              const SizedBox(height: 10),
+              _buildSupportOption(
+                icon: Icons.wifi_tethering_error_rounded,
+                title: 'Reportar problema de conexión',
+                subtitle: 'Fallas técnicas o cortes de señal',
+                message: 'Hola equipo, estoy experimentando fallas de conexión en mi dispositivo.',
+              ),
+              const SizedBox(height: 10),
+              _buildSupportOption(
+                icon: Icons.add_to_queue,
+                title: 'Solicitar pantallas adicionales',
+                subtitle: 'Ampliar plan familiar',
+                message: 'Hola, me interesa ampliar mi plan y adquirir pantallas adicionales.',
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // NUEVO: Opción individual del menú de soporte
+  Widget _buildSupportOption({required IconData icon, required String title, required String subtitle, required String message}) {
+    return InkWell(
+      onTap: () async {
+        Navigator.pop(context); // Cierra el menú
+        const phoneNumber = "51905823660"; // COLOCA AQUÍ TU NÚMERO DE WHATSAPP REAL
+        final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(message)}");
+        
+        try {
+          if (await canLaunchUrl(url)) {
+            await launchUrl(url);
+          } else {
+             final webUrl = Uri.parse("https://wa.me/$phoneNumber?text=${Uri.encodeComponent(message)}");
+             await launchUrl(webUrl, mode: LaunchMode.externalApplication);
+          }
+        } catch (e) {
+          debugPrint("Error al abrir WhatsApp: $e");
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: const Color(0xFF00E5FF).withOpacity(0.1), shape: BoxShape.circle),
+              child: Icon(icon, color: const Color(0xFF00E5FF), size: 20),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white38, size: 14),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final familyId = _currentUser?.effectiveFamilyId ?? '';
@@ -74,7 +184,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
 
             return Column(
               children: [
-                // 1. TOP BAR DISNEY+
+                // 1. TOP BAR DISNEY+ (CON BOTÓN DE SOPORTE INTEGRADO)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                   child: Row(
@@ -125,35 +235,50 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                           ),
                         ],
                       ),
-                      // BOTÓN ADMINISTRAR PERFILES (SOLO VISIBLE PARA EL JEFE)
-                      if (isHeadUser)
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            setState(() {
-                              _isManageMode = !_isManageMode;
-                            });
-                          },
-                          icon: Icon(
-                            _isManageMode ? Icons.check : Icons.edit,
-                            size: 14,
-                            color: _isManageMode ? const Color(0xFF00E676) : Colors.white70,
+                      
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // NUEVO: Botón de Soporte en la barra superior
+                          IconButton(
+                            icon: const Icon(Icons.headset_mic, color: Color(0xFF00E5FF), size: 22),
+                            tooltip: 'Soporte Directo',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: _openSupportMenu,
                           ),
-                          label: Text(
-                            _isManageMode ? 'Listo' : 'Editar',
-                            style: TextStyle(
-                              color: _isManageMode ? const Color(0xFF00E676) : Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
+                          const SizedBox(width: 12),
+                          // BOTÓN ADMINISTRAR PERFILES (SOLO VISIBLE PARA EL JEFE)
+                          if (isHeadUser)
+                            OutlinedButton.icon(
+                              onPressed: () {
+                                setState(() {
+                                  _isManageMode = !_isManageMode;
+                                });
+                              },
+                              icon: Icon(
+                                _isManageMode ? Icons.check : Icons.edit,
+                                size: 14,
+                                color: _isManageMode ? const Color(0xFF00E676) : Colors.white70,
+                              ),
+                              label: Text(
+                                _isManageMode ? 'Listo' : 'Editar',
+                                style: TextStyle(
+                                  color: _isManageMode ? const Color(0xFF00E676) : Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(
+                                  color: _isManageMode ? const Color(0xFF00E676) : Colors.white24,
+                                ),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                              ),
                             ),
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            side: BorderSide(
-                              color: _isManageMode ? const Color(0xFF00E676) : Colors.white24,
-                            ),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          ),
-                        ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -264,10 +389,14 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     final bool isHead = member.isFamilyAdmin;
     final bool hasPinLock = isHead || (member.pinCode != null && member.pinCode!.isNotEmpty);
 
-    // LÓGICA DE NOMBRE MEJORADA: Toma el nombre personalizado, o el usuario original si es el Jefe
-    String displayName = member.deviceName ?? member.username;
-    if (isHead && (displayName.contains('Dispositivo') || displayName.isEmpty)) {
-      displayName = member.username.toUpperCase();
+    // LÓGICA DE NOMBRE REVISADA: Respeta siempre el nombre real asignado en 'deviceName'
+    String displayName = (member.deviceName != null && member.deviceName!.isNotEmpty) 
+        ? member.deviceName! 
+        : member.username;
+
+    // Si aún así por alguna razón dice "Dispositivo Vinculado", intentamos forzar el nombre de usuario
+    if (displayName.toLowerCase().contains('dispositivo') || displayName.trim().isEmpty) {
+      displayName = isHead ? member.username.toUpperCase() : member.username;
     }
 
     return GestureDetector(
@@ -361,7 +490,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
           SizedBox(
             width: 84,
             child: Text(
-              displayName, // VARIABLE CORREGIDA PARA MOSTRAR EL NOMBRE REAL
+              displayName,
               textAlign: TextAlign.center,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -716,9 +845,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
   }
 
   void _showEditProfileModal(UserModel member) {
-    // Si es el Jefe y tiene nombre de dispositivo, mostramos su username real para editar, si no, mostramos el custom name
-    String defaultName = member.deviceName ?? member.username;
-    if (member.isFamilyAdmin && (defaultName.contains('Dispositivo') || defaultName.isEmpty)) {
+    String defaultName = (member.deviceName != null && member.deviceName!.isNotEmpty)
+        ? member.deviceName!
+        : member.username;
+        
+    if (member.isFamilyAdmin && (defaultName.toLowerCase().contains('dispositivo') || defaultName.isEmpty)) {
       defaultName = member.username.toUpperCase();
     }
     
@@ -754,7 +885,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
             ),
             const SizedBox(height: 12),
             
-            // AHORA EL JEFE TAMBIÉN PUEDE CAMBIAR EL NOMBRE VISUAL DE SU PROPIO PERFIL
             TextField(
               controller: nameCtrl,
               style: const TextStyle(color: Colors.white),
@@ -809,7 +939,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                     onPressed: () async {
                       Navigator.pop(ctx);
                       final updates = <String, dynamic>{
-                        // AHORA SE GUARDA EL NOMBRE EDITADO SIN IMPORTAR SI ES JEFE O NO
                         'deviceName': nameCtrl.text.trim(),
                         'pinCode': pinCtrl.text.trim().isNotEmpty ? pinCtrl.text.trim() : null,
                       };
