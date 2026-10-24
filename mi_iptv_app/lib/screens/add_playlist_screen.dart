@@ -22,13 +22,15 @@ class AddPlaylistScreen extends StatefulWidget {
 class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   final _nameController = TextEditingController();
   final _urlController = TextEditingController();
-  final _epgController = TextEditingController(); // NUEVO: Campo para EPG
+  final _epgController = TextEditingController(); 
   
-  bool _usePublicEpg = true; // NUEVO: Toggle de Satélite Público
+  bool _usePublicEpg = true; 
   bool _isLoading = false;
   String? _errorMessage;
   int _currentPlaylistCount = 0;
-  static const int maxPlaylistsPerProfile = 5;
+  
+  // ¡LA VENTAJA COMPETITIVA: 6 LISTAS EN VEZ DE 5!
+  static const int maxPlaylistsPerProfile = 6;
 
   String get _effectiveProfileId {
     if (widget.profileId != null && widget.profileId!.isNotEmpty) {
@@ -101,7 +103,7 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
           ? name
           : 'Lista ${_currentPlaylistCount + 1} (${items.length} canales)';
 
-      // 2. Crear modelo de lista (Aislado para este perfil)
+      // 2. Crear modelo de lista (Aislado para este perfil específico)
       final newPlaylist = PlaylistModel(
         id: playlistId,
         name: finalName,
@@ -118,7 +120,7 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
       }
       playlistMap['usePublicEpg'] = _usePublicEpg;
 
-      // 3. Guardado Local Aislado
+      // 3. Guardado Local Aislado por Avatar
       final prefs = await SharedPreferences.getInstance();
       final listKey = 'saved_playlists_$_effectiveProfileId';
 
@@ -129,7 +131,7 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
         existingPlaylists = list.map((m) => Map<String, dynamic>.from(m)).toList();
       }
 
-      // Desactivar las anteriores localmente
+      // Desactivar las anteriores localmente para este perfil
       for (var p in existingPlaylists) {
         p['isActive'] = false;
       }
@@ -137,21 +139,21 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
 
       await prefs.setString(listKey, jsonEncode(existingPlaylists));
 
-      // Guardar canales aislados
+      // Guardar canales aislados para el perfil
       final channelsKey = 'channels_${_effectiveProfileId}_$playlistId';
       final encodedChannels = jsonEncode(items.map((i) => i.toMap()).toList());
       await prefs.setString(channelsKey, encodedChannels);
       await prefs.setString('active_channels_$_effectiveProfileId', encodedChannels);
       await prefs.setString('active_playlist_id_$_effectiveProfileId', playlistId);
 
-      // 4. RESPALDO EN LA NUBE (Para Multi-Dispositivo: Celular -> TV)
+      // 4. RESPALDO EN LA NUBE AISLADO (Para Multi-Dispositivo: Celular -> TV)
       if (AuthService.isFirebaseAvailable && AuthService.currentUser != null) {
         try {
           await FirebaseFirestore.instance
               .collection('users')
               .doc(AuthService.currentUser!.id)
               .collection('profiles')
-              .doc(_effectiveProfileId)
+              .doc(_effectiveProfileId) // <- Aquí se asegura la privacidad del avatar
               .collection('playlists')
               .doc(playlistId)
               .set(playlistMap);
@@ -223,14 +225,14 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Cabecera TiviMate Style
+                // Cabecera Ameycar Style
                 const Row(
                   children: [
                     Icon(Icons.wifi_tethering, color: Color(0xFF00E5FF), size: 30),
                     SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        'Gestor TiviMate: Lista M3U y Guía EPG',
+                        'Gestor de 6 Listas M3U y Guía EPG',
                         style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -379,7 +381,7 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
         hintText: hint,
         hintStyle: const TextStyle(color: Colors.white30),
         filled: true,
-        fillColor: const Color(0xFF1E1A38), // Fondo oscuro
+        fillColor: const Color(0xFF1E1A38), 
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
