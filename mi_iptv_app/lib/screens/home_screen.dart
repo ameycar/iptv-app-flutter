@@ -1,15 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // NUEVO: Necesario para copiar al portapapeles
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // NUEVO: Para leer la nube
-import 'package:url_launcher/url_launcher.dart'; // NUEVO: Para abrir WhatsApp
+import 'package:cloud_firestore/cloud_firestore.dart'; 
+import 'package:url_launcher/url_launcher.dart'; 
 import '../models/playlist_item.dart';
 import '../models/playlist_model.dart';
 import '../services/auth_service.dart';
 import '../services/reminder_service.dart';
-import '../services/m3u_parser_service.dart'; // NUEVO: Para descargar listas M3U automáticamente
+import '../services/m3u_parser_service.dart'; 
 import '../widgets/active_reminders_dialog.dart';
 import '../widgets/epg_modal.dart';
 import '../widgets/alexa_voice_sheet.dart';
@@ -27,7 +28,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   List<PlaylistItem> _channels = [];
   List<PlaylistModel> _userPlaylists = [];
-  String _activeTab = 'live'; // 'live', 'movies', 'series'
+  String _activeTab = 'live'; 
   String _selectedCategory = 'Todos';
   String _searchFilter = '';
   bool _isSearching = false;
@@ -38,7 +39,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   String _currentTime = '';
   int _activeRemindersCount = 0;
 
-  // Multitarea: Canal reproduciéndose en Miniatura Flotante (PiP)
   PlaylistItem? _pipChannel;
 
   String get _currentProfileId =>
@@ -51,7 +51,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       AuthService.currentUser?.username ??
       'Perfil';
 
-  // RESTRICCIÓN ESTRICTA DE JEFE / ADMIN FAMILIAR
   bool get _isJefeProfile => AuthService.isFamilyAdmin;
 
   @override
@@ -89,7 +88,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     } catch (_) {}
   }
 
-  /// Carga listas y canales del perfil actual (Incluye Sincronización Cloud Automática)
   Future<void> _loadProfileChannelsAndPlaylists() async {
     setState(() => _isLoadingChannels = true);
     try {
@@ -98,7 +96,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       final rawPlaylists = prefs.getString(playlistsKey);
       List<PlaylistModel> playlists = [];
 
-      // 1. Cargar las listas locales si existen
       if (rawPlaylists != null && rawPlaylists.isNotEmpty) {
         try {
           final List list = jsonDecode(rawPlaylists);
@@ -108,7 +105,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         }
       }
 
-      // 2. MAGIA CLOUD: Buscar listas en Firestore (Ideal para nueva TV Box)
       if (AuthService.isFirebaseAvailable && AuthService.currentUser != null) {
         try {
           final cloudSnap = await FirebaseFirestore.instance
@@ -123,7 +119,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             bool isLocalUpdated = false;
             for (var doc in cloudSnap.docs) {
               final cloudPl = PlaylistModel.fromMap(doc.data());
-              // Si la TV Box aún no tiene esta lista de la nube, la agrega
               if (!playlists.any((p) => p.id == cloudPl.id)) {
                 playlists.add(cloudPl);
                 isLocalUpdated = true;
@@ -142,7 +137,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         }
       }
 
-      // 3. Cargar canales activos locales
       final channelsKey = 'active_channels_$_currentProfileId';
       final rawChannels = prefs.getString(channelsKey);
       List<PlaylistItem> loadedChannels = [];
@@ -156,7 +150,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         }
       }
 
-      // 4. AUTO-DESCARGA: Si no hay canales locales pero SÍ hay una playlist (ej. recién bajada de la nube)
       if (loadedChannels.isEmpty && playlists.isNotEmpty) {
         final activePl = playlists.firstWhere((p) => p.isActive, orElse: () => playlists.first);
         final plChannelsKey = 'channels_${_currentProfileId}_${activePl.id}';
@@ -166,7 +159,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           final List list = jsonDecode(rawPlChannels);
           loadedChannels = list.map((m) => PlaylistItem.fromMap(m)).toList();
         } else {
-          // El TV no tiene los canales. Se conecta a la URL de la nube y los descarga automáticamente.
           try {
             loadedChannels = await M3UParserService.fetchAndParseM3U(activePl.url);
             final encodedChannels = jsonEncode(loadedChannels.map((i) => i.toMap()).toList());
@@ -192,7 +184,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-  /// Navega a agregar lista y recarga el perfil
   void _navigateToAddPlaylist() async {
     final result = await Navigator.push(
       context,
@@ -219,7 +210,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-  /// Abre el Gestor de Listas M3U (permite ver hasta 5 listas, alternar cuál está activa y borrar)
   void _openPlaylistManagerDialog() {
     showModalBottomSheet(
       context: context,
@@ -401,7 +391,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  /// Alterna cuál lista está activa en este perfil
   Future<void> _switchActivePlaylist(PlaylistModel target) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -425,7 +414,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         await prefs.setString('active_channels_$_currentProfileId', raw);
         await prefs.setString('active_playlist_id_$_currentProfileId', target.id);
       } else {
-         // Si por alguna razón la lista no estaba procesada, la descargamos.
          newChannels = await M3UParserService.fetchAndParseM3U(target.url);
          final encodedChannels = jsonEncode(newChannels.map((i) => i.toMap()).toList());
          await prefs.setString(channelsKey, encodedChannels);
@@ -453,7 +441,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-  /// Elimina una lista del perfil (Local y Nube)
   Future<void> _deletePlaylist(PlaylistModel target) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -467,7 +454,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
       await prefs.remove('channels_${_currentProfileId}_${target.id}');
       
-      // ELIMINAR DE LA NUBE (Para que no reaparezca en otros dispositivos)
       if (AuthService.isFirebaseAvailable && AuthService.currentUser != null) {
         try {
           await FirebaseFirestore.instance
@@ -497,7 +483,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-  /// Cambia de perfil volviendo al selector Disney+
   void _switchProfile() async {
     final result = await Navigator.push(
       context,
@@ -628,7 +613,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return list;
   }
 
-  // MÉTODO NUEVO: Menú inferior de Soporte Técnico Directo vía WhatsApp
   void _openSupportMenu() {
     showModalBottomSheet(
       context: context,
@@ -687,12 +671,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  // MÉTODO NUEVO: Widget de opciones de Soporte con enlace a WhatsApp
   Widget _buildSupportOption({required IconData icon, required String title, required String subtitle, required String message}) {
     return InkWell(
       onTap: () async {
-        Navigator.pop(context); // Cierra el menú
-        final phoneNumber = "51905823660"; // COLOCA AQUÍ TU NÚMERO REAL
+        Navigator.pop(context); 
+        final phoneNumber = "51905823660"; 
         final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(message)}");
         
         try {
@@ -733,6 +716,317 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             const Icon(Icons.arrow_forward_ios, color: Colors.white38, size: 14),
           ],
         ),
+      ),
+    );
+  }
+
+  // MÉTODO NUEVO INYECTADO: El Panel de Pagos para la barra superior
+  void _showPaymentOptionsModal(BuildContext context, {required bool isHead}) {
+    final pinCtrl = TextEditingController();
+    bool isProcessing = false;
+    final currentUser = AuthService.currentActiveProfile ?? AuthService.currentUser;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E1320),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Container(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.85),
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 18,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                Row(
+                  children: [
+                    Icon(isHead ? Icons.stars : Icons.confirmation_number, color: const Color(0xFFFFD700), size: 24),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        isHead ? 'Renovación de Suscripción' : 'Canjear PIN de Activación',
+                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  isHead
+                      ? 'Métodos seguros para extender tu plan familiar sin comisiones.'
+                      : 'Ingresa el código proporcionado por el titular para activar tu pantalla.',
+                  style: const TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+                const SizedBox(height: 16),
+
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF131A29),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.4), width: 1.2),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.confirmation_number, color: Color(0xFF00E5FF), size: 18),
+                          SizedBox(width: 8),
+                          Text(
+                            'Ingresar PIN de Acceso',
+                            style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Si recibiste un PIN de activación de tu proveedor, ingrésalo aquí:',
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: pinCtrl,
+                              style: const TextStyle(color: Colors.white, letterSpacing: 1.5, fontWeight: FontWeight.bold),
+                              textCapitalization: TextCapitalization.characters,
+                              decoration: InputDecoration(
+                                hintText: 'Ej: AMEY-30D-4921',
+                                hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 0),
+                                filled: true,
+                                fillColor: Colors.black38,
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: isProcessing
+                                ? null
+                                : () async {
+                                    final code = pinCtrl.text.trim();
+                                    if (code.isEmpty) return;
+                                    setModalState(() => isProcessing = true);
+                                    final res = await AuthService.redeemActivationPin(code);
+                                    setModalState(() => isProcessing = false);
+                                    if (context.mounted) {
+                                      Navigator.pop(ctx);
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text(res.message),
+                                          backgroundColor: res.isSuccess ? const Color(0xFF00E676) : Colors.redAccent,
+                                        ),
+                                      );
+                                      if (res.isSuccess) setState(() {});
+                                    }
+                                  },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF00E5FF),
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: const Text('Canjear', style: TextStyle(fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                if (isHead) ...[
+                  const SizedBox(height: 20),
+                  
+                  const Row(
+                    children: [
+                      Text('🇵🇪 ', style: TextStyle(fontSize: 16)),
+                      Text('Pago Nacional (Cero Comisiones):', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  _buildPaymentTile(
+                    icon: Icons.phone_android,
+                    color: const Color(0xFF7B2CBF),
+                    title: 'Yape / Plin',
+                    subtitle: '51905823660 • Titular: AMEYCAR TV', 
+                    copyText: '51905823660', 
+                    context: context,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildPaymentTile(
+                    icon: Icons.account_balance,
+                    color: const Color(0xFFFF7043),
+                    title: 'BCP - Cuenta Soles',
+                    subtitle: '19194759620085 • Titular: ACOSTA NN CARLOS RAFAEL', 
+                    copyText: '19194759620085', 
+                    context: context,
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  const Row(
+                    children: [
+                      Text('🌎 ', style: TextStyle(fontSize: 16)),
+                      Text('Pago Internacional (Anti-Fraude):', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  _buildPaymentTile(
+                    icon: Icons.currency_bitcoin,
+                    color: const Color(0xFFFFD700),
+                    title: 'Binance Pay (USDT - Inmediato)',
+                    subtitle: 'Pay ID: 214778098', 
+                    copyText: '214778098', 
+                    context: context,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildPaymentTile(
+                    icon: Icons.account_balance_wallet,
+                    color: const Color(0xFF0072FF),
+                    title: 'PayPal',
+                    subtitle: 'carlos_87_21@hotmail.com', 
+                    copyText: 'carlos_87_21@hotmail.com', 
+                    context: context,
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E283D),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFF25D366).withOpacity(0.5), width: 1.5),
+                    ),
+                    child: Column(
+                      children: [
+                        const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.check_circle_outline, color: Color(0xFF25D366), size: 22),
+                            SizedBox(width: 8),
+                            Text(
+                              'Validar Pago y Activar',
+                              style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Toca aquí para enviar la captura de tu transferencia. Te entregaremos tu PIN de renovación de inmediato.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white60, fontSize: 11),
+                        ),
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.chat, color: Colors.white, size: 16),
+                          label: const Text('Enviar Voucher por WhatsApp', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF25D366),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: () async {
+                            final msg = '¡Hola! He realizado una transferencia para renovar mi plan. Mi usuario es: ${currentUser?.username ?? "cliente"}. Adjunto mi voucher de pago.';
+                            Clipboard.setData(ClipboardData(text: msg));
+                            
+                            const phoneNumber = "51905823660"; 
+                            final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(msg)}");
+                            try {
+                              if (await canLaunchUrl(url)) {
+                                await launchUrl(url);
+                              } else {
+                                final webUrl = Uri.parse("https://wa.me/$phoneNumber?text=${Uri.encodeComponent(msg)}");
+                                await launchUrl(webUrl, mode: LaunchMode.externalApplication);
+                              }
+                            } catch (_) {}
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPaymentTile({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required String copyText,
+    required BuildContext context,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131A29),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy, color: Color(0xFF00E5FF), size: 18),
+            tooltip: 'Copiar dato',
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: copyText));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('¡Copiado: $copyText!'), duration: const Duration(seconds: 2)),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
@@ -964,6 +1258,36 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       ),
                     ),
                   ),
+
+                  // INYECTADO: BOTÓN VERDE "RENOVAR" (Abrirá el panel en modo isHead=true para ver los bancos)
+                  const SizedBox(width: 8),
+                  InkWell(
+                    onTap: () => _showPaymentOptionsModal(context, isHead: true), 
+                    borderRadius: BorderRadius.circular(5),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00E676), 
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.confirmation_number, color: Colors.black, size: 12),
+                          SizedBox(width: 4),
+                          Text(
+                            'RENOVAR',
+                            style: TextStyle(
+                              color: Colors.black,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  
                   const Spacer(),
                   // Botón del Perfil Activo
                   InkWell(
@@ -1023,4 +1347,212 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 setState(() => _isSearching = true);
               },
             ),
-          if (_activeRemindersCount >
+
+          if (_activeRemindersCount > 0)
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.notifications, color: Colors.amber),
+                  onPressed: _openRemindersList,
+                ),
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '$_activeRemindersCount',
+                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.notifications_none, color: Colors.white),
+              onPressed: _openRemindersList,
+            ),
+        ],
+      ),
+      body: _isLoadingChannels
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00E5FF)))
+          : Stack(
+              children: [
+                Column(
+                  children: [
+                    // TABS: LIVE | PELÍCULAS | SERIES
+                    Container(
+                      color: const Color(0xFF121226),
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _buildTabButton('En Vivo', 'live'),
+                          _buildTabButton('Películas', 'movies'),
+                          _buildTabButton('Series', 'series'),
+                        ],
+                      ),
+                    ),
+                    // EPG DINÁMICO (Solo en Live y si hay canales)
+                    _buildDynamicEPGBar(),
+                    // FILTROS HORIZONTALES (Categorías)
+                    if (categories.isNotEmpty)
+                      Container(
+                        height: 50,
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        margin: const EdgeInsets.only(top: 8),
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: categories.map((cat) {
+                            final isSel = _selectedCategory == cat;
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text(cat),
+                                selected: isSel,
+                                selectedColor: const Color(0xFF8B5CF6),
+                                backgroundColor: const Color(0xFF1E1A38),
+                                labelStyle: TextStyle(
+                                  color: isSel ? Colors.white : Colors.white70,
+                                  fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                                ),
+                                onSelected: (val) {
+                                  setState(() {
+                                    _selectedCategory = val ? cat : 'Todos';
+                                  });
+                                },
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    // LISTA DE CANALES
+                    Expanded(
+                      child: filteredChannels.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.tv_off, color: Colors.white30, size: 60),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    _searchFilter.isEmpty
+                                        ? 'No hay canales disponibles en esta categoría.'
+                                        : 'No se encontraron resultados para "$_searchFilter".',
+                                    style: const TextStyle(color: Colors.white54, fontSize: 16),
+                                  ),
+                                  if (_channels.isEmpty && _searchFilter.isEmpty) ...[
+                                    const SizedBox(height: 24),
+                                    ElevatedButton.icon(
+                                      onPressed: _openPlaylistManagerDialog,
+                                      icon: const Icon(Icons.playlist_add),
+                                      label: const Text('Gestionar Listas M3U'),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFF8B5CF6),
+                                      ),
+                                    )
+                                  ]
+                                ],
+                              ),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              itemCount: filteredChannels.length,
+                              itemBuilder: (context, index) {
+                                final channel = filteredChannels[index];
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1E1A38),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(color: Colors.white10),
+                                  ),
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                    leading: Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF8B5CF6).withOpacity(0.2),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Center(
+                                        child: Text(
+                                          '${index + 1}',
+                                          style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 13),
+                                        ),
+                                      ),
+                                    ),
+                                    title: Text(
+                                      channel.name,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15),
+                                    ),
+                                    subtitle: Text(
+                                      'Grupo: ${channel.category.isEmpty ? "General" : channel.category} • 1080p FHD',
+                                      style: const TextStyle(color: Colors.white54, fontSize: 12),
+                                    ),
+                                    trailing: const Icon(Icons.volume_up, color: Color(0xFF8B5CF6), size: 20),
+                                    onTap: () => _playChannel(channel),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+                _buildFloatingMiniPlayer(),
+              ],
+            ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _openVoiceAssistant,
+        backgroundColor: const Color(0xFF00E5FF),
+        child: const Icon(Icons.mic, color: Colors.black, size: 28),
+      ),
+    );
+  }
+
+  Widget _buildTabButton(String title, String tabValue) {
+    final isActive = _activeTab == tabValue;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _activeTab = tabValue;
+          _selectedCategory = 'Todos';
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: isActive ? const Color(0xFFB388FF) : Colors.transparent,
+              width: 3,
+            ),
+          ),
+        ),
+        child: Text(
+          title,
+          style: TextStyle(
+            color: isActive ? const Color(0xFFB388FF) : Colors.white54,
+            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+            fontSize: 14,
+          ),
+        ),
+      ),
+    );
+  }
+}
