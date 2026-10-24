@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; // NUEVO: Para leer la nube
+import 'package:url_launcher/url_launcher.dart'; // NUEVO: Para abrir WhatsApp
 import '../models/playlist_item.dart';
 import '../models/playlist_model.dart';
 import '../services/auth_service.dart';
@@ -627,6 +628,115 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return list;
   }
 
+  // MÉTODO NUEVO: Menú inferior de Soporte Técnico Directo vía WhatsApp
+  void _openSupportMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161F36),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 20, left: 20, right: 20, bottom: 40),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.support_agent, color: Color(0xFF00E5FF), size: 28),
+                  SizedBox(width: 10),
+                  Text(
+                    'Soporte Técnico Directo',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Selecciona el motivo de tu consulta. Te atenderemos vía WhatsApp.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              const SizedBox(height: 20),
+              
+              _buildSupportOption(
+                icon: Icons.autorenew,
+                title: 'Renovar o recuperar mi servicio',
+                subtitle: 'Si tu proveedor anterior ya no responde',
+                message: 'Hola Ameycar TV, mi proveedor original ya no me atiende y deseo renovar mi perfil directamente con ustedes.',
+              ),
+              const SizedBox(height: 10),
+              _buildSupportOption(
+                icon: Icons.wifi_tethering_error_rounded,
+                title: 'Reportar problema de conexión',
+                subtitle: 'Fallas técnicas o cortes de señal',
+                message: 'Hola equipo, estoy experimentando fallas de conexión en mi dispositivo.',
+              ),
+              const SizedBox(height: 10),
+              _buildSupportOption(
+                icon: Icons.add_to_queue,
+                title: 'Solicitar pantallas adicionales',
+                subtitle: 'Ampliar plan familiar',
+                message: 'Hola, me interesa ampliar mi plan y adquirir pantallas adicionales.',
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // MÉTODO NUEVO: Widget de opciones de Soporte con enlace a WhatsApp
+  Widget _buildSupportOption({required IconData icon, required String title, required String subtitle, required String message}) {
+    return InkWell(
+      onTap: () async {
+        Navigator.pop(context); // Cierra el menú
+        final phoneNumber = "51905823660"; // COLOCA AQUÍ TU NÚMERO REAL
+        final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(message)}");
+        
+        try {
+          if (await canLaunchUrl(url)) {
+            await launchUrl(url);
+          } else {
+             final webUrl = Uri.parse("https://wa.me/$phoneNumber?text=${Uri.encodeComponent(message)}");
+             await launchUrl(webUrl, mode: LaunchMode.externalApplication);
+          }
+        } catch (e) {
+          debugPrint("Error al abrir WhatsApp: $e");
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: const Color(0xFF00E5FF).withOpacity(0.1), shape: BoxShape.circle),
+              child: Icon(icon, color: const Color(0xFF00E5FF), size: 20),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white38, size: 14),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildDynamicEPGBar() {
     if (_channels.isEmpty || _activeTab != 'live') return const SizedBox.shrink();
 
@@ -898,6 +1008,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ],
               ),
         actions: [
+          // BOTÓN DE SOPORTE INTEGRADO
+          if (!_isSearching)
+            IconButton(
+              tooltip: 'Soporte y Renovaciones',
+              icon: const Icon(Icons.headset_mic, color: Color(0xFF00E5FF)),
+              onPressed: _openSupportMenu,
+            ),
           if (!_isSearching)
             IconButton(
               tooltip: 'Buscar contenido',
@@ -906,311 +1023,4 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 setState(() => _isSearching = true);
               },
             ),
-          if (_activeRemindersCount > 0)
-            IconButton(
-              tooltip: 'Ver alarmas activas',
-              icon: Stack(
-                children: [
-                  const Icon(Icons.notifications_active, color: Colors.amber),
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration:
-                          const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                      constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
-                      child: Text(
-                        '$_activeRemindersCount',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              onPressed: _openRemindersList,
-            ),
-          if (_isJefeProfile)
-            IconButton(
-              tooltip: 'Gestor de Listas M3U (hasta 5)',
-              icon: Stack(
-                children: [
-                  const Icon(Icons.playlist_play, color: Colors.white, size: 26),
-                  if (_userPlaylists.isNotEmpty)
-                    Positioned(
-                      right: 0,
-                      top: 0,
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF8B5CF6),
-                          shape: BoxShape.circle,
-                        ),
-                        constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
-                        child: Text(
-                          '${_userPlaylists.length}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 8,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              onPressed: _openPlaylistManagerDialog,
-            ),
-          Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: IconButton(
-              tooltip: 'Asistente de Voz Inteligente',
-              icon: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                      colors: [Color(0xFF00E5FF), Color(0xFF7C4DFF)]),
-                ),
-                child: const Icon(Icons.mic, color: Colors.white, size: 20),
-              ),
-              onPressed: _openVoiceAssistant,
-            ),
-          ),
-        ],
-      ),
-      body: _isLoadingChannels
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: Color(0xFF8B5CF6)),
-                  SizedBox(height: 16),
-                  Text(
-                    'Sincronizando canales...',
-                    style: TextStyle(color: Colors.white70, fontSize: 14),
-                  ),
-                ],
-              ),
-            )
-          : Stack(
-              children: [
-                Column(
-                  children: [
-                    Container(
-                      color: const Color(0xFF121226),
-                      child: Row(
-                        children: [
-                          _buildMainTab('En Vivo', 'live'),
-                          _buildMainTab('Películas', 'movies'),
-                          _buildMainTab('Series', 'series'),
-                        ],
-                      ),
-                    ),
-
-                    // Barra de EPG
-                    _buildDynamicEPGBar(),
-
-                    // Filtro por categorías
-                    if (_channels.isNotEmpty)
-                      Container(
-                        height: 48,
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: ListView(
-                          scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.symmetric(horizontal: 14),
-                          children: categories.map((cat) {
-                            final isSelected = _selectedCategory == cat;
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 8.0),
-                              child: FilterChip(
-                                selected: isSelected,
-                                label: Text(cat),
-                                labelStyle: TextStyle(
-                                  color: isSelected ? Colors.white : Colors.white70,
-                                  fontSize: 12,
-                                  fontWeight: isSelected
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                                ),
-                                backgroundColor: const Color(0xFF1A1A2E),
-                                selectedColor: const Color(0xFF651FFF),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(20)),
-                                onSelected: (_) {
-                                  setState(() => _selectedCategory = cat);
-                                },
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ),
-
-                    // Contenido Principal
-                    Expanded(
-                      child: _channels.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(24.0),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    const Icon(Icons.tv_off_rounded,
-                                        size: 70, color: Colors.white24),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'No hay canales cargados en "$_currentProfileName"',
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    const Text(
-                                      'Cada perfil gestiona sus propias listas M3U de manera independiente.',
-                                      style: TextStyle(color: Colors.grey, fontSize: 13),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    const SizedBox(height: 24),
-                                    if (_isJefeProfile)
-                                      ElevatedButton.icon(
-                                        onPressed: _openPlaylistManagerDialog,
-                                        icon: const Icon(Icons.playlist_add, color: Colors.white),
-                                        label: const Text('Gestionar / Agregar Listas M3U',
-                                            style: TextStyle(color: Colors.white)),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFF651FFF),
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 20, vertical: 12),
-                                          shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(12)),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            )
-                          : filteredChannels.isEmpty
-                              ? const Center(
-                                  child: Text(
-                                    'No se encontraron coincidencias',
-                                    style:
-                                        TextStyle(color: Colors.white54, fontSize: 15),
-                                  ),
-                                )
-                              : _activeTab == 'movies'
-                                  ? _buildMoviesGrid(filteredChannels)
-                                  : _buildChannelsList(filteredChannels),
-                    ),
-                  ],
-                ),
-
-                _buildFloatingMiniPlayer(),
-              ],
-            ),
-    );
-  }
-
-  Widget _buildMainTab(String label, String tabKey) {
-    final isSelected = _activeTab == tabKey;
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _activeTab = tabKey;
-            _selectedCategory = 'Todos';
-          });
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: isSelected ? const Color(0xFFB388FF) : Colors.transparent,
-                width: 3,
-              ),
-            ),
-          ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: isSelected ? Colors.white : Colors.white60,
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              fontSize: 14,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChannelsList(List<PlaylistItem> list) {
-    return ListView.builder(
-      padding: EdgeInsets.fromLTRB(14, 8, 14, _pipChannel != null ? 80 : 8),
-      itemCount: list.length,
-      itemBuilder: (context, index) {
-        final ch = list[index];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          decoration: BoxDecoration(
-            color: const Color(0xFF16162D),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white.withOpacity(0.06)),
-          ),
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            leading: Container(
-              width: 50,
-              height: 50,
-              decoration: BoxDecoration(
-                color: Colors.black38,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: ch.logoUrl != null && ch.logoUrl!.isNotEmpty
-                  ? Image.network(
-                      ch.logoUrl!,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) =>
-                          const Icon(Icons.tv, color: Color(0xFF00E5FF), size: 28),
-                    )
-                  : const Icon(Icons.tv, color: Color(0xFF00E5FF), size: 28),
-            ),
-            title: Text(
-              ch.name,
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: Text(
-              'Grupo: ${ch.category.isEmpty ? "General" : ch.category} • HD En Vivo',
-              style: const TextStyle(color: Colors.white54, fontSize: 11),
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: 'Guía EPG y Recordatorios',
-                  icon: const Icon(Icons.calendar_month, color: Colors.cyanAccent, size: 22),
-                  onPressed: () => _openEPGModal(ch),
-                ),
-                const Icon(Icons.play_circle_fill, color: Color(0xFF00E5FF), size: 30),
-              ],
-            ),
-            onTap: () => _playChannel(ch),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildMoviesGrid(List<PlaylistItem> list) {
-    return GridView.builder(
-      padding: EdgeInsets.fromLTRB(14
+          if (_activeRemindersCount >
