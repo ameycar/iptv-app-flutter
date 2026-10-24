@@ -1,7 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart'; // NUEVO: Para abrir WhatsApp
+import 'package:url_launcher/url_launcher.dart'; 
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import 'family_panel_screen.dart';
@@ -57,7 +57,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     },
   ];
 
-  // NUEVO: Menú de Soporte Técnico Directo vía WhatsApp
   void _openSupportMenu() {
     showModalBottomSheet(
       context: context,
@@ -116,12 +115,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     );
   }
 
-  // NUEVO: Opción individual del menú de soporte
   Widget _buildSupportOption({required IconData icon, required String title, required String subtitle, required String message}) {
     return InkWell(
       onTap: () async {
-        Navigator.pop(context); // Cierra el menú
-        const phoneNumber = "51905823660"; // COLOCA AQUÍ TU NÚMERO DE WHATSAPP REAL
+        Navigator.pop(context); 
+        const phoneNumber = "51905823660"; 
         final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(message)}");
         
         try {
@@ -184,7 +182,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
 
             return Column(
               children: [
-                // 1. TOP BAR DISNEY+ (CON BOTÓN DE SOPORTE INTEGRADO)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                   child: Row(
@@ -239,7 +236,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          // NUEVO: Botón de Soporte en la barra superior
                           IconButton(
                             icon: const Icon(Icons.headset_mic, color: Color(0xFF00E5FF), size: 22),
                             tooltip: 'Soporte Directo',
@@ -248,7 +244,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                             onPressed: _openSupportMenu,
                           ),
                           const SizedBox(width: 12),
-                          // BOTÓN ADMINISTRAR PERFILES (SOLO VISIBLE PARA EL JEFE)
                           if (isHeadUser)
                             OutlinedButton.icon(
                               onPressed: () {
@@ -285,7 +280,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
 
                 const Spacer(flex: 1),
 
-                // 2. TÍTULO "¿QUIÉN ESTÁ VIENDO HOY?"
                 const Text(
                   '¿Quién está viendo hoy?',
                   style: TextStyle(
@@ -305,7 +299,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
 
                 const SizedBox(height: 28),
 
-                // 3. CUADRÍCULA DE PERFILES (HASTA 5 PANTALLAS ESTILO DISNEY+)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Center(
@@ -323,7 +316,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
 
                 const Spacer(flex: 2),
 
-                // 4. BARRA INFERIOR DE ACCIONES (RENOVAR, GESTIÓN Y SALIR)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                   decoration: const BoxDecoration(
@@ -333,7 +325,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // RENOVAR PLAN: Si es el Jefe ve todo el panel; si es secundario solo ve canjear PIN
                       TextButton.icon(
                         icon: const Icon(Icons.confirmation_number, color: Color(0xFF00E676), size: 16),
                         label: Text(
@@ -343,7 +334,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                         onPressed: () => _showPaymentOptionsModal(context, isHead: isHeadUser),
                       ),
 
-                      // GESTIONAR PANTALLAS (SOLO JEFE)
                       if (isHeadUser)
                         ElevatedButton.icon(
                           onPressed: () {
@@ -364,7 +354,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                           ),
                         ),
 
-                      // CERRAR SESIÓN
                       IconButton(
                         icon: const Icon(Icons.power_settings_new, color: Colors.white54, size: 20),
                         tooltip: 'Cerrar Sesión',
@@ -389,12 +378,10 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     final bool isHead = member.isFamilyAdmin;
     final bool hasPinLock = isHead || (member.pinCode != null && member.pinCode!.isNotEmpty);
 
-    // LÓGICA DE NOMBRE REVISADA: Respeta siempre el nombre real asignado en 'deviceName'
     String displayName = (member.deviceName != null && member.deviceName!.isNotEmpty) 
         ? member.deviceName! 
         : member.username;
 
-    // Si aún así por alguna razón dice "Dispositivo Vinculado", intentamos forzar el nombre de usuario
     if (displayName.toLowerCase().contains('dispositivo') || displayName.trim().isEmpty) {
       displayName = isHead ? member.username.toUpperCase() : member.username;
     }
@@ -451,7 +438,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   ),
                   child: const Icon(Icons.edit, color: Colors.white, size: 26),
                 ),
-              // CANDADO DE PRIVACIDAD
               if (hasPinLock && !_isManageMode)
                 Positioned(
                   top: 0,
@@ -1016,7 +1002,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        isHead ? 'Renovación & Métodos de Pago' : 'Canjear PIN de Activación',
+                        isHead ? 'Renovación de Suscripción' : 'Canjear PIN de Activación',
                         style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
                       ),
                     ),
@@ -1025,12 +1011,13 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 const SizedBox(height: 4),
                 Text(
                   isHead
-                      ? 'Elige tu método preferido para extender tu suscripción familiar.'
-                      : 'Ingresa el código proporcionado por el titular o proveedor para activar tu pantalla.',
+                      ? 'Métodos seguros para extender tu plan familiar sin comisiones.'
+                      : 'Ingresa el código proporcionado por el titular para activar tu pantalla.',
                   style: const TextStyle(color: Colors.white60, fontSize: 12),
                 ),
                 const SizedBox(height: 16),
 
+                // ZONA DE CANJEAR PIN
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
@@ -1046,7 +1033,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                           Icon(Icons.confirmation_number, color: Color(0xFF00E5FF), size: 18),
                           SizedBox(width: 8),
                           Text(
-                            'Ingresar PIN o Voucher Prepago',
+                            'Ingresar PIN de Acceso',
                             style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
                           ),
                         ],
@@ -1111,141 +1098,118 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 ),
 
                 if (isHead) ...[
-                  const SizedBox(height: 16),
-                  const Text('Pagar en Línea (Acreditación Automática):', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Row(
+                  const SizedBox(height: 20),
+                  
+                  // SECCIÓN A: PERÚ (SIN COMISIONES)
+                  const Row(
                     children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.payment, color: Colors.black, size: 16),
-                          label: const Text('Mercado Pago', style: TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF00E5FF),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
-                          onPressed: () async {
-                            setModalState(() => isProcessing = true);
-                            final res = await AuthService.simulateAutomaticPayment(
-                              userId: _currentUser?.id ?? '',
-                              days: 30,
-                              paymentMethod: 'Mercado Pago Checkout',
-                            );
-                            setModalState(() => isProcessing = false);
-                            if (context.mounted) {
-                              Navigator.pop(ctx);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text(res.message), backgroundColor: const Color(0xFF00E676)),
-                              );
-                              setState(() {});
-                            }
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.currency_bitcoin, color: Colors.black, size: 16),
-                          label: const Text('Binance USDT', style: TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFFFD700),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
-                          onPressed: () async {
-                            setModalState(() => isProcessing = true);
-                            final res = await AuthService.simulateAutomaticPayment(
-                              userId: _currentUser?.id ?? '',
-                              days: 30,
-                              paymentMethod: 'Binance Pay USDT',
-                            );
-                            setModalState(() => isProcessing = false);
-                            if (context.mounted) {
-                              Navigator.pop(ctx);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text(res.message), backgroundColor: const Color(0xFF00E676)),
-                              );
-                              setState(() {});
-                            }
-                          },
-                        ),
-                      ),
+                      Text('🇵🇪 ', style: TextStyle(fontSize: 16)),
+                      Text('Pago Nacional (Cero Comisiones):', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
                     ],
                   ),
-
-                  const SizedBox(height: 16),
-                  const Text('Transferencias Directas:', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
 
                   _buildPaymentTile(
                     icon: Icons.phone_android,
                     color: const Color(0xFF7B2CBF),
-                    title: 'Yape / Plin (Perú)',
-                    subtitle: '+51 987 654 321 • Titular: AMEYCAR TV',
-                    copyText: '+51987654321',
+                    title: 'Yape',
+                    subtitle: '51931573805 • Titular: ACOSTA NN CARLOS RAFAEL', 
+                    copyText: '51931573805', 
+                    context: context,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildPaymentTile(
+                    icon: Icons.account_balance,
+                    color: const Color(0xFFFF7043),
+                    title: 'BCP - Cuenta Soles',
+                    subtitle: '19194759620085 • Titular: ACOSTA NN CARLOS RAFAEL', 
+                    copyText: '19194759620085',
                     context: context,
                   ),
 
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 20),
 
+                  // SECCIÓN B: INTERNACIONAL (ANTI-FRAUDE)
+                  const Row(
+                    children: [
+                      Text('🌎 ', style: TextStyle(fontSize: 16)),
+                      Text('Pago Internacional (Anti-Fraude):', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  _buildPaymentTile(
+                    icon: Icons.currency_bitcoin,
+                    color: const Color(0xFFFFD700),
+                    title: 'Binance Pay (USDT - Inmediato)',
+                    subtitle: 'Pay ID: 214778098', 
+                    copyText: '214778098', 
+                    context: context,
+                  ),
+                  const SizedBox(height: 8),
                   _buildPaymentTile(
                     icon: Icons.account_balance_wallet,
                     color: const Color(0xFF0072FF),
-                    title: 'PayPal Internacional',
-                    subtitle: 'pagos@ameycargroup.com',
-                    copyText: 'pagos@ameycargroup.com',
+                    title: 'PayPal',
+                    subtitle: 'carlos_87_21@hotmail.com', 
+                    copyText: 'carlos_87_21@hotmail.com', 
                     context: context,
                   ),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
 
+                  // BOTÓN FINAL DE VALIDACIÓN VÍA WHATSAPP
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: const Color(0xFF1E283D),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFF25D366).withOpacity(0.4)),
+                      border: Border.all(color: const Color(0xFF25D366).withOpacity(0.5), width: 1.5),
                     ),
                     child: Column(
                       children: [
                         const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.support_agent, color: Color(0xFF25D366), size: 20),
+                            Icon(Icons.check_circle_outline, color: Color(0xFF25D366), size: 22),
                             SizedBox(width: 8),
                             Text(
-                              '¿Deseas pagar y que el CEO emita tu PIN?',
-                              style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                              'Validar Pago y Activar',
+                              style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
                             ),
                           ],
                         ),
                         const SizedBox(height: 6),
                         const Text(
-                          'Envía tu comprobante de pago al Administrador para recibir tu PIN de inmediato.',
+                          'Toca aquí para enviar la captura de tu transferencia. Te entregaremos tu PIN de renovación de inmediato.',
                           textAlign: TextAlign.center,
                           style: TextStyle(color: Colors.white60, fontSize: 11),
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 12),
                         ElevatedButton.icon(
                           icon: const Icon(Icons.chat, color: Colors.white, size: 16),
-                          label: const Text('Contactar por WhatsApp', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          label: const Text('Enviar Voucher por WhatsApp', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF25D366),
                             foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           ),
-                          onPressed: () {
-                            final msg = '¡Hola! Deseo renovar mi plan familiar. Mi usuario es: ${_currentUser?.username ?? "cliente"}. Adjunto comprobante.';
+                          onPressed: () async {
+                            final msg = '¡Hola! He realizado una transferencia para renovar mi plan. Mi usuario es: ${_currentUser?.username ?? "cliente"}. Adjunto mi voucher de pago.';
                             Clipboard.setData(ClipboardData(text: msg));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('¡Mensaje copiado! Pégalo en tu WhatsApp.'),
-                                backgroundColor: Color(0xFF25D366),
-                              ),
-                            );
+                            
+                            const phoneNumber = "51905823660"; 
+                            final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(msg)}");
+                            try {
+                              if (await canLaunchUrl(url)) {
+                                await launchUrl(url);
+                              } else {
+                                final webUrl = Uri.parse("https://wa.me/$phoneNumber?text=${Uri.encodeComponent(msg)}");
+                                await launchUrl(webUrl, mode: LaunchMode.externalApplication);
+                              }
+                            } catch (_) {}
                           },
                         ),
                       ],
