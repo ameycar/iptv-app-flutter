@@ -13,7 +13,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-import 'package:simple_pip_mode/simple_pip_mode.dart';
 
 import 'models/channel_model.dart';
 import 'models/user_model.dart';
@@ -250,6 +249,9 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  // Canal nativo directo a Android para Picture-in-Picture (sin paquetes externos frágiles)
+  static const MethodChannel _pipChannel = MethodChannel('ameycar.tv/pip');
+
   List<ChannelModel> _channels = [];
   int _selectedChannelIndex = 0;
   String _selectedCategory = 'Todos';
@@ -262,14 +264,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _showOsd = true;
   double _currentVolume = 1.0;
 
-  // NUEVO: Controladores de Ventana Flotante (PiP) y Estadio Virtual (Chat)
-  late SimplePip _pip;
   bool _isInPipMode = false;
   bool _showLiveChat = false;
   String _selectedLanguage = 'Español (Latinoamérica)';
   int _customAvatarIdx = 0;
 
-  // NUEVO: Gestor de hasta 5 Listas M3U por perfil
   List<Map<String, dynamic>> _savedPlaylists = [];
 
   final Map<String, VideoPlayerController> _prebufferedPool = {};
@@ -298,7 +297,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       AuthService.currentUser?.id ??
       'default_profile';
 
-  // REGLA DE ORO FINANCIERA: Individuales o Jefes de Familia ven bancos de pago
   bool get _canSeePaymentBanks {
     final user = AuthService.currentUser;
     if (user == null) return true;
@@ -312,15 +310,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WakelockPlus.enable();
-
-    _pip = SimplePip(
-      onPipEntered: () {
-        if (mounted) setState(() => _isInPipMode = true);
-      },
-      onPipExited: () {
-        if (mounted) setState(() => _isInPipMode = false);
-      },
-    );
+    _syncAutoPipState(true);
 
     EpgService.ensureInitialized();
     _startClockTimer();
@@ -333,21 +323,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _syncAutoPipState(bool enabled) async {
+    try {
+      await _pipChannel.invokeMethod('setAutoPip', {'enabled': enabled});
+    } catch (_) {}
+  }
+
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
-    // Respaldo automático: si Android encoge la ventana a miniatura PiP, ocultamos toda la UI
+    // Detecta al instante cuando Android encoge la ventana a PiP y muestra solo el video puro
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final size = MediaQuery.of(context).size;
-      final bool looksLikePip = size.height < 300 && size.width < 520;
+      final bool looksLikePip = size.height < 320 && size.width < 560;
       if (looksLikePip != _isInPipMode) {
         setState(() => _isInPipMode = looksLikePip);
       }
     });
   }
 
-  /// Garantiza que todo cliente (incluso antiguo) tenga su propio código del Círculo AMEYCAR
   Future<void> _ensureUserHasReferralCode() async {
     final user = AuthService.currentUser;
     if (user == null || !AuthService.isFirebaseAvailable) return;
@@ -370,24 +365,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Activa el modo flotante nativo (PiP) redimensionable de Android
   Future<void> _enterNativePiP() async {
     try {
-      final available = await SimplePip.isPipAvailable;
-      if (available) {
-        await _pip.enterPipMode(aspectRatio: const (16, 9));
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Activa "Imagen en imagen" en los ajustes de tu teléfono para flotar el video.'),
-              backgroundColor: Color(0xFF7B2CBF),
-            ),
-          );
-        }
+      final bool? entered = await _pipChannel.invokeMethod<bool>('enterPip');
+      if (entered == true && mounted) {
+        setState(() => _isInPipMode = true);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Activa "Imagen en imagen" en los ajustes de tu teléfono para flotar el video.'),
+            backgroundColor: Color(0xFF7B2CBF),
+          ),
+        );
       }
     } catch (e) {
-      debugPrint('Error activando PiP: $e');
+      debugPrint('Aviso PiP nativo: $e');
     }
   }
 
@@ -413,6 +405,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _forceLogoutWithReason(String reason) async {
     _accountGuardSub?.cancel();
     _videoPlayerController?.pause();
+    await _syncAutoPipState(false);
     await AuthService.logout();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -450,7 +443,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _customAvatarIdx = prefs.getInt('custom_avatar_$_currentProfileId') ?? 0;
       _selectedLanguage = prefs.getString('app_lang') ?? 'Español (Latinoamérica)';
 
-      // Cargar las hasta 5 listas M3U del perfil
       final rawLists = prefs.getString('m3u_lists_$_currentProfileId');
       if (rawLists != null && rawLists.isNotEmpty) {
         final List decoded = jsonDecode(rawLists);
@@ -841,9 +833,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return null;
   }
 
-  // ===========================================================================
   // ENGRANAJE ⚙️: MENÚ MAESTRO DE CONFIGURACIÓN, SOPORTE, PERFIL Y REFERIDOS
-  // ===========================================================================
   void _showSettingsMenu() {
     final user = AuthService.currentActiveProfile ?? AuthService.currentUser;
     showModalBottomSheet(
@@ -978,6 +968,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     );
                   } else {
                     _videoPlayerController?.pause();
+                    await _syncAutoPipState(false);
                     await AuthService.logout();
                     widget.onLogout?.call();
                   }
@@ -992,6 +983,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 onTap: () async {
                   Navigator.pop(ctx);
                   _videoPlayerController?.pause();
+                  await _syncAutoPipState(false);
                   await AuthService.logout();
                   widget.onLogout?.call();
                 },
@@ -1055,7 +1047,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // MODAL DEL CLUB DE REFERIDOS ("CÍRCULO AMEYCAR")
   void _showReferralClubModal() async {
     final user = AuthService.currentUser;
     if (user == null) return;
@@ -1166,7 +1157,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // SOPORTE DIRECTO Y CONTACTO CON EL CEO POR WHATSAPP
   void _openSupportMenu() {
     showModalBottomSheet(
       context: context,
@@ -1275,7 +1265,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // MOTOR AUTOMÁTICO DE RECOMPENSA DE REFERIDOS (+15 DÍAS SIN INTERVENCIÓN MANUAL)
   Future<String?> _processAutomaticReferralReward(String rawRefCode) async {
     final code = rawRefCode.trim().toUpperCase();
     if (code.isEmpty || !AuthService.isFirebaseAvailable) return null;
@@ -1316,7 +1305,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final newInviterExp = baseExp.add(const Duration(days: 15));
       final prevCount = (inviterData['referralsCount'] is int) ? inviterData['referralsCount'] as int : 0;
 
-      // Sumamos +15 días automáticamente al embajador y marcamos al invitado para evitar abusos
       await FirebaseFirestore.instance.collection('users').doc(inviterDoc.id).update({
         'expirationDate': newInviterExp.toIso8601String(),
         'isActive': true,
@@ -1329,7 +1317,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         'referredByUser': inviterData['username'] ?? '',
       }, SetOptions(merge: true));
 
-      return '🎁 ¡ Tu amigo "${inviterData['username'] ?? 'Embajador'}" acaba de recibir +15 DÍAS GRATIS automáticamente!';
+      return '🎁 ¡Tu amigo "${inviterData['username'] ?? 'Embajador'}" acaba de recibir +15 DÍAS GRATIS automáticamente!';
     } catch (e) {
       debugPrint('Error procesando recompensa automática: $e');
       return null;
@@ -1614,9 +1602,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // ===========================================================================
   // GESTOR MULTI-LISTA M3U (HASTA 5 LISTAS POR PERFIL - SIN PALABRA TIVIMATE)
-  // ===========================================================================
   void _openM3uDialog() async {
     final prefs = await SharedPreferences.getInstance();
     final savedCustomEpgUrl = await EpgService.getCustomEpgUrl();
@@ -2308,7 +2294,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           const SizedBox(width: 6),
                         ],
 
-                        // BOTÓN VERDE RENOVAR (Con Panel de Pagos real para Individuales y Jefe)
                         Material(
                           color: const Color(0xFF00E676),
                           borderRadius: BorderRadius.circular(16),
@@ -2333,7 +2318,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ),
                         const SizedBox(width: 6),
 
-                        // BOTÓN VENTANA FLOTANTE PiP DIRECTO EN BARRA
                         _buildTopBarActionItem(
                           icon: Icons.picture_in_picture_alt_rounded,
                           color: const Color(0xFF00E5FF),
@@ -2341,7 +2325,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           onPressed: _enterNativePiP,
                         ),
 
-                        // BOTÓN ESTADIO VIRTUAL (CHAT & EMOJIS EN VIVO)
                         _buildTopBarActionItem(
                           icon: _showLiveChat ? Icons.forum : Icons.forum_outlined,
                           color: _showLiveChat ? const Color(0xFFFFD600) : Colors.white70,
@@ -2349,7 +2332,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           onPressed: () => setState(() => _showLiveChat = !_showLiveChat),
                         ),
 
-                        // GESTOR DE 5 LISTAS M3U
                         _buildTopBarActionItem(
                           icon: Icons.playlist_add,
                           color: const Color(0xFF00E5FF),
@@ -2357,7 +2339,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           onPressed: _openM3uDialog,
                         ),
 
-                        // BUSCADOR
                         _buildTopBarActionItem(
                           icon: Icons.search,
                           color: const Color(0xFFC77DFF),
@@ -2365,7 +2346,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           onPressed: () => setState(() => _isSearching = true),
                         ),
 
-                        // ASISTENTE VOZ ALEXA
                         _buildTopBarActionItem(
                           icon: Icons.mic,
                           color: const Color(0xFF00E5FF),
@@ -2374,7 +2354,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           onPressed: _startVoiceSearch,
                         ),
 
-                        // SOPORTE DIRECTO / CEO
                         _buildTopBarActionItem(
                           icon: Icons.headset_mic,
                           color: const Color(0xFF00E676),
@@ -2388,7 +2367,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
                 const SizedBox(width: 4),
 
-                // ENGRANAJE ⚙️ SIEMPRE VISIBLE A LA DERECHA (FIJO, NUNCA SE ESCONDE)
                 IconButton(
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
@@ -2444,9 +2422,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // ===========================================================================
-  // PANEL DE PAGOS COMPLETO PARA INDIVIDUALES Y JEFES + AUTO-REFERIDO +15 DÍAS
-  // ===========================================================================
   void _showRenewSubscriptionModal() {
     final pinCtrl = TextEditingController();
     final refCtrl = TextEditingController();
@@ -2502,7 +2477,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
                 const SizedBox(height: 16),
 
-                // CAJA DE CANJE DE PIN + CÓDIGO DE AMIGO AUTOMÁTICO
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
@@ -2839,6 +2813,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   onPressed: () async {
                     Navigator.pop(ctx);
                     _videoPlayerController?.pause();
+                    await _syncAutoPipState(false);
                     await AuthService.logout();
                     widget.onLogout?.call();
                   },
@@ -3039,7 +3014,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       : _buildSmoothTuningTransition(activeChannel),
             ),
 
-            // ESTADIO VIRTUAL (CHAT + EMOJIS FLOTANTES EN VIVO)
             if (_showLiveChat && activeChannel != null)
               Positioned.fill(
                 child: LiveChatOverlay(
@@ -3069,7 +3043,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 onToggleFullScreen: () => setState(() => _isFullScreenMode = true),
               ),
 
-            // BOTONES FLOTANTES RÁPIDOS SOBRE EL REPRODUCTOR (PiP + Chat Vivo)
             if (_showOsd)
               Positioned(
                 top: 8,
@@ -3439,6 +3412,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _syncAutoPipState(false);
     WakelockPlus.disable();
     _accountGuardSub?.cancel();
     _clockTimer?.cancel();

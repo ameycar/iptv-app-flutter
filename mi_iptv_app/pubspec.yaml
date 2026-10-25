@@ -25,7 +25,7 @@ dependencies:
   # --- NUEVAS LIBRERÍAS AGREGADAS ---
   wakelock_plus: ^1.1.4
   url_launcher: ^6.2.5
-  simple_pip_mode: ^1.1.0
+ 
 
 dev_dependencies:
   flutter_test:
