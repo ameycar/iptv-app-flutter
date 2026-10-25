@@ -33,11 +33,9 @@ class NotificationService {
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
-  // Stream en vivo cuando el usuario toca la notificación con la app minimizada/abierta
   static final StreamController<String> alarmPayloadStream =
       StreamController<String>.broadcast();
 
-  // Guarda el payload si la app estaba totalmente cerrada y se abrió tocando la alarma
   static String? pendingLaunchPayload;
 
   static Future<void> initialize() async {
@@ -201,7 +199,6 @@ class _AmeycarTVAppState extends State<AmeycarTVApp> {
             NotificationService.pendingLaunchPayload != null;
         setState(() {
           _isAuthenticated = res != null;
-          // Si abrió tocando una alarma, entra directo al reproductor sin frenar en perfiles
           _hasSelectedProfile = launchedFromAlarm;
           _customDirectScreen = null;
           _isCheckingAuth = false;
@@ -295,7 +292,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   List<ChannelModel> _channels = [];
   int _selectedChannelIndex = 0;
-  String _selectedCategory = 'Todos';
+  String _selectedCategory = 'Favoritos (⭐)';
   String _selectedSection = 'En Vivo';
 
   VideoPlayerController? _videoPlayerController;
@@ -311,6 +308,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _customAvatarIdx = 0;
 
   List<Map<String, dynamic>> _savedPlaylists = [];
+  final Set<String> _favoriteChannelUrls = {};
 
   final Map<String, VideoPlayerController> _prebufferedPool = {};
   final Set<String> _prebufferingInProgress = {};
@@ -358,6 +356,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _startClockTimer();
     _startAccountHardwareGuard();
     _listenToAlarmNotificationTaps();
+    _loadFavorites();
     _loadSavedChannels();
     _ensureUserHasReferralCode();
 
@@ -366,7 +365,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
-  /// Escucha cuando el usuario toca una alarma estando la app en segundo plano o abierta
+  void _loadFavorites() async {
+    final prefs = await SharedPreferences.getInstance();
+    final favList = prefs.getStringList('favorite_channels_$_currentProfileId') ?? [];
+    if (mounted) {
+      setState(() {
+        _favoriteChannelUrls
+          ..clear()
+          ..addAll(favList);
+      });
+    }
+  }
+
+  void _toggleFavorite(ChannelModel channel) async {
+    final url = channel.streamUrl.trim();
+    setState(() {
+      if (_favoriteChannelUrls.contains(url)) {
+        _favoriteChannelUrls.remove(url);
+      } else {
+        _favoriteChannelUrls.add(url);
+      }
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('favorite_channels_$_currentProfileId', _favoriteChannelUrls.toList());
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_favoriteChannelUrls.contains(url)
+              ? '⭐ ¡Canal agregado a favoritos!'
+              : '🗑️ Canal removido de favoritos'),
+          duration: const Duration(seconds: 1),
+          backgroundColor: const Color(0xFF7B2CBF),
+        ),
+      );
+    }
+  }
+
   void _listenToAlarmNotificationTaps() {
     _alarmTapSub?.cancel();
     _alarmTapSub = NotificationService.alarmPayloadStream.stream.listen((payload) {
@@ -375,7 +411,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
-  /// Busca primero por URL exacta (para no confundir países/idiomas) y luego por nombre exacto
   void _tuneChannelFromAlarmPayload(String rawPayload) {
     if (!mounted || _channels.isEmpty || rawPayload.trim().isEmpty) return;
 
@@ -388,40 +423,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         targetName = (decoded['name'] ?? '').toString().trim();
         targetUrl = (decoded['url'] ?? '').toString().trim();
       }
-    } catch (_) {
-      // Si era un payload plano antiguo, usamos rawPayload como nombre
-    }
+    } catch (_) {}
 
     int foundIndex = -1;
 
-    // 1. Prioridad absoluta: URL exacta del stream (evita confundir Chile/Colombia/Brasil)
     if (targetUrl.isNotEmpty) {
-      foundIndex = _channels.indexWhere(
-        (c) => c.streamUrl.trim() == targetUrl,
-      );
+      foundIndex = _channels.indexWhere((c) => c.streamUrl.trim() == targetUrl);
     }
 
-    // 2. Segunda prioridad: Nombre exacto completo (ignorando mayúsculas)
     if (foundIndex == -1 && targetName.isNotEmpty) {
       final lowerExact = targetName.toLowerCase();
-      foundIndex = _channels.indexWhere(
-        (c) => c.name.trim().toLowerCase() == lowerExact,
-      );
+      foundIndex = _channels.indexWhere((c) => c.name.trim().toLowerCase() == lowerExact);
     }
 
-    // 3. Respaldo: coincidencia parcial si la lista fue recargada
     if (foundIndex == -1 && targetName.isNotEmpty) {
       final lowerPart = targetName.toLowerCase();
-      foundIndex = _channels.indexWhere(
-        (c) => c.name.toLowerCase().contains(lowerPart),
-      );
+      foundIndex = _channels.indexWhere((c) => c.name.toLowerCase().contains(lowerPart));
     }
 
     if (foundIndex != -1) {
       final targetChannel = _channels[foundIndex];
       setState(() {
         _selectedSection = 'En Vivo';
-        _selectedCategory = 'Todos';
+        _selectedCategory = 'Favoritos (⭐)';
         _isSearching = false;
         _searchQuery = '';
         _searchController.clear();
@@ -599,7 +623,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _channels = M3USanitizerService.getCuratedChannels();
       }
 
-      // Verificar si se abrió la app tocando una notificación de alarma
       final pendingAlarmPayload = NotificationService.consumePendingPayload();
       if (pendingAlarmPayload != null && _channels.isNotEmpty) {
         if (mounted) setState(() {});
@@ -639,9 +662,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return targetUri;
   }
 
-  // ===========================================================================
-  // ZAPPING ULTRA RÁPIDO (PRE-BUFFERING EN RAM PARA CAMBIOS EN MILISEGUNDOS)
-  // ===========================================================================
   void _initializeVideo(String rawUrl) async {
     if (!mounted) return;
     final url = rawUrl.trim();
@@ -921,11 +941,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       },
       onCategorySelected: (cat) {
         setState(() {
-          // Emparejamiento flexible con las categorías reales de la lista M3U
           final match = _categories.firstWhere(
             (existing) => existing.toLowerCase().contains(cat.toLowerCase()) ||
                 cat.toLowerCase().contains(existing.toLowerCase()),
-            orElse: () => 'Todos',
+            orElse: () => 'Favoritos (⭐)',
           );
           _selectedCategory = match;
           _searchQuery = '';
@@ -2117,12 +2136,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   List<String> get _categories {
     final list = _liveChannels.map((c) => c.groupCategory).toSet().toList();
-    return ['Todos', ...list];
+    return ['Favoritos (⭐)', 'Todos', ...list];
   }
 
   List<ChannelModel> get _filteredChannels {
     return _liveChannels.where((c) {
-      final matchesCategory = _selectedCategory == 'Todos' || c.groupCategory == _selectedCategory;
+      final isFavCategory = _selectedCategory == 'Favoritos (⭐)';
+      final matchesCategory = isFavCategory
+          ? _favoriteChannelUrls.contains(c.streamUrl.trim())
+          : (_selectedCategory == 'Todos' || c.groupCategory == _selectedCategory);
+
       final matchesSearch = _searchQuery.isEmpty ||
           c.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
           c.number.toString().contains(_searchQuery) ||
@@ -3457,6 +3480,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final isSelected = _channels.isNotEmpty &&
             _selectedChannelIndex < _channels.length &&
             _channels[_selectedChannelIndex].streamUrl == channel.streamUrl;
+        final isFav = _favoriteChannelUrls.contains(channel.streamUrl.trim());
 
         return Container(
           margin: const EdgeInsets.only(bottom: 6),
@@ -3473,7 +3497,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               style: TextStyle(color: isSelected ? const Color(0xFFC77DFF) : Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
             ),
             subtitle: Text('Grupo: ${channel.groupCategory} • ${channel.resolution}', style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
-            trailing: isSelected ? const Icon(Icons.volume_up, color: Color(0xFFC77DFF), size: 18) : null,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: Icon(
+                    isFav ? Icons.star : Icons.star_border,
+                    color: const Color(0xFFFFD600),
+                    size: 20,
+                  ),
+                  onPressed: () => _toggleFavorite(channel),
+                ),
+                if (isSelected)
+                  const Icon(Icons.volume_up, color: Color(0xFFC77DFF), size: 18),
+              ],
+            ),
             onTap: () => _changeChannel(channel),
           ),
         );
