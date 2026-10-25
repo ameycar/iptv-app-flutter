@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../services/ai_curator_service.dart';
 
@@ -26,7 +25,6 @@ class AlexaVoiceSheet extends StatefulWidget {
     this.onCategorySelected,
   });
 
-  // Firma exacta que llama tu main.dart: context con nombre + onSectionChange
   static void show({
     required BuildContext context,
     required List<dynamic> channels,
@@ -107,7 +105,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             });
           }
         },
-        onError: (err) {
+        onError: (_) {
           if (!mounted) return;
           setState(() {
             _isListening = false;
@@ -146,6 +144,10 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
             _recognizedText = result.recognizedWords;
             _textController.text = _recognizedText;
           });
+          // Si el usuario termina de hablar o hace una pausa clara, ejecutamos de inmediato
+          if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
+            _executeAICommand(result.recognizedWords);
+          }
         },
       );
     } catch (_) {
@@ -160,8 +162,9 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
     if (mounted) setState(() => _isListening = false);
   }
 
+  // MOTOR DE COMANDOS INTELIGENTE (LOCAL + IA)
   void _executeAICommand(String query) async {
-    final clean = query.trim();
+    final clean = query.trim().toLowerCase();
     if (clean.isEmpty) return;
 
     _stopListening();
@@ -171,13 +174,68 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       _aiStatus = 'SINTONIZANDO AL INSTANTE...';
     });
 
-    final lower = clean.toLowerCase();
-    if (lower.contains('guia') || lower.contains('guía') || lower.contains('epg') || lower.contains('programacion')) {
+    // 1. Comandos de EPG / Guía
+    if (clean.contains('guia') || clean.contains('guía') || clean.contains('epg') || clean.contains('programacion')) {
       Navigator.of(context).pop();
       widget.onOpenEpg?.call();
       return;
     }
 
+    // 2. Comandos de Cambio de Sección
+    if (clean.contains('película') || clean.contains('cine') || clean.contains('vod') || clean.contains('películas')) {
+      Navigator.of(context).pop();
+      widget.onSectionChange?.call('Películas');
+      widget.onNavigateSection?.call('Películas');
+      return;
+    }
+    if (clean.contains('serie') || clean.contains('novela') || clean.contains('series')) {
+      Navigator.of(context).pop();
+      widget.onSectionChange?.call('Series');
+      widget.onNavigateSection?.call('Series');
+      return;
+    }
+    if (clean.contains('en vivo') || clean.contains('tv') || clean.contains('televisión')) {
+      Navigator.of(context).pop();
+      widget.onSectionChange?.call('En Vivo');
+      widget.onNavigateSection?.call('En Vivo');
+      return;
+    }
+
+    // 3. LIMPIEZA INTELIGENTE DE PALABRAS DE RELLENO (Ej: "coloca htv canal de videos" -> "htv")
+    final cleanedQuery = clean
+        .replaceAll(RegExp(r'\b(coloca|pon|abre|busca|el|la|los|las|canal|de|videos|por|favor|reproduce|mira|tv|ver|un|una)\b'), '')
+        .trim();
+
+    final searchKey = cleanedQuery.isNotEmpty ? cleanedQuery : clean;
+
+    // Búsqueda local directa y rápida en la lista de canales
+    dynamic matchedChannel;
+    try {
+      matchedChannel = widget.channels.firstWhere((c) {
+        final name = (c.name ?? '').toString().toLowerCase();
+        return name.contains(searchKey) || searchKey.contains(name);
+      });
+    } catch (_) {
+      // Búsqueda por palabras individuales
+      final words = searchKey.split(' ').where((w) => w.length > 1).toList();
+      for (final word in words) {
+        try {
+          matchedChannel = widget.channels.firstWhere((c) {
+            final name = (c.name ?? '').toString().toLowerCase();
+            return name.contains(word);
+          });
+          if (matchedChannel != null) break;
+        } catch (_) {}
+      }
+    }
+
+    if (matchedChannel != null) {
+      Navigator.of(context).pop();
+      widget.onChannelSelected(matchedChannel);
+      return;
+    }
+
+    // 4. Si la búsqueda local no bastó, usamos el servicio de IA como respaldo
     final result = await AICuratorService.interpretVoiceCommand(
       userVoicePrompt: clean,
       channels: widget.channels,
@@ -215,7 +273,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
           _isProcessing = false;
           _aiStatus = result.message.isNotEmpty
               ? result.message
-              : 'No encontré "$clean". Prueba con otro nombre.';
+              : 'No encontré "$query". Prueba diciendo solo el nombre del canal.';
         });
         break;
     }
@@ -331,7 +389,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
                         if (val.trim().isNotEmpty) _executeAICommand(val);
                       },
                       decoration: const InputDecoration(
-                        hintText: 'Ej: espn 2, béisbol, cine, noticias...',
+                        hintText: 'Ej: espn, htv, béisbol, cine, noticias...',
                         hintStyle: TextStyle(color: Colors.white30, fontSize: 14),
                         border: InputBorder.none,
                       ),
