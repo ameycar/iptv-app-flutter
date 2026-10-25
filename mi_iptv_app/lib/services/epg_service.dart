@@ -42,9 +42,10 @@ class _XmlTvSlot {
   const _XmlTvSlot({
     required this.start,
     required this.stop,
-    required this.title,
-    required this.desc,
-  });
+    required String title,
+    required String desc,
+  })  : title = title,
+        desc = desc;
 
   Map<String, dynamic> toJson() => {
         's': start.millisecondsSinceEpoch,
@@ -68,6 +69,7 @@ class CanonicalChannelIdentity {
   final String canonicalNameKey;
   final String brandKey;
   final String countryFeed;
+  final bool hasExplicitCountry;
 
   const CanonicalChannelIdentity({
     required this.rawName,
@@ -76,31 +78,62 @@ class CanonicalChannelIdentity {
     required this.canonicalNameKey,
     required this.brandKey,
     required this.countryFeed,
+    this.hasExplicitCountry = false,
   });
 }
 
 class EpgService {
   // ===========================================================================
-  // CONFIGURACIÓN TIVIMATE: AUTO-DETECCIÓN + URL PRIVADA + SATÉLITE + CACHÉ
+  // CONFIGURACIÓN EPG AMEYCAR (CACHÉ V6 LIMPIA + FUENTES LATAM VERIFICADAS)
   // ===========================================================================
 
-  static const String _prefCustomEpgUrlKey = 'tivimate_custom_epg_url';
-  static const String _prefAutoDetectedEpgUrlKey = 'tivimate_auto_m3u_epg_url';
-  static const String _prefUsePublicSatelliteKey = 'tivimate_use_public_satellite';
-  static const String _prefDiskCacheJsonKey = 'tivimate_xmltv_disk_cache_v4';
-  static const String _prefDiskCacheTimeKey = 'tivimate_xmltv_disk_time_v4';
+  static const String _prefCustomEpgUrlKey = 'ameycar_custom_epg_url';
+  static const String _prefAutoDetectedEpgUrlKey = 'ameycar_auto_m3u_epg_url';
+  static const String _prefUsePublicSatelliteKey = 'ameycar_use_public_satellite';
+  static const String _prefDiskCacheJsonKey = 'ameycar_xmltv_disk_cache_v6';
+  static const String _prefDiskCacheTimeKey = 'ameycar_xmltv_disk_time_v6';
 
-  static const List<String> defaultSatelliteXmlTvUrls = [
-    'https://raw.githubusercontent.com/davidmuma/EPG_dobleM/master/guiatv.xml.gz',
-    'https://www.open-epg.com/files/colombia1.xml.gz',
-    'https://www.open-epg.com/files/argentina1.xml.gz',
-    'https://www.open-epg.com/files/mexico1.xml.gz',
-    'https://www.open-epg.com/files/chile1.xml.gz',
-    'https://www.open-epg.com/files/peru1.xml.gz',
+  /// Fuentes XMLTV reales de Latinoamérica (sin mezclar guías de España)
+  static const List<Map<String, String>> _regionalXmlTvSources = [
+    {
+      'country': 'PE',
+      'url': 'https://epgshare01.online/epgshare01/epg_ripper_PE1.xml.gz',
+    },
+    {
+      'country': 'CO',
+      'url': 'https://epgshare01.online/epgshare01/epg_ripper_CO1.xml.gz',
+    },
+    {
+      'country': 'PE',
+      'url': 'https://www.open-epg.com/files/peru.xml.gz',
+    },
+    {
+      'country': 'CO',
+      'url': 'https://www.open-epg.com/files/colombia1.xml.gz',
+    },
+    {
+      'country': 'AR',
+      'url': 'https://epgshare01.online/epgshare01/epg_ripper_AR1.xml.gz',
+    },
+    {
+      'country': 'AR',
+      'url': 'https://www.open-epg.com/files/argentina.xml.gz',
+    },
+    {
+      'country': 'CL',
+      'url': 'https://epgshare01.online/epgshare01/epg_ripper_CL1.xml.gz',
+    },
+    {
+      'country': 'MX',
+      'url': 'https://epgshare01.online/epgshare01/epg_ripper_MX1.xml.gz',
+    },
   ];
 
+  static List<String> get defaultSatelliteXmlTvUrls =>
+      _regionalXmlTvSources.map((s) => s['url']!).toList();
+
   // ===========================================================================
-  // CACHÉS EN MEMORIA RAM Y CONTROL DE BÚSQUEDA REACTIVA EN VIVO
+  // CACHÉS EN MEMORIA RAM Y CONTROL REACTIVO
   // ===========================================================================
 
   static final Map<String, List<_XmlTvSlot>> _xmlTvCache = {};
@@ -117,7 +150,6 @@ class EpgService {
   static final List<String> _backgroundPrefetchQueue = [];
   static bool _isRunningBackgroundPrefetch = false;
 
-  /// Notificador reactivo para refrescar la interfaz en tiempo real
   static final ValueNotifier<int> epgUpdateNotifier = ValueNotifier<int>(0);
 
   static bool _isInitialized = false;
@@ -125,7 +157,7 @@ class EpgService {
   static bool _isSyncingXmlTv = false;
   static DateTime? _lastSportsFetch;
   static DateTime? _lastXmlTvSync;
-  static String _epgStatusMessage = 'Buscador EPG Universal Activo';
+  static String _epgStatusMessage = 'Buscador EPG Oficial Activo';
   static String _activeEpgUrl = '';
   static Timer? _refreshTimer;
 
@@ -138,6 +170,16 @@ class EpgService {
   static DateTime? get lastXmlTvSync => _lastXmlTvSync;
   static int get cachedXmlTvChannelsCount => _xmlTvCache.length;
 
+  /// Determina el país local del usuario según el reloj de su dispositivo
+  static String get _deviceLocalCountry {
+    final tzHours = DateTime.now().timeZoneOffset.inHours;
+    if (tzHours == -5) return 'PE'; // Perú / Colombia / Ecuador
+    if (tzHours == -3) return 'AR'; // Argentina / Uruguay / Chile verano
+    if (tzHours == -4) return 'CL'; // Chile / Bolivia / Venezuela
+    if (tzHours <= -6) return 'MX'; // México / Centroamérica
+    return 'PE';
+  }
+
   static bool isChannelSyncing(String channelName) {
     final identity = normalizeChannel(channelName);
     final lookupKey = '${identity.brandKey}_${identity.countryFeed.toLowerCase()}';
@@ -148,19 +190,25 @@ class EpgService {
     if (_isInitialized) return;
     _isInitialized = true;
 
-    unawaited(_initTiviMateXmlTvEngine());
-    unawaited(refreshRealTimeSportsEpg());
+    unawaited(_initXmlTvEngine());
 
     _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(const Duration(minutes: 10), (_) {
-      unawaited(refreshRealTimeSportsEpg());
+    _refreshTimer = Timer.periodic(const Duration(minutes: 15), (_) {
+      epgUpdateNotifier.value++;
     });
   }
 
-  static Future<void> _initTiviMateXmlTvEngine() async {
+  static Future<void> _initXmlTvEngine() async {
+    // Limpiar cachés obsoletas de versiones previas para evitar horarios fantasmas
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('tivimate_xmltv_disk_cache_v4');
+      await prefs.remove('tivimate_xmltv_disk_time_v4');
+    } catch (_) {}
+
     final loadedFromDisk = await _loadXmlTvCacheFromDisk();
     if (loadedFromDisk) {
-      _epgStatusMessage = 'EPG en Caché Activo (${_xmlTvCache.length} canales listos)';
+      _epgStatusMessage = 'EPG Activo (${_xmlTvCache.length} señales sincronizadas)';
       epgUpdateNotifier.value++;
     }
 
@@ -170,19 +218,24 @@ class EpgService {
         .difference(DateTime.fromMillisecondsSinceEpoch(lastSavedMs))
         .inHours;
 
-    if (!loadedFromDisk || cacheAgeHours >= 4) {
+    if (!loadedFromDisk || cacheAgeHours >= 3) {
       await syncAllEpgSources(forceNetwork: false);
     }
   }
 
   // ===========================================================================
-  // MOTOR DE BÚSQUEDA UNIVERSAL A LOS 2 SEGUNDOS DE SINTONIZAR
+  // SONDEO EN TIEMPO REAL AL SINTONIZAR UN CANAL (MI.TV + GATOTV)
   // ===========================================================================
 
   static void _scheduleDelayedChannelProbe(CanonicalChannelIdentity identity) {
     final lookupKey = '${identity.brandKey}_${identity.countryFeed.toLowerCase()}';
 
     if (_webScrapedChannelsToday.contains(lookupKey) && _hasValidRealSlots(identity)) {
+      return;
+    }
+
+    // Si ya tiene guía XMLTV válida y limpia para este país exacto, no hace falta raspar web
+    if (_hasExactCountrySlots(identity)) {
       return;
     }
 
@@ -193,20 +246,24 @@ class EpgService {
     _lastTunedProbeKey = lookupKey;
     _delayedChannelProbeTimer?.cancel();
 
-    // 2 segundos de gracia para no afectar la velocidad del zapping
-    _delayedChannelProbeTimer = Timer(const Duration(seconds: 2), () {
+    _delayedChannelProbeTimer = Timer(const Duration(milliseconds: 900), () {
       unawaited(_fetchLiveInternetEpgForChannel(identity, saveToDisk: true));
     });
   }
 
+  static bool _hasExactCountrySlots(CanonicalChannelIdentity identity) {
+    final now = DateTime.now();
+    final exactKey = '${identity.brandKey}_${identity.countryFeed.toLowerCase()}';
+    if (_xmlTvCache.containsKey(exactKey)) {
+      final list = _xmlTvCache[exactKey]!;
+      return list.any((s) => !now.isBefore(s.start) && now.isBefore(s.stop));
+    }
+    return false;
+  }
+
   static bool _hasValidRealSlots(CanonicalChannelIdentity identity) {
     final now = DateTime.now();
-    final candidates = [
-      '${identity.brandKey}_${identity.countryFeed.toLowerCase()}',
-      identity.brandKey,
-      identity.canonicalNameKey,
-      identity.tvgIdKey,
-    ];
+    final candidates = _buildLookupKeysForIdentity(identity);
     for (final k in candidates) {
       if (k.isNotEmpty && _xmlTvCache.containsKey(k)) {
         final list = _xmlTvCache[k]!;
@@ -222,39 +279,43 @@ class EpgService {
     CanonicalChannelIdentity identity, {
     bool saveToDisk = true,
   }) async {
+    if (identity.brandKey.isEmpty) return false;
     final lookupKey = '${identity.brandKey}_${identity.countryFeed.toLowerCase()}';
     if (_channelsCurrentlyScraping.contains(lookupKey)) return false;
+
     _channelsCurrentlyScraping.add(lookupKey);
     epgUpdateNotifier.value++;
 
     try {
       unawaited(_probeHlsStreamTitle(identity));
 
-      // 1. CAPA A: TVMaze API Internacional (rápida, en JSON directo, sin bloqueos)
-      List<_XmlTvSlot> fetchedSlots = await _fetchTvMazeScheduleForChannel(identity);
+      // 1. Prioridad 1 para Latinoamérica: Mi.tv con el país exacto del feed
+      List<_XmlTvSlot> fetchedSlots = await _scrapeMiTvScheduleForChannel(identity);
 
-      // 2. CAPA B: Scraper y Buscador Mi.tv (para feeds de toda Latinoamérica)
-      if (fetchedSlots.isEmpty) {
-        fetchedSlots = await _scrapeMiTvScheduleForChannel(identity);
-      }
-
-      // 3. CAPA C: Scraper y Buscador GatoTV (+1.500 canales)
+      // 2. Prioridad 2: GatoTV (parrilla regional en español)
       if (fetchedSlots.isEmpty) {
         fetchedSlots = await _scrapeGatoTvScheduleForChannel(identity);
       }
 
+      // 3. Prioridad 3: TVMaze solo si hay coincidencia estricta de cadena
+      if (fetchedSlots.isEmpty) {
+        fetchedSlots = await _fetchTvMazeScheduleForChannel(identity);
+      }
+
       if (fetchedSlots.isNotEmpty) {
-        _storeFetchedSlotsForIdentity(identity, fetchedSlots);
-        _webScrapedChannelsToday.add(lookupKey);
-        _epgStatusMessage =
-            'Guía en Vivo: ${identity.cleanDisplayName} (${_xmlTvCache.length} canales listos)';
+        final sanitized = _deduplicateAndSortSlots(fetchedSlots);
+        if (sanitized.isNotEmpty) {
+          _storeFetchedSlotsForIdentity(identity, sanitized);
+          _webScrapedChannelsToday.add(lookupKey);
+          _epgStatusMessage =
+              'Guía sincronizada: ${identity.cleanDisplayName.toUpperCase()} (${identity.countryFeed})';
+          epgUpdateNotifier.value++;
 
-        epgUpdateNotifier.value++;
-
-        if (saveToDisk) {
-          unawaited(_saveXmlTvCacheToDisk());
+          if (saveToDisk) {
+            unawaited(_saveXmlTvCacheToDisk());
+          }
+          return true;
         }
-        return true;
       }
     } catch (_) {
     } finally {
@@ -264,91 +325,83 @@ class EpgService {
     return false;
   }
 
+  /// Limpia programas duplicados o solapados para que jamás aparezcan dos horarios pisándose
+  static List<_XmlTvSlot> _deduplicateAndSortSlots(List<_XmlTvSlot> rawSlots) {
+    if (rawSlots.isEmpty) return [];
+    final sorted = List<_XmlTvSlot>.from(rawSlots)
+      ..sort((a, b) => a.start.compareTo(b.start));
+
+    final List<_XmlTvSlot> clean = [];
+    for (final slot in sorted) {
+      if (!slot.stop.isAfter(slot.start)) continue;
+      // Ignorar bloques corruptos de más de 8 horas continuas (como "14:00 - 02:00")
+      if (slot.stop.difference(slot.start).inHours > 8) continue;
+
+      if (clean.isEmpty) {
+        clean.add(slot);
+      } else {
+        final prev = clean.last;
+        // Si empieza exactamente a la misma hora que el anterior, nos quedamos con el más descriptivo
+        if (slot.start.isAtSameMomentAs(prev.start)) {
+          if (slot.title.length > prev.title.length && !slot.title.toLowerCase().contains('espn 3')) {
+            clean[clean.length - 1] = slot;
+          }
+          continue;
+        }
+        // Si se solapa parcialmente con el anterior, ajustamos el cierre del anterior
+        if (slot.start.isBefore(prev.stop)) {
+          clean[clean.length - 1] = _XmlTvSlot(
+            start: prev.start,
+            stop: slot.start,
+            title: prev.title,
+            desc: prev.desc,
+          );
+        }
+        clean.add(slot);
+      }
+    }
+    return clean;
+  }
+
   static void _storeFetchedSlotsForIdentity(
     CanonicalChannelIdentity identity,
     List<_XmlTvSlot> slots,
   ) {
-    slots.sort((a, b) => a.start.compareTo(b.start));
-    final keys = <String>{
-      '${identity.brandKey}_${identity.countryFeed.toLowerCase()}',
-      identity.brandKey,
-      identity.canonicalNameKey,
-      if (identity.tvgIdKey.isNotEmpty) identity.tvgIdKey,
-    };
-    for (final k in keys) {
-      if (k.isNotEmpty) {
-        _xmlTvCache[k] = slots;
-      }
+    final countryLower = identity.countryFeed.toLowerCase();
+    final exactRegionalKey = '${identity.brandKey}_$countryLower';
+    _xmlTvCache[exactRegionalKey] = slots;
+
+    if (identity.tvgIdKey.isNotEmpty) {
+      _xmlTvCache[identity.tvgIdKey] = slots;
+    }
+
+    // Solo guardamos en la llave genérica si coincide con la región del usuario o no existía aún
+    final localCountry = _deviceLocalCountry;
+    if (!_xmlTvCache.containsKey(identity.brandKey) ||
+        identity.countryFeed == localCountry ||
+        (localCountry == 'PE' && identity.countryFeed == 'CO')) {
+      _xmlTvCache[identity.brandKey] = slots;
+      _xmlTvCache[identity.canonicalNameKey] = slots;
     }
   }
 
   // ===========================================================================
-  // CAPA A: TVMAZE PUBLIC SCHEDULE JSON API
-  // ===========================================================================
-
-  static Future<List<_XmlTvSlot>> _fetchTvMazeScheduleForChannel(
-    CanonicalChannelIdentity identity,
-  ) async {
-    try {
-      final now = DateTime.now();
-      final dateStr =
-          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      final country = identity.countryFeed.isNotEmpty && identity.countryFeed != 'LATAM'
-          ? identity.countryFeed.toUpperCase()
-          : 'US';
-
-      final url = 'https://api.tvmaze.com/schedule?country=$country&date=$dateStr';
-      final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 4));
-
-      if (res.statusCode == 200 && res.body.isNotEmpty) {
-        final List list = jsonDecode(utf8.decode(res.bodyBytes, allowMalformed: true));
-        final List<_XmlTvSlot> matchedSlots = [];
-
-        for (final item in list) {
-          final show = item['show'] ?? {};
-          final network = show['network']?['name']?.toString().toLowerCase() ?? '';
-          final webChannel = show['webChannel']?['name']?.toString().toLowerCase() ?? '';
-
-          final channelCandidate = '$network $webChannel'.replaceAll(' ', '');
-          if (channelCandidate.contains(identity.brandKey) ||
-              identity.brandKey.contains(channelCandidate)) {
-            final airstamp = item['airstamp']?.toString() ?? '';
-            final start = DateTime.tryParse(airstamp)?.toLocal();
-            if (start == null) continue;
-
-            final runtime = (item['runtime'] as int?) ?? 30;
-            final stop = start.add(Duration(minutes: runtime));
-            final title = item['name']?.toString() ?? show['name']?.toString() ?? 'Programa';
-            final desc = show['summary']?.toString().replaceAll(RegExp(r'<[^>]*>'), '') ??
-                'Emisión oficial de ${identity.cleanDisplayName}';
-
-            matchedSlots.add(_XmlTvSlot(start: start, stop: stop, title: title, desc: desc));
-          }
-        }
-
-        if (matchedSlots.length >= 2) {
-          return matchedSlots;
-        }
-      }
-    } catch (_) {}
-    return [];
-  }
-
-  // ===========================================================================
-  // CAPA B: SCRAPER MI.TV CON BUSCADOR DINÁMICO
+  // CAPA 1: SCRAPER MI.TV (AJUSTADO A HUSO HORARIO DEL DISPOSITIVO)
   // ===========================================================================
 
   static Future<List<_XmlTvSlot>> _scrapeMiTvScheduleForChannel(
     CanonicalChannelIdentity identity,
   ) async {
-    final countries = _getOrderedMiTvCountries(identity.countryFeed);
+    final countries = _getOrderedMiTvCountries(identity.countryFeed, identity.hasExplicitCountry);
     final candidateSlugs = _buildMiTvCandidateSlugs(identity);
     final now = DateTime.now();
     final dateStr =
         '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+    // Mi.tv recibe el offset en minutos (ej. Perú/Colombia UTC-5 = -300)
     final tzOffsetMin = now.timeZoneOffset.inMinutes;
 
-    for (final country in countries.take(2)) {
+    for (final country in countries.take(3)) {
       for (final slug in candidateSlugs) {
         final asyncUrl =
             'https://mi.tv/$country/async/channel/$slug/$dateStr/$tzOffsetMin';
@@ -361,7 +414,7 @@ class EpgService {
       }
     }
 
-    // Buscador general de mi.tv
+    // Búsqueda dinámica en mi.tv si el slug directo varía
     final searchQuery = Uri.encodeQueryComponent(identity.cleanDisplayName);
     if (searchQuery.length >= 2) {
       for (final country in countries.take(2)) {
@@ -371,19 +424,19 @@ class EpgService {
             Uri.parse(searchUrl),
             headers: const {
               'User-Agent':
-                  'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
-              'Accept-Language': 'es-419,es;q=0.9',
+                  'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124.0.0.0 Mobile Safari/537.36',
+              'Accept-Language': 'es-PE,es-419;q=0.9,es;q=0.8',
             },
-          ).timeout(const Duration(seconds: 4));
+          ).timeout(const Duration(seconds: 7));
 
-          if (res.statusCode == 200 && res.body.isNotEmpty) {
+          if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
             final html = utf8.decode(res.bodyBytes, allowMalformed: true);
             final chanLinkRegex = RegExp(
               r'href="/([a-z]{2})/canales/([a-z0-9\-_]+)"',
               caseSensitive: false,
             );
             final matches = chanLinkRegex.allMatches(html).toList();
-            for (final m in matches.take(2)) {
+            for (final m in matches.take(3)) {
               final foundCountry = m.group(1)!;
               final foundSlug = m.group(2)!;
               if (_slugMatchesChannel(foundSlug, identity)) {
@@ -410,10 +463,10 @@ class EpgService {
         Uri.parse(url),
         headers: const {
           'User-Agent':
-              'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
-          'Accept-Language': 'es-419,es;q=0.9',
+              'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124.0.0.0 Mobile Safari/537.36',
+          'Accept-Language': 'es-PE,es-419;q=0.9,es;q=0.8',
         },
-      ).timeout(const Duration(seconds: 4));
+      ).timeout(const Duration(seconds: 8));
 
       if (res.statusCode != 200 || res.bodyBytes.isEmpty) return [];
       final html = utf8.decode(res.bodyBytes, allowMalformed: true);
@@ -427,7 +480,7 @@ class EpgService {
     final List<Map<String, dynamic>> rawItems = [];
 
     final blockRegex = RegExp(
-      r'<span\s+class="time"[^>]*>\s*(\d{1,2}:\d{2})\s*(am|pm)?\s*<\/span>[\s\S]{1,600}?<h2>([\s\S]*?)<\/h2>(?:[\s\S]{1,400}?<span\s+class="sub-title"[^>]*>([\s\S]*?)<\/span>)?(?:[\s\S]{1,500}?<p\s+class="synopsis"[^>]*>([\s\S]*?)<\/p>)?',
+      r'<span\s+class="time"[^>]*>\s*(\d{1,2}:\d{2})\s*(am|pm)?\s*<\/span>[\s\S]{1,750}?<h2[^>]*>([\s\S]*?)<\/h2>(?:[\s\S]{1,450}?<span\s+class="sub-title"[^>]*>([\s\S]*?)<\/span>)?',
       caseSensitive: false,
     );
 
@@ -436,7 +489,6 @@ class EpgService {
       final amPm = (m.group(2) ?? '').trim().toLowerCase();
       final rawTitle = _stripHtmlTags(_unescapeXml(m.group(3) ?? ''));
       final rawSub = _stripHtmlTags(_unescapeXml(m.group(4) ?? ''));
-      final rawSyn = _stripHtmlTags(_unescapeXml(m.group(5) ?? ''));
 
       if (rawTime.isEmpty || rawTitle.isEmpty) continue;
 
@@ -448,30 +500,18 @@ class EpgService {
       if (amPm == 'pm' && hour < 12) hour += 12;
       if (amPm == 'am' && hour == 12) hour = 0;
 
-      String desc = '';
-      if (rawSub.isNotEmpty && rawSyn.isNotEmpty) {
-        desc = '$rawSub • $rawSyn';
-      } else if (rawSyn.isNotEmpty) {
-        desc = rawSyn;
-      } else if (rawSub.isNotEmpty) {
-        desc = rawSub;
-      } else {
-        desc = 'Programación oficial en vivo';
-      }
-
       rawItems.add({
         'hour': hour,
         'minute': minute,
         'title': rawTitle,
-        'desc': desc,
+        'desc': rawSub.isNotEmpty ? rawSub : 'Programación oficial en vivo',
       });
     }
 
     if (rawItems.length < 2) return [];
 
-    final List<_XmlTvSlot> slots = [];
+    // Mi.tv inicia su parrilla diaria alrededor de las 05:00 o 06:00 AM
     DateTime baseDay = DateTime(now.year, now.month, now.day);
-
     final firstHour = rawItems.first['hour'] as int;
     if (now.hour < 5 && firstHour >= 4 && firstHour <= 7) {
       baseDay = baseDay.subtract(const Duration(days: 1));
@@ -493,6 +533,7 @@ class EpgService {
       prevStart = candidate;
     }
 
+    final List<_XmlTvSlot> slots = [];
     for (int i = 0; i < rawItems.length; i++) {
       final start = computedStarts[i];
       DateTime stop;
@@ -519,7 +560,7 @@ class EpgService {
   }
 
   // ===========================================================================
-  // CAPA C: SCRAPER GATOTV.COM
+  // CAPA 2: SCRAPER GATOTV.COM
   // ===========================================================================
 
   static Future<List<_XmlTvSlot>> _scrapeGatoTvScheduleForChannel(
@@ -545,10 +586,10 @@ class EpgService {
         Uri.parse(url),
         headers: const {
           'User-Agent':
-              'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
-          'Accept-Language': 'es-419,es;q=0.9',
+              'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124.0.0.0 Mobile Safari/537.36',
+          'Accept-Language': 'es-PE,es-419;q=0.9',
         },
-      ).timeout(const Duration(seconds: 4));
+      ).timeout(const Duration(seconds: 7));
 
       if (res.statusCode != 200 || res.bodyBytes.isEmpty) return [];
       final html = utf8.decode(res.bodyBytes, allowMalformed: true);
@@ -619,7 +660,7 @@ class EpgService {
             start: startDt,
             stop: stopDt,
             title: title,
-            desc: 'Guía de programación en tiempo real',
+            desc: 'Guía de programación oficial',
           ),
         );
       }
@@ -630,27 +671,89 @@ class EpgService {
     }
   }
 
-  static List<String> _getOrderedMiTvCountries(String countryFeed) {
-    switch (countryFeed.toUpperCase()) {
-      case 'AR':
-        return ['ar', 'co', 'mx', 'cl', 'pe'];
-      case 'MX':
-        return ['mx', 'co', 'ar', 'pe', 'cl'];
-      case 'CL':
-        return ['cl', 'ar', 'co', 'pe', 'mx'];
-      case 'PE':
-        return ['pe', 'co', 'ar', 'cl', 'mx'];
-      case 'CO':
-      default:
-        return ['co', 'ar', 'mx', 'pe', 'cl'];
+  // ===========================================================================
+  // CAPA 3: TVMAZE CON VALIDACIÓN ESTRICTA (SIN CADENAS VACÍAS)
+  // ===========================================================================
+
+  static Future<List<_XmlTvSlot>> _fetchTvMazeScheduleForChannel(
+    CanonicalChannelIdentity identity,
+  ) async {
+    if (identity.brandKey.length < 3) return [];
+    try {
+      final now = DateTime.now();
+      final dateStr =
+          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final country = identity.countryFeed.isNotEmpty ? identity.countryFeed.toUpperCase() : 'US';
+
+      final url = 'https://api.tvmaze.com/schedule?country=$country&date=$dateStr';
+      final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
+
+      if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
+        final List list = jsonDecode(utf8.decode(res.bodyBytes, allowMalformed: true));
+        final List<_XmlTvSlot> matchedSlots = [];
+
+        for (final item in list) {
+          final show = item['show'] ?? {};
+          final network = (show['network']?['name']?.toString() ?? '')
+              .toLowerCase()
+              .replaceAll(RegExp(r'[^a-z0-9]'), '');
+          final webChannel = (show['webChannel']?['name']?.toString() ?? '')
+              .toLowerCase()
+              .replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+          final candidate = network.isNotEmpty ? network : webChannel;
+          // Jamás comparar si candidate está vacío (evita el bug brandKey.contains("") == true)
+          if (candidate.length < 3) continue;
+
+          if (candidate == identity.brandKey || candidate == identity.canonicalNameKey) {
+            final airstamp = item['airstamp']?.toString() ?? '';
+            final start = DateTime.tryParse(airstamp)?.toLocal();
+            if (start == null) continue;
+
+            final runtime = (item['runtime'] as int?) ?? 30;
+            final stop = start.add(Duration(minutes: runtime));
+            final title = item['name']?.toString() ?? show['name']?.toString() ?? 'Programa';
+            final desc = show['summary']?.toString().replaceAll(RegExp(r'<[^>]*>'), '') ??
+                'Emisión oficial de ${identity.cleanDisplayName}';
+
+            matchedSlots.add(_XmlTvSlot(start: start, stop: stop, title: title, desc: desc));
+          }
+        }
+
+        if (matchedSlots.length >= 3) {
+          return matchedSlots;
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  static List<String> _getOrderedMiTvCountries(String countryFeed, bool hasExplicit) {
+    final code = countryFeed.toUpperCase();
+    if (hasExplicit) {
+      switch (code) {
+        case 'CO':
+          return ['co', 'pe', 'ar', 'cl', 'mx'];
+        case 'AR':
+          return ['ar', 'pe', 'co', 'cl', 'mx'];
+        case 'CL':
+          return ['cl', 'ar', 'pe', 'co', 'mx'];
+        case 'MX':
+          return ['mx', 'co', 'pe', 'ar', 'cl'];
+        case 'PE':
+          return ['pe', 'co', 'ar', 'cl', 'mx'];
+      }
     }
+    // Si el canal dice genérico "Latin America" (ej. ESPN 3 Latin America), en Perú
+    // la señal cable/satélite corresponde al feed Sur/Andino (PE -> AR -> CO)
+    return ['pe', 'co', 'ar', 'cl', 'mx'];
   }
 
   static List<String> _buildMiTvCandidateSlugs(CanonicalChannelIdentity identity) {
     final Set<String> slugs = {};
 
     const knownSlugs = <String, List<String>>{
-      'discoverykids': ['discovery-kids'],
+      'discoverykids': ['discovery-kids', 'discovery-kids-hd'],
       'discoverychannel': ['discovery-channel', 'discovery'],
       'discoveryhh': ['discovery-home-health', 'discovery-h-h'],
       'discoveryid': ['investigation-discovery', 'id-investigation-discovery'],
@@ -671,14 +774,14 @@ class EpgService {
       'disneychannel': ['disney-channel', 'disney'],
       'disneyjunior': ['disney-junior', 'disney-jr'],
       'warner': ['warner', 'warner-channel', 'warner-tv'],
-      'starchannel': ['star-channel', 'fox', 'fox-channel'],
-      'universal': ['universal-channel', 'universal-tv', 'universal'],
+      'starchannel': ['star-channel', 'fox-channel'],
+      'universal': ['universal-tv', 'universal-channel', 'universal'],
       'studiouniversal': ['studio-universal'],
       'axn': ['axn'],
-      'sony': ['sony', 'canal-sony', 'sony-channel'],
+      'sony': ['sony', 'sony-channel', 'canal-sony'],
       'fx': ['fx'],
       'amc': ['amc'],
-      'paramount': ['paramount-channel', 'paramount-network', 'paramount'],
+      'paramount': ['paramount-network', 'paramount-channel', 'paramount'],
       'tnt': ['tnt'],
       'tntseries': ['tnt-series'],
       'tntnovelas': ['tnt-novelas'],
@@ -687,16 +790,22 @@ class EpgService {
       'cinemax': ['cinemax'],
       'hbo': ['hbo'],
       'golden': ['golden', 'golden-multiplex'],
-      'espn': ['espn'],
-      'espn2': ['espn-2', 'espn2'],
-      'espn3': ['espn-3', 'espn3'],
+      'espn': ['espn', 'espn-hd'],
+      'espn2': ['espn-2', 'espn2', 'espn-2-hd'],
+      'espn3': ['espn-3', 'espn3', 'espn-3-hd'],
       'espn4': ['espn-4', 'espn-extra'],
+      'espn5': ['espn-5'],
+      'espn6': ['espn-6'],
+      'espn7': ['espn-7'],
+      'espnpremium': ['espn-premium'],
       'foxsports': ['fox-sports'],
       'foxsports2': ['fox-sports-2'],
       'foxsports3': ['fox-sports-3'],
       'dsports': ['directv-sports', 'dsports'],
-      'winsports': ['win-sports'],
+      'winsports': ['win-sports', 'win-sports-plus'],
       'tycsports': ['tyc-sports'],
+      'golperu': ['gol-peru', 'golperu'],
+      'liga1max': ['liga-1-max', 'l1-max'],
     };
 
     if (knownSlugs.containsKey(identity.brandKey)) {
@@ -722,7 +831,6 @@ class EpgService {
         slugs.add(hyphenated.substring(0, hyphenated.length - 3));
       } else {
         slugs.add('$hyphenated-tv');
-        slugs.add('$hyphenated-channel');
       }
     }
 
@@ -731,6 +839,20 @@ class EpgService {
 
   static List<String> _buildGatoTvCandidateSlugs(CanonicalChannelIdentity identity) {
     final Set<String> slugs = {};
+    const gatoKnown = <String, List<String>>{
+      'discoverykids': ['discovery_kids', 'discovery_kids_colombia', 'discovery_kids_sur'],
+      'espn': ['espn_sur', 'espn_andino', 'espn_latinoamerica', 'espn'],
+      'espn2': ['espn_2_sur', 'espn_2_andino', 'espn_2'],
+      'espn3': ['espn_3_sur', 'espn_3_andino', 'espn_3_latinoamerica', 'espn_3'],
+      'espn4': ['espn_4_sur', 'espn_4'],
+      'cartoonnetwork': ['cartoon_network', 'cartoon_network_sur'],
+      'disneychannel': ['disney_channel_sur', 'disney_channel'],
+    };
+
+    if (gatoKnown.containsKey(identity.brandKey)) {
+      slugs.addAll(gatoKnown[identity.brandKey]!);
+    }
+
     final underscored = identity.cleanDisplayName
         .toLowerCase()
         .replaceAll('á', 'a')
@@ -751,13 +873,15 @@ class EpgService {
 
   static bool _slugMatchesChannel(String foundSlug, CanonicalChannelIdentity identity) {
     final cleanFound = foundSlug.replaceAll('-', '').toLowerCase();
-    final target = identity.canonicalNameKey.toLowerCase();
-    if (cleanFound == target) return true;
-    if (cleanFound.contains(target) || target.contains(cleanFound)) {
-      if (target.contains('kids') != cleanFound.contains('kids')) return false;
-      return true;
+    final target = identity.brandKey.toLowerCase();
+    if (cleanFound == target || cleanFound == identity.canonicalNameKey) return true;
+    // Evitar confundir ESPN con ESPN 2 / ESPN 3 o Discovery con Discovery Kids
+    if (RegExp(r'\d').allMatches(target).map((m) => m.group(0)).join() !=
+        RegExp(r'\d').allMatches(cleanFound).map((m) => m.group(0)).join()) {
+      return false;
     }
-    return false;
+    if (target.contains('kids') != cleanFound.contains('kids')) return false;
+    return cleanFound.contains(target) || target.contains(cleanFound);
   }
 
   static String _stripHtmlTags(String htmlText) {
@@ -800,7 +924,7 @@ class EpgService {
   static void _enqueueChannelForBackgroundPrefetch(String channelName) {
     final trimmed = channelName.trim();
     if (trimmed.isEmpty) return;
-    if (!_backgroundPrefetchQueue.contains(trimmed) && _backgroundPrefetchQueue.length < 120) {
+    if (!_backgroundPrefetchQueue.contains(trimmed) && _backgroundPrefetchQueue.length < 80) {
       _backgroundPrefetchQueue.add(trimmed);
     }
     if (!_isRunningBackgroundPrefetch) {
@@ -812,14 +936,14 @@ class EpgService {
     if (_isRunningBackgroundPrefetch) return;
     _isRunningBackgroundPrefetch = true;
     try {
-      await Future.delayed(const Duration(seconds: 4));
+      await Future.delayed(const Duration(seconds: 5));
       while (_backgroundPrefetchQueue.isNotEmpty) {
         final nextName = _backgroundPrefetchQueue.removeAt(0);
         final identity = normalizeChannel(nextName);
         final lookupKey = '${identity.brandKey}_${identity.countryFeed.toLowerCase()}';
-        if (!_webScrapedChannelsToday.contains(lookupKey) && !_hasValidRealSlots(identity)) {
+        if (!_webScrapedChannelsToday.contains(lookupKey) && !_hasExactCountrySlots(identity)) {
           await _fetchLiveInternetEpgForChannel(identity, saveToDisk: false);
-          await Future.delayed(const Duration(milliseconds: 1200));
+          await Future.delayed(const Duration(milliseconds: 1400));
         }
       }
       await _saveXmlTvCacheToDisk();
@@ -830,11 +954,15 @@ class EpgService {
   }
 
   // ===========================================================================
-  // MÉTODOS DE INTEGRACIÓN CON TIVIMATE Y LISTAS M3U
+  // MÉTODOS DE INTEGRACIÓN CON GESTOR DE LISTAS M3U
   // ===========================================================================
 
   static Future<String?> extractAndSaveEpgUrlFromM3u(String m3uContent) async {
     if (m3uContent.isEmpty) return null;
+
+    // Además de extraer url-tvg, registramos los tvg-id reales de cada canal en el M3U
+    unawaited(Future.microtask(() => _registerChannelTvgIdsFromM3u(m3uContent)));
+
     final headerLimit = m3uContent.length > 3500 ? 3500 : m3uContent.length;
     final header = m3uContent.substring(0, headerLimit);
 
@@ -855,12 +983,29 @@ class EpgService {
         final primaryEpgUrl = urls.first;
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_prefAutoDetectedEpgUrlKey, primaryEpgUrl);
-        _epgStatusMessage = 'EPG auto-detectado en M3U: $primaryEpgUrl';
+        _epgStatusMessage = 'EPG detectado en lista M3U';
         unawaited(syncAllEpgSources(forceNetwork: true));
         return primaryEpgUrl;
       }
     }
     return null;
+  }
+
+  /// Extrae tvg-id="Canal.co" directamente de las líneas #EXTINF del M3U
+  static void _registerChannelTvgIdsFromM3u(String m3uContent) {
+    try {
+      final extInfRegex = RegExp(
+        r'#EXTINF:[^\n]*?tvg-id="([^"]+)"[^\n]*?,([^\r\n]+)',
+        caseSensitive: false,
+      );
+      for (final m in extInfRegex.allMatches(m3uContent)) {
+        final tvgId = (m.group(1) ?? '').trim().toLowerCase();
+        final rawTitle = (m.group(2) ?? '').trim();
+        if (tvgId.isNotEmpty && rawTitle.isNotEmpty) {
+          _channelToTvgIdMap[rawTitle.toLowerCase()] = tvgId;
+        }
+      }
+    } catch (_) {}
   }
 
   static Future<int> setCustomEpgUrl(
@@ -899,7 +1044,7 @@ class EpgService {
   static Future<int> syncAllEpgSources({bool forceNetwork = true}) async {
     if (_isSyncingXmlTv) return _xmlTvCache.length;
     _isSyncingXmlTv = true;
-    _epgStatusMessage = 'Sincronizando guía satelital y web en vivo...';
+    _epgStatusMessage = 'Sincronizando guía satelital regional...';
 
     int totalLoadedPrograms = 0;
     try {
@@ -908,41 +1053,46 @@ class EpgService {
       final autoM3uUrl = (prefs.getString(_prefAutoDetectedEpgUrlKey) ?? '').trim();
       final usePublicSatellite = prefs.getBool(_prefUsePublicSatelliteKey) ?? true;
 
-      final List<String> sourcesToLoad = [];
-
       if (customUrl.isNotEmpty && customUrl.startsWith('http')) {
-        sourcesToLoad.add(customUrl);
+        totalLoadedPrograms += await loadXmlTvFromUrl(
+          customUrl,
+          saveToDiskWhenDone: false,
+          sourceCountryHint: _deviceLocalCountry,
+        );
       }
 
       if (autoM3uUrl.isNotEmpty &&
           autoM3uUrl.startsWith('http') &&
-          !sourcesToLoad.contains(autoM3uUrl)) {
-        sourcesToLoad.add(autoM3uUrl);
+          autoM3uUrl != customUrl) {
+        totalLoadedPrograms += await loadXmlTvFromUrl(
+          autoM3uUrl,
+          saveToDiskWhenDone: false,
+          sourceCountryHint: _deviceLocalCountry,
+        );
       }
 
       if (usePublicSatellite) {
-        unawaited(refreshRealTimeSportsEpg());
-        for (final satUrl in defaultSatelliteXmlTvUrls) {
-          if (!sourcesToLoad.contains(satUrl)) {
-            sourcesToLoad.add(satUrl);
+        for (final src in _regionalXmlTvSources) {
+          final url = src['url']!;
+          final countryHint = src['country']!;
+          final count = await loadXmlTvFromUrl(
+            url,
+            saveToDiskWhenDone: false,
+            sourceCountryHint: countryHint,
+          );
+          if (count > 0) {
+            totalLoadedPrograms += count;
+            if (_activeEpgUrl.isEmpty) _activeEpgUrl = url;
           }
-        }
-      }
-
-      for (final url in sourcesToLoad) {
-        final count = await loadXmlTvFromUrl(url, saveToDiskWhenDone: false);
-        if (count > 0) {
-          totalLoadedPrograms += count;
-          if (_activeEpgUrl.isEmpty) _activeEpgUrl = url;
         }
       }
 
       await _saveXmlTvCacheToDisk();
       _lastXmlTvSync = DateTime.now();
-      _epgStatusMessage = 'Buscador EPG Activo (${_xmlTvCache.length} canales listos)';
+      _epgStatusMessage = 'Guía EPG Activa (${_xmlTvCache.length} canales sincronizados)';
       epgUpdateNotifier.value++;
     } catch (_) {
-      _epgStatusMessage = 'Buscador EPG Activo (${_xmlTvCache.length} canales listos)';
+      _epgStatusMessage = 'Guía EPG Activa (${_xmlTvCache.length} canales listos)';
     } finally {
       _isSyncingXmlTv = false;
     }
@@ -951,11 +1101,12 @@ class EpgService {
 
   static Future<void> clearEpgCache() async {
     _xmlTvCache.clear();
+    _liveSportsCache.clear();
     _webScrapedChannelsToday.clear();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefDiskCacheJsonKey);
     await prefs.remove(_prefDiskCacheTimeKey);
-    _epgStatusMessage = 'Caché EPG limpiada';
+    _epgStatusMessage = 'Caché EPG limpiada por completo';
     epgUpdateNotifier.value++;
   }
 
@@ -987,16 +1138,17 @@ class EpgService {
       }
     }
 
-    _enqueueChannelForBackgroundPrefetch(cleanName);
+    _enqueueChannelForBackgroundPrefetch(originalName.isNotEmpty ? originalName : cleanName);
   }
 
   // ===========================================================================
-  // NORMALIZADOR CANÓNICO DE CANALES Y DETECTOR DE PAÍS
+  // NORMALIZADOR CANÓNICO DE CANALES Y DETECTOR PRECISO DE REGIÓN
   // ===========================================================================
 
   static CanonicalChannelIdentity normalizeChannel(
     String channelName, {
     String? explicitTvgId,
+    String? fallbackCountryHint,
   }) {
     final trimmed = channelName.trim();
     final lowerLookup = trimmed.toLowerCase();
@@ -1008,47 +1160,51 @@ class EpgService {
         ? explicitTvgId.trim().toLowerCase()
         : (_channelToTvgIdMap[lowerLookup] ?? _channelToTvgIdMap[lowerFull] ?? '');
 
-    String countryFeed = 'CO';
-    if (rawTvgId.endsWith('.ar') ||
-        lowerFull.contains('argentina') ||
-        lowerFull.contains('cono sur') ||
-        lowerFull.contains(' sur')) {
-      countryFeed = 'AR';
-    } else if (rawTvgId.endsWith('.co') ||
+    String countryFeed = fallbackCountryHint ?? _deviceLocalCountry;
+    bool hasExplicitCountry = false;
+
+    if (rawTvgId.endsWith('.co') ||
         lowerFull.contains('colombia') ||
         lowerFull.contains('andino')) {
       countryFeed = 'CO';
+      hasExplicitCountry = true;
+    } else if (rawTvgId.endsWith('.pe') ||
+        lowerFull.contains('peru') ||
+        lowerFull.contains('perú')) {
+      countryFeed = 'PE';
+      hasExplicitCountry = true;
+    } else if (rawTvgId.endsWith('.ar') ||
+        lowerFull.contains('argentina') ||
+        lowerFull.contains('cono sur') ||
+        RegExp(r'\bsur\b').hasMatch(lowerFull)) {
+      countryFeed = 'AR';
+      hasExplicitCountry = true;
+    } else if (rawTvgId.endsWith('.cl') || lowerFull.contains('chile')) {
+      countryFeed = 'CL';
+      hasExplicitCountry = true;
     } else if (rawTvgId.endsWith('.mx') ||
         lowerFull.contains('mexico') ||
         lowerFull.contains('méxico') ||
         lowerFull.contains('cono norte')) {
       countryFeed = 'MX';
-    } else if (rawTvgId.endsWith('.pe') ||
-        lowerFull.contains('peru') ||
-        lowerFull.contains('perú')) {
-      countryFeed = 'PE';
+      hasExplicitCountry = true;
+    } else if (rawTvgId.endsWith('.br') ||
+        lowerFull.contains('brazil') ||
+        lowerFull.contains('brasil')) {
+      countryFeed = 'BR';
+      hasExplicitCountry = true;
+    } else if (rawTvgId.endsWith('.nl') || lowerFull.contains('netherlands')) {
+      countryFeed = 'NL';
+      hasExplicitCountry = true;
     } else if (rawTvgId.endsWith('.es') ||
         lowerFull.contains('spain') ||
         lowerFull.contains('españa') ||
         lowerFull.contains('espana')) {
       countryFeed = 'ES';
-    } else if (rawTvgId.endsWith('.cl') || lowerFull.contains('chile')) {
-      countryFeed = 'CL';
-    } else if (rawTvgId.endsWith('.br') ||
-        lowerFull.contains('brazil') ||
-        lowerFull.contains('brasil')) {
-      countryFeed = 'BR';
-    } else {
-      final tzHours = DateTime.now().timeZoneOffset.inHours;
-      if (tzHours == -3) {
-        countryFeed = 'AR';
-      } else if (tzHours == -4) {
-        countryFeed = 'CL';
-      } else if (tzHours <= -6) {
-        countryFeed = 'MX';
-      } else {
-        countryFeed = 'CO';
-      }
+      hasExplicitCountry = true;
+    } else if (rawTvgId.endsWith('.us') || lowerFull.contains('united states')) {
+      countryFeed = 'US';
+      hasExplicitCountry = true;
     }
 
     String cleaned = lowerFull
@@ -1063,7 +1219,7 @@ class EpgService {
         .replaceAll(RegExp(r'\[[^\]]*\]'), ' ')
         .replaceAll(
           RegExp(
-            r'\b(latin america|latinoamerica|latinoamérica|latam|argentina|colombia|mexico|méxico|peru|perú|chile|ecuador|venezuela|uruguay|paraguay|bolivia|spain|españa|espana|brazil|brasil|netherlands|panregional|sur|norte|andino|feed|opcion\s*\d+|opción\s*\d+)\b',
+            r'\b(latin america|latinoamerica|latinoamérica|latam|argentina|colombia|mexico|méxico|peru|perú|chile|ecuador|venezuela|uruguay|paraguay|bolivia|spain|españa|espana|brazil|brasil|netherlands|united states|panregional|sur|norte|andino|feed|opcion\s*\d+|opción\s*\d+)\b',
             caseSensitive: false,
           ),
           ' ',
@@ -1102,7 +1258,7 @@ class EpgService {
     } else if (lowerFull.contains('animal planet') ||
         canonicalKey.contains('animalplanet')) {
       brandKey = 'animalplanet';
-    } else if (lowerFull.contains('discovery') || canonicalKey.contains('discovery')) {
+    } else if (lowerFull.contains('discovery') || canonicalKey == 'discovery') {
       brandKey = 'discoverychannel';
     } else if (lowerFull.contains('history 2') || canonicalKey.contains('history2')) {
       brandKey = 'history2';
@@ -1129,22 +1285,22 @@ class EpgService {
       brandKey = 'espnpremium';
     } else if (canonicalKey.contains('espnextra') || canonicalKey.contains('espn4')) {
       brandKey = 'espn4';
+    } else if (canonicalKey.contains('espn7')) {
+      brandKey = 'espn7';
+    } else if (canonicalKey.contains('espn6')) {
+      brandKey = 'espn6';
+    } else if (canonicalKey.contains('espn5')) {
+      brandKey = 'espn5';
     } else if (canonicalKey.contains('espn3')) {
       brandKey = 'espn3';
     } else if (canonicalKey.contains('espn2')) {
       brandKey = 'espn2';
-    } else if (canonicalKey.contains('espn5')) {
-      brandKey = 'espn5';
-    } else if (canonicalKey.contains('espn6')) {
-      brandKey = 'espn6';
-    } else if (canonicalKey.contains('espn7')) {
-      brandKey = 'espn7';
     } else if (canonicalKey.contains('espn')) {
       brandKey = 'espn';
-    } else if (canonicalKey.contains('foxsports2')) {
-      brandKey = 'foxsports2';
     } else if (canonicalKey.contains('foxsports3')) {
       brandKey = 'foxsports3';
+    } else if (canonicalKey.contains('foxsports2')) {
+      brandKey = 'foxsports2';
     } else if (canonicalKey.contains('foxsports')) {
       brandKey = 'foxsports';
     } else if (canonicalKey.contains('dsports2') ||
@@ -1153,7 +1309,7 @@ class EpgService {
     } else if (canonicalKey.contains('dsports') ||
         canonicalKey.contains('directvsports')) {
       brandKey = 'dsports';
-    } else if (canonicalKey.contains('tycsports') || canonicalKey.contains('tyc')) {
+    } else if (canonicalKey.contains('tycsports') || canonicalKey == 'tyc') {
       brandKey = 'tycsports';
     } else if (canonicalKey.contains('winsports')) {
       brandKey = 'winsports';
@@ -1179,19 +1335,8 @@ class EpgService {
           canonicalKey.isEmpty ? lowerLookup.replaceAll(' ', '') : canonicalKey,
       brandKey: brandKey.isEmpty ? canonicalKey : brandKey,
       countryFeed: countryFeed,
+      hasExplicitCountry: hasExplicitCountry,
     );
-  }
-
-  static bool _isSportsBrand(String brandKey) {
-    return brandKey.startsWith('espn') ||
-        brandKey.startsWith('foxsports') ||
-        brandKey.startsWith('dsports') ||
-        brandKey == 'tycsports' ||
-        brandKey == 'winsports' ||
-        brandKey == 'tntsports' ||
-        brandKey == 'tudn' ||
-        brandKey == 'liga1max' ||
-        brandKey == 'golperu';
   }
 
   static void applyLiveFrameOcrText({
@@ -1206,266 +1351,68 @@ class EpgService {
     final now = DateTime.now();
 
     final scoreRegex = RegExp(r'\b([A-Z]{3})\s*(\d+)\s*[-–:]\s*(\d+)\s*([A-Z]{3})\b');
-    final hashtagRegex = RegExp(r'#([A-Za-z0-9_]{4,30})');
-    final timeRegex = RegExp(r'\b(\d{1,2}:\d{2})\b');
+    final scoreMatch = scoreRegex.firstMatch(text);
 
     String detectedTitle = '';
     String detectedDesc =
-        'Transmisión en directo verificada en pantalla (${identity.countryFeed})';
-
-    final scoreMatch = scoreRegex.firstMatch(text);
-    final hashMatch = hashtagRegex.firstMatch(text);
-    final timeMatch = timeRegex.firstMatch(text);
+        'Transmisión en directo verificada (${identity.countryFeed})';
 
     if (scoreMatch != null) {
       final teamA = scoreMatch.group(1)!;
       final goalsA = scoreMatch.group(2)!;
       final goalsB = scoreMatch.group(3)!;
       final teamB = scoreMatch.group(4)!;
-      final matchClock = timeMatch != null ? ' • Min ${timeMatch.group(1)}' : '';
-      final tag = hashMatch != null ? ' (#${hashMatch.group(1)})' : '';
-      detectedTitle = '🔴 EN VIVO: $teamA $goalsA - $goalsB $teamB$tag';
-      detectedDesc = 'Fútbol en Directo$matchClock • Señal ${identity.countryFeed}';
-    } else if (hashMatch != null) {
-      detectedTitle = '🔴 EN VIVO: #${hashMatch.group(1)}';
+      detectedTitle = '🔴 EN VIVO: $teamA $goalsA - $goalsB $teamB';
     } else if (text.length >= 4) {
       detectedTitle = text.split('\n').first.trim();
     }
 
     if (detectedTitle.isNotEmpty) {
       final slot = _XmlTvSlot(
-        start: now.subtract(const Duration(minutes: 20)),
+        start: now.subtract(const Duration(minutes: 15)),
         stop: now.add(validity),
         title: detectedTitle,
         desc: detectedDesc,
       );
-      _ocrFrameOverrideCache[identity.canonicalNameKey] = slot;
       _ocrFrameOverrideCache['${identity.brandKey}_${identity.countryFeed.toLowerCase()}'] = slot;
     }
   }
 
-  // ===========================================================================
-  // CAPA DEPORTIVA EN TIEMPO REAL: ESPN SCORES API
-  // ===========================================================================
-
+  /// Mantenido por compatibilidad con llamadas desde la UI, pero sin inyectar partidos falsos
   static Future<void> refreshRealTimeSportsEpg() async {
     if (_isFetchingSports) return;
-    if (_lastSportsFetch != null &&
-        DateTime.now().difference(_lastSportsFetch!) < const Duration(minutes: 5) &&
-        _liveSportsCache.isNotEmpty) {
-      return;
-    }
-
     _isFetchingSports = true;
     try {
-      const endpoints = [
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard?lang=es&region=pe',
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/scoreboard?lang=es&region=pe',
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?lang=es&region=pe',
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.champions/scoreboard?lang=es&region=pe',
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/esp.2/scoreboard?lang=es&region=pe',
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/conmebol.libertadores/scoreboard?lang=es&region=pe',
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/conmebol.sudamericana/scoreboard?lang=es&region=pe',
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/arg.1/scoreboard?lang=es&region=ar',
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/col.1/scoreboard?lang=es&region=co',
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/per.1/scoreboard?lang=es&region=pe',
-        'https://site.api.espn.com/apis/site/v2/sports/soccer/mex.1/scoreboard?lang=es&region=mx',
-        'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?lang=es',
-        'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?lang=es',
-      ];
-
-      final responses = await Future.wait(
-        endpoints.map((url) async {
-          try {
-            return await http.get(Uri.parse(url)).timeout(const Duration(seconds: 6));
-          } catch (_) {
-            return null;
-          }
-        }),
-      );
-
-      final List<Map<String, dynamic>> parsedMatches = [];
-
-      for (int i = 0; i < responses.length; i++) {
-        final res = responses[i];
-        if (res == null || res.statusCode != 200) continue;
-
-        final Map<String, dynamic> data = jsonDecode(
-          utf8.decode(res.bodyBytes, allowMalformed: true),
-        );
-        final leagues = (data['leagues'] as List?) ?? [];
-        final leagueName = leagues.isNotEmpty
-            ? (leagues.first['name']?.toString() ?? 'Fútbol Internacional')
-            : 'Torneo en Vivo';
-        final slug = leagues.isNotEmpty ? (leagues.first['slug']?.toString() ?? '') : '';
-
-        final events = (data['events'] as List?) ?? [];
-        for (final ev in events) {
-          final rawDate = ev['date']?.toString() ?? '';
-          final startDt = DateTime.tryParse(rawDate)?.toLocal();
-          if (startDt == null) continue;
-
-          final isBaseball = endpoints[i].contains('/baseball/');
-          final stopDt = startDt.add(Duration(minutes: isBaseball ? 150 : 120));
-
-          final statusObj = ev['status'] ?? {};
-          final typeObj = statusObj['type'] ?? {};
-          final state = typeObj['state']?.toString() ?? 'pre';
-          final detail = typeObj['shortDetail']?.toString() ?? '';
-
-          final competitions = (ev['competitions'] as List?) ?? [];
-          String matchTitle = ev['name']?.toString() ?? 'Partido en Vivo';
-          String scoreText = '';
-          String broadcastHint = '';
-
-          if (competitions.isNotEmpty) {
-            final comp = competitions.first;
-            final competitors = (comp['competitors'] as List?) ?? [];
-            if (competitors.length >= 2) {
-              final home = competitors[0]['team']?['shortDisplayName'] ??
-                  competitors[0]['team']?['displayName'] ??
-                  'Local';
-              final away = competitors[1]['team']?['shortDisplayName'] ??
-                  competitors[1]['team']?['displayName'] ??
-                  'Visita';
-              final hScore = competitors[0]['score']?.toString() ?? '0';
-              final aScore = competitors[1]['score']?.toString() ?? '0';
-
-              if (state == 'in') {
-                matchTitle = '🔴 EN VIVO: $home $hScore - $aScore $away';
-                scoreText = 'En juego ($detail) • $leagueName';
-              } else if (state == 'post') {
-                matchTitle = 'Finalizado: $home $hScore - $aScore $away';
-                scoreText = 'Resumen y goles • $leagueName';
-              } else {
-                matchTitle = '$home vs. $away';
-                scoreText = '$leagueName • Transmisión en Directo';
-              }
-            }
-
-            final broadcasts = (comp['broadcasts'] as List?) ?? [];
-            if (broadcasts.isNotEmpty) {
-              final names = (broadcasts.first['names'] as List?) ?? [];
-              if (names.isNotEmpty) {
-                broadcastHint = names.join(' ').toLowerCase();
-              }
-            }
-          }
-
-          parsedMatches.add({
-            'start': startDt,
-            'stop': stopDt,
-            'title': matchTitle,
-            'desc': scoreText.isNotEmpty ? scoreText : '$leagueName en Directo',
-            'state': state,
-            'slug': slug,
-            'broadcast': broadcastHint,
-            'isBaseball': isBaseball,
-          });
-        }
-      }
-
-      if (parsedMatches.isNotEmpty) {
-        _distributeMatchesAcrossSportsChannels(parsedMatches);
-        _lastSportsFetch = DateTime.now();
-        epgUpdateNotifier.value++;
-      }
-    } catch (_) {
+      // Limpiamos cualquier partido asignado artificialmente en versiones previas
+      _liveSportsCache.clear();
+      _lastSportsFetch = DateTime.now();
     } finally {
       _isFetchingSports = false;
     }
   }
 
-  static void _distributeMatchesAcrossSportsChannels(List<Map<String, dynamic>> matches) {
-    final Map<String, List<_XmlTvSlot>> updatedCache = {};
-
-    void addSlot(String channelKey, _XmlTvSlot slot) {
-      final list = updatedCache.putIfAbsent(channelKey, () => []);
-      final hasConflict = list.any((existing) =>
-          slot.start.isBefore(existing.stop) &&
-          slot.stop.isAfter(existing.start) &&
-          existing.title.startsWith('🔴'));
-      if (!hasConflict) {
-        list.add(slot);
-      }
-    }
-
-    matches.sort((a, b) {
-      final aLive = a['state'] == 'in' ? 0 : (a['state'] == 'pre' ? 1 : 2);
-      final bLive = b['state'] == 'in' ? 0 : (b['state'] == 'pre' ? 1 : 2);
-      if (aLive != bLive) return aLive.compareTo(bLive);
-      return (a['start'] as DateTime).compareTo(b['start'] as DateTime);
-    });
-
-    int soccerCounter = 0;
-    for (final m in matches) {
-      final slot = _XmlTvSlot(
-        start: m['start'] as DateTime,
-        stop: m['stop'] as DateTime,
-        title: m['title'] as String,
-        desc: m['desc'] as String,
-      );
-
-      final slug = (m['slug'] as String).toLowerCase();
-      final broadcast = (m['broadcast'] as String).toLowerCase();
-      final isBaseball = m['isBaseball'] as bool;
-
-      if (broadcast.contains('espn 2') || broadcast.contains('espn2') || slug.contains('ita.1')) {
-        addSlot('espn2', slot);
-      } else if (broadcast.contains('espn 3') || broadcast.contains('espn3') || slug.contains('esp.2')) {
-        addSlot('espn3', slot);
-      } else if (broadcast.contains('dsports') || broadcast.contains('directv')) {
-        addSlot('dsports', slot);
-      } else if (slug.contains('col.1')) {
-        addSlot('winsports', slot);
-        addSlot('espn2', slot);
-      } else if (slug.contains('per.1')) {
-        addSlot('liga1max', slot);
-        addSlot('golperu', slot);
-      } else if (slug.contains('arg.1')) {
-        addSlot('espnpremium', slot);
-        addSlot('tntsports', slot);
-        addSlot('tycsports', slot);
-        addSlot('espn', slot);
-      } else if (slug.contains('mex.1')) {
-        addSlot('tudn', slot);
-        addSlot('foxsports', slot);
-      } else if (isBaseball) {
-        addSlot('espn3', slot);
-        addSlot('foxsports2', slot);
-      } else {
-        final targets = ['espn', 'espn2', 'espn3', 'dsports', 'foxsports'];
-        final primary = targets[soccerCounter % targets.length];
-        addSlot(primary, slot);
-        if (m['state'] == 'in') {
-          for (final t in targets) {
-            addSlot(t, slot);
-          }
-        }
-        soccerCounter++;
-      }
-    }
-
-    _liveSportsCache
-      ..clear()
-      ..addAll(updatedCache);
-  }
-
   // ===========================================================================
-  // PARSER XMLTV (.xml / .xml.gz)
+  // PARSER XMLTV REGIONALIZADO SIN COLISIONES ENTRE PAÍSES
   // ===========================================================================
 
   static Future<int> loadXmlTvFromUrl(
     String xmlUrl, {
     bool saveToDiskWhenDone = true,
+    String? sourceCountryHint,
   }) async {
     try {
       final uri = Uri.tryParse(xmlUrl.trim());
       if (uri == null) return 0;
+
       final response = await http.get(
         uri,
-        headers: const {'User-Agent': 'TiviMate/4.7.0 (Android TV)'},
-      ).timeout(const Duration(seconds: 15));
+        headers: const {
+          'User-Agent':
+              'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+        },
+      ).timeout(const Duration(seconds: 18));
+
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) return 0;
 
       List<int> bytes = response.bodyBytes;
@@ -1476,7 +1423,10 @@ class EpgService {
         } catch (_) {}
       }
 
-      final count = parseXmlTvContent(utf8.decode(bytes, allowMalformed: true));
+      final decodedXml = utf8.decode(bytes, allowMalformed: true);
+      if (!decodedXml.contains('<programme')) return 0;
+
+      final count = parseXmlTvContent(decodedXml, sourceCountryHint: sourceCountryHint);
       if (count > 0) {
         _activeEpgUrl = xmlUrl.trim();
         if (saveToDiskWhenDone) {
@@ -1489,12 +1439,12 @@ class EpgService {
     }
   }
 
-  static int parseXmlTvContent(String xmlContent) {
+  static int parseXmlTvContent(String xmlContent, {String? sourceCountryHint}) {
     int count = 0;
     try {
       final now = DateTime.now();
-      final minTime = now.subtract(const Duration(hours: 6));
-      final maxTime = now.add(const Duration(hours: 36));
+      final minTime = now.subtract(const Duration(hours: 4));
+      final maxTime = now.add(const Duration(hours: 30));
 
       final Map<String, CanonicalChannelIdentity> channelIdToIdentity = {};
       final chanRegex = RegExp(
@@ -1514,11 +1464,18 @@ class EpgService {
         for (final dispMatch in dispRegex.allMatches(inner)) {
           final dispName = _unescapeXml(dispMatch.group(1) ?? '');
           if (dispName.isNotEmpty) {
-            final identity = normalizeChannel(dispName, explicitTvgId: rawId);
-            channelIdToIdentity[rawId] = identity;
+            channelIdToIdentity[rawId] = normalizeChannel(
+              dispName,
+              explicitTvgId: rawId,
+              fallbackCountryHint: sourceCountryHint,
+            );
+            break;
           }
         }
       }
+
+      // Agrupamos primero por rawChannelId único del XML para no mezclar 2 canales de la misma marca
+      final Map<String, List<_XmlTvSlot>> perRawChannelSlots = {};
 
       final progBlockRegex = RegExp(
         r'<programme\s+([^>]+)>([\s\S]*?)<\/programme>',
@@ -1530,8 +1487,6 @@ class EpgService {
 
       final titleRegex = RegExp(r'<title[^>]*>([\s\S]*?)<\/title>', caseSensitive: false);
       final descRegex = RegExp(r'<desc[^>]*>([\s\S]*?)<\/desc>', caseSensitive: false);
-
-      final Set<String> touchedKeys = {};
 
       for (final match in progBlockRegex.allMatches(xmlContent)) {
         final attrs = match.group(1) ?? '';
@@ -1553,46 +1508,64 @@ class EpgService {
         final titleMatch = titleRegex.firstMatch(innerXml);
         final descMatch = descRegex.firstMatch(innerXml);
 
-        final cleanTitle = _unescapeXml(titleMatch?.group(1) ?? 'Transmisión en Vivo');
+        final cleanTitle = _unescapeXml(titleMatch?.group(1) ?? '').trim();
+        if (cleanTitle.isEmpty) continue;
+
         final cleanDesc =
-            _unescapeXml(descMatch?.group(1) ?? 'Emisión oficial programada en directo');
+            _unescapeXml(descMatch?.group(1) ?? 'Programación oficial en directo');
 
-        final slot = _XmlTvSlot(
-          start: startDt,
-          stop: stopDt,
-          title: cleanTitle,
-          desc: cleanDesc,
-        );
-
-        void indexUnderKey(String key) {
-          if (key.isEmpty) return;
-          if (!touchedKeys.contains(key)) {
-            _xmlTvCache[key] = [];
-            touchedKeys.add(key);
-          }
-          _xmlTvCache[key]!.add(slot);
-        }
-
-        indexUnderKey(rawChannelId);
-        final idWithoutCountry = rawChannelId.split('.').first;
-        if (idWithoutCountry != rawChannelId) {
-          indexUnderKey(idWithoutCountry);
-        }
-
-        final normalizedId = channelIdToIdentity[rawChannelId] ??
-            normalizeChannel(rawChannelId, explicitTvgId: rawChannelId);
-        indexUnderKey(normalizedId.canonicalNameKey);
-        if (normalizedId.brandKey.isNotEmpty) {
-          indexUnderKey('${normalizedId.brandKey}_${normalizedId.countryFeed.toLowerCase()}');
-          indexUnderKey(normalizedId.brandKey);
-        }
-
+        perRawChannelSlots.putIfAbsent(rawChannelId, () => []).add(
+              _XmlTvSlot(
+                start: startDt,
+                stop: stopDt,
+                title: cleanTitle,
+                desc: cleanDesc,
+              ),
+            );
         count++;
       }
 
-      for (final key in touchedKeys) {
-        _xmlTvCache[key]?.sort((a, b) => a.start.compareTo(b.start));
-      }
+      final localCountry = _deviceLocalCountry;
+
+      // Indexar cada canal limpio y deduplicado sin aplastar otros países
+      perRawChannelSlots.forEach((rawChannelId, rawList) {
+        final cleanSlots = _deduplicateAndSortSlots(rawList);
+        if (cleanSlots.isEmpty) return;
+
+        // 1. Siempre guardar bajo el ID exacto del XMLTV (ej. discovery.kids.co)
+        _xmlTvCache[rawChannelId] = cleanSlots;
+
+        final identity = channelIdToIdentity[rawChannelId] ??
+            normalizeChannel(
+              rawChannelId,
+              explicitTvgId: rawChannelId,
+              fallbackCountryHint: sourceCountryHint,
+            );
+
+        if (identity.brandKey.isNotEmpty) {
+          final regionalKey =
+              '${identity.brandKey}_${identity.countryFeed.toLowerCase()}';
+
+          // Solo reemplazar la llave regional si aún no existe o tiene más detalle
+          if (!_xmlTvCache.containsKey(regionalKey) ||
+              cleanSlots.length > (_xmlTvCache[regionalKey]?.length ?? 0)) {
+            _xmlTvCache[regionalKey] = cleanSlots;
+          }
+
+          // La llave genérica (sin país) SOLO acepta feeds de nuestra misma región horaria (PE/CO)
+          final isLocalPreferred = identity.countryFeed == localCountry ||
+              (localCountry == 'PE' && identity.countryFeed == 'CO');
+          if (isLocalPreferred || !_xmlTvCache.containsKey(identity.brandKey)) {
+            if (identity.countryFeed != 'ES' &&
+                identity.countryFeed != 'BR' &&
+                identity.countryFeed != 'NL' &&
+                identity.countryFeed != 'US') {
+              _xmlTvCache[identity.brandKey] = cleanSlots;
+              _xmlTvCache[identity.canonicalNameKey] = cleanSlots;
+            }
+          }
+        }
+      });
     } catch (_) {}
     return count;
   }
@@ -1605,10 +1578,10 @@ class EpgService {
 
       int savedKeys = 0;
       for (final entry in _xmlTvCache.entries) {
-        if (savedKeys >= 400) break;
+        if (savedKeys >= 450) break;
         final upcoming = entry.value
             .where((s) => s.stop.isAfter(now.subtract(const Duration(hours: 1))))
-            .take(18)
+            .take(20)
             .map((s) => s.toJson())
             .toList();
         if (upcoming.isNotEmpty) {
@@ -1641,7 +1614,7 @@ class EpgService {
               .where((s) => s.stop.isAfter(now.subtract(const Duration(hours: 1))))
               .toList();
           if (slots.isNotEmpty) {
-            _xmlTvCache[key] = slots;
+            _xmlTvCache[key] = _deduplicateAndSortSlots(slots);
             restored++;
           }
         }
@@ -1653,12 +1626,15 @@ class EpgService {
     }
   }
 
+  /// Convierte fechas XMLTV ("20261025093000 -0300" o "+0000") a la hora exacta del dispositivo
   static DateTime? _parseXmlTvDate(String raw) {
     try {
       final trimmed = raw.trim();
-      final parts = trimmed.split(RegExp(r'\s+'));
-      final digits = parts.first;
-      if (digits.length < 12) return null;
+      final match = RegExp(r'^(\d{12,14})\s*([+-]\d{4})?').firstMatch(trimmed);
+      if (match == null) return null;
+
+      final digits = match.group(1)!;
+      final tzPart = match.group(2);
 
       final year = int.parse(digits.substring(0, 4));
       final month = int.parse(digits.substring(4, 6));
@@ -1667,19 +1643,15 @@ class EpgService {
       final minute = int.parse(digits.substring(10, 12));
       final second = digits.length >= 14 ? int.parse(digits.substring(12, 14)) : 0;
 
-      if (parts.length > 1) {
-        final tz = parts[1].trim();
-        final tzMatch = RegExp(r'^([+-])(\d{2})(\d{2})$').firstMatch(tz);
-        if (tzMatch != null) {
-          final sign = tzMatch.group(1) == '-' ? -1 : 1;
-          final tzHours = int.parse(tzMatch.group(2)!);
-          final tzMinutes = int.parse(tzMatch.group(3)!);
-          final totalOffsetMinutes = sign * ((tzHours * 60) + tzMinutes);
+      if (tzPart != null && tzPart.length == 5) {
+        final sign = tzPart.startsWith('-') ? -1 : 1;
+        final tzHours = int.parse(tzPart.substring(1, 3));
+        final tzMinutes = int.parse(tzPart.substring(3, 5));
+        final totalOffsetMinutes = sign * ((tzHours * 60) + tzMinutes);
 
-          final utcDate = DateTime.utc(year, month, day, hour, minute, second)
-              .subtract(Duration(minutes: totalOffsetMinutes));
-          return utcDate.toLocal();
-        }
+        final utcInstant = DateTime.utc(year, month, day, hour, minute, second)
+            .subtract(Duration(minutes: totalOffsetMinutes));
+        return utcInstant.toLocal();
       }
 
       return DateTime.utc(year, month, day, hour, minute, second).toLocal();
@@ -1702,8 +1674,39 @@ class EpgService {
   }
 
   // ===========================================================================
-  // MÉTODOS PÚBLICOS DE CONSULTA
+  // MÉTODOS PÚBLICOS DE CONSULTA PARA LA INTERFAZ Y LAS ALARMAS
   // ===========================================================================
+
+  static List<String> _buildLookupKeysForIdentity(CanonicalChannelIdentity identity) {
+    final c = identity.countryFeed.toLowerCase();
+    final List<String> keys = [
+      if (identity.tvgIdKey.isNotEmpty) identity.tvgIdKey,
+      '${identity.brandKey}_$c',
+    ];
+
+    // Si es un canal genérico "Latin America" sin país fijo en el nombre, buscamos en orden regional
+    if (!identity.hasExplicitCountry) {
+      keys.addAll([
+        '${identity.brandKey}_pe',
+        '${identity.brandKey}_co',
+        '${identity.brandKey}_ar',
+        '${identity.brandKey}_cl',
+        identity.brandKey,
+        identity.canonicalNameKey,
+      ]);
+    } else {
+      // Si el canal dice explícitamente "Colombia", probamos CO y luego PE (mismo huso UTC-5)
+      if (identity.countryFeed == 'CO') {
+        keys.add('${identity.brandKey}_pe');
+      } else if (identity.countryFeed == 'PE') {
+        keys.add('${identity.brandKey}_co');
+      } else if (identity.countryFeed == 'AR') {
+        keys.add('${identity.brandKey}_cl');
+      }
+      keys.add(identity.brandKey);
+    }
+    return keys;
+  }
 
   static EpgProgram getProgramForChannel(dynamic channel) {
     ensureInitialized();
@@ -1745,7 +1748,7 @@ class EpgService {
     ensureInitialized();
     final current = getCurrentProgram(channelName, category, tvgId);
     final nextLookupTime = current.endTime != null
-        ? current.endTime!.add(const Duration(minutes: 1))
+        ? current.endTime!.add(const Duration(seconds: 30))
         : DateTime.now().add(const Duration(minutes: 30));
 
     return _buildProgramForSlot(
@@ -1766,27 +1769,55 @@ class EpgService {
     final identity = normalizeChannel(channelName, explicitTvgId: tvgId);
     _scheduleDelayedChannelProbe(identity);
 
-    final List<EpgProgram> schedule = [];
-    DateTime cursorTime = DateTime.now();
+    final now = DateTime.now();
+    final candidates = _buildLookupKeysForIdentity(identity);
 
-    for (int i = 0; i < 8; i++) {
+    // Si tenemos la lista real de slots en caché, devolvemos la secuencia exacta sin huecos ni pisadas
+    for (final key in candidates) {
+      if (key.isNotEmpty && _xmlTvCache.containsKey(key)) {
+        final slots = _xmlTvCache[key]!;
+        final activeIdx = slots.indexWhere(
+          (s) => !now.isBefore(s.start) && now.isBefore(s.stop),
+        );
+        if (activeIdx != -1) {
+          final List<EpgProgram> realSchedule = [];
+          for (int i = activeIdx; i < slots.length && realSchedule.length < 10; i++) {
+            final slot = slots[i];
+            final nextTitle = (i + 1 < slots.length)
+                ? slots[i + 1].title
+                : 'Continuación de programación';
+            realSchedule.add(
+              _formatSlotToProgram(
+                slot: slot,
+                slotTime: i == activeIdx ? now : slot.start,
+                isCurrentSlot: i == activeIdx,
+                nextTitleFallback: nextTitle,
+                sourceLayer: 'verified_epg',
+              ),
+            );
+          }
+          if (realSchedule.isNotEmpty) return realSchedule;
+        }
+      }
+    }
+
+    // Mientras sincroniza los primeros segundos, mostramos bloques horarios limpios (sin nombres falsos)
+    final List<EpgProgram> fallbackSchedule = [];
+    DateTime cursorTime = DateTime(now.year, now.month, now.day, now.hour, now.minute >= 30 ? 30 : 0);
+
+    for (int i = 0; i < 6; i++) {
       final prog = _buildProgramForSlot(
         channelName: channelName,
         category: category ?? '',
         explicitTvgId: tvgId,
-        slotTime: cursorTime,
+        slotTime: i == 0 ? now : cursorTime,
         isCurrentSlot: i == 0,
       );
-      schedule.add(prog);
-
-      if (prog.endTime != null && prog.endTime!.isAfter(cursorTime)) {
-        cursorTime = prog.endTime!.add(const Duration(minutes: 1));
-      } else {
-        cursorTime = cursorTime.add(const Duration(hours: 1));
-      }
+      fallbackSchedule.add(prog);
+      cursorTime = (prog.endTime ?? cursorTime.add(const Duration(minutes: 30)));
     }
 
-    return schedule;
+    return fallbackSchedule;
   }
 
   static EpgProgram _buildProgramForSlot({
@@ -1798,35 +1829,25 @@ class EpgService {
   }) {
     final identity = normalizeChannel(channelName, explicitTvgId: explicitTvgId);
     final cleanName = channelName.trim().isEmpty ? 'Canal en Vivo' : channelName.trim();
-    final lowerName = cleanName.toLowerCase();
-    final lowerCat = category.toLowerCase();
 
-    // 1. OCR / HLS Live Title
+    // 1. Título embebido en el propio stream HLS (si la señal lo envía)
     if (isCurrentSlot) {
-      final ocrSlot = _ocrFrameOverrideCache['${identity.brandKey}_${identity.countryFeed.toLowerCase()}'] ??
-          _ocrFrameOverrideCache[identity.canonicalNameKey];
+      final ocrSlot =
+          _ocrFrameOverrideCache['${identity.brandKey}_${identity.countryFeed.toLowerCase()}'];
       if (ocrSlot != null && slotTime.isBefore(ocrSlot.stop)) {
         return _formatSlotToProgram(
           slot: ocrSlot,
           slotTime: slotTime,
           isCurrentSlot: true,
-          nextTitleFallback: 'Continuación de programación en vivo',
-          sourceLayer: 'ocr_live',
+          nextTitleFallback: 'Continuación en directo',
+          sourceLayer: 'hls_live',
         );
       }
     }
 
-    // 2. Programación Real de Internet (TVMaze / Mi.tv / GatoTV / XMLTV)
-    final xmlCandidates = <String>[
-      '${identity.brandKey}_${identity.countryFeed.toLowerCase()}',
-      if (identity.tvgIdKey.isNotEmpty) identity.tvgIdKey,
-      if (identity.tvgIdKey.contains('.')) identity.tvgIdKey.split('.').first,
-      identity.brandKey,
-      identity.canonicalNameKey,
-      lowerName.replaceAll(' ', ''),
-    ];
-
-    for (final key in xmlCandidates) {
+    // 2. Parrilla real verificada (XMLTV Regional / Mi.tv / GatoTV)
+    final candidates = _buildLookupKeysForIdentity(identity);
+    for (final key in candidates) {
       if (key.isNotEmpty && _xmlTvCache.containsKey(key)) {
         final slots = _xmlTvCache[key]!;
         for (int i = 0; i < slots.length; i++) {
@@ -1834,118 +1855,54 @@ class EpgService {
           if (!slotTime.isBefore(slot.start) && slotTime.isBefore(slot.stop)) {
             final nextTitle = (i + 1 < slots.length)
                 ? slots[i + 1].title
-                : 'Siguiente emisión programada';
+                : 'Siguiente programa';
             return _formatSlotToProgram(
               slot: slot,
               slotTime: slotTime,
               isCurrentSlot: isCurrentSlot,
               nextTitleFallback: nextTitle,
-              sourceLayer: 'internet_live_epg',
+              sourceLayer: 'verified_epg',
             );
           }
         }
       }
     }
 
-    // 3. API ESPN Deportes en Tiempo Real
-    if (_liveSportsCache.containsKey(identity.brandKey)) {
-      final liveSlots = _liveSportsCache[identity.brandKey]!;
-      for (int i = 0; i < liveSlots.length; i++) {
-        final slot = liveSlots[i];
-        if (!slotTime.isBefore(slot.start) && slotTime.isBefore(slot.stop)) {
-          final nextTitle = (i + 1 < liveSlots.length)
-              ? liveSlots[i + 1].title
-              : 'SportsCenter: Resumen de la jornada';
-          return _formatSlotToProgram(
-            slot: slot,
-            slotTime: slotTime,
-            isCurrentSlot: isCurrentSlot,
-            nextTitleFallback: nextTitle,
-            sourceLayer: 'espn_live_api',
-          );
-        }
-      }
-    }
-
-    // 4. Respaldo específico e individual durante los primeros 2 segundos
-    final bool isHalfHourKids = identity.brandKey == 'discoverykids' ||
-        identity.brandKey == 'cartoonnetwork' ||
-        identity.brandKey == 'cartoonito' ||
-        identity.brandKey == 'nickelodeon' ||
-        identity.brandKey == 'nickjr' ||
-        identity.brandKey == 'disneychannel' ||
-        identity.brandKey == 'disneyjunior';
-
-    final int blockMinutes = isHalfHourKids
-        ? 30
-        : (_isSportsOrMovieChannel(identity.brandKey, lowerName, lowerCat) ? 120 : 60);
-
-    final DateTime blockStart = blockMinutes == 30
-        ? DateTime(
-            slotTime.year,
-            slotTime.month,
-            slotTime.day,
-            slotTime.hour,
-            slotTime.minute >= 30 ? 30 : 0,
-          )
-        : DateTime(
-            slotTime.year,
-            slotTime.month,
-            slotTime.day,
-            blockMinutes == 120 ? (slotTime.hour ~/ 2) * 2 : slotTime.hour,
-            0,
-          );
-    final DateTime blockEnd = blockStart.add(Duration(minutes: blockMinutes));
+    // 3. Estado honesto mientras descarga la guía real (sin inventar programas engañosos)
+    final DateTime blockStart = DateTime(
+      slotTime.year,
+      slotTime.month,
+      slotTime.day,
+      slotTime.hour,
+      slotTime.minute >= 30 ? 30 : 0,
+    );
+    final DateTime blockEnd = blockStart.add(const Duration(minutes: 30));
 
     final String sH = blockStart.hour.toString().padLeft(2, '0');
     final String sM = blockStart.minute.toString().padLeft(2, '0');
     final String eH = blockEnd.hour.toString().padLeft(2, '0');
     final String eM = blockEnd.minute.toString().padLeft(2, '0');
-    final String timeRange = '$sH:$sM - $eH:$eM';
 
-    final int elapsedMinutes =
-        slotTime.difference(blockStart).inMinutes.clamp(0, blockMinutes);
-    final int remMinutes = isCurrentSlot
-        ? (blockMinutes - elapsedMinutes).clamp(1, blockMinutes)
-        : blockMinutes;
-    final double progressVal = isCurrentSlot
-        ? (elapsedMinutes / blockMinutes).clamp(0.04, 0.96)
-        : 0.0;
+    final int elapsedMinutes = slotTime.difference(blockStart).inMinutes.clamp(0, 30);
+    final int remMinutes = isCurrentSlot ? (30 - elapsedMinutes).clamp(1, 30) : 30;
+    final double progressVal =
+        isCurrentSlot ? (elapsedMinutes / 30).clamp(0.05, 0.95) : 0.0;
 
-    final String seedKey = '${identity.brandKey}_${identity.countryFeed}';
-    final int channelSeed = seedKey.codeUnits.fold<int>(0, (prev, elem) => prev + elem);
-
-    final currentSlotData = _resolveChannelSpecificFallback(
-      cleanName: cleanName,
-      lowerName: lowerName,
-      lowerCat: lowerCat,
-      brandKey: identity.brandKey,
-      countryFeed: identity.countryFeed,
-      slotStart: blockStart,
-      channelSeed: channelSeed,
-    );
-
-    final nextSlotData = _resolveChannelSpecificFallback(
-      cleanName: cleanName,
-      lowerName: lowerName,
-      lowerCat: lowerCat,
-      brandKey: identity.brandKey,
-      countryFeed: identity.countryFeed,
-      slotStart: blockEnd,
-      channelSeed: channelSeed,
-    );
+    final syncingNow = isChannelSyncing(channelName) || _isSyncingXmlTv;
 
     return EpgProgram(
-      title: currentSlotData['title']!,
-      subtitle: currentSlotData['subtitle']!,
-      timeRange: timeRange,
-      nextTitle: nextSlotData['title']!,
+      title: syncingNow
+          ? 'Sincronizando guía • ${identity.cleanDisplayName.toUpperCase()}'
+          : 'En Vivo • $cleanName',
+      subtitle: 'Señal ${identity.countryFeed} en directo',
+      timeRange: '$sH:$sM - $eH:$eM',
+      nextTitle: 'Programación continua (${identity.countryFeed})',
       progress: progressVal,
       remainingMinutes: remMinutes,
       startTime: blockStart,
       endTime: blockEnd,
-      isLiveEvent: true,
-      sourceLayer: 'smart_regional',
+      isLiveEvent: false,
+      sourceLayer: 'syncing_placeholder',
     );
   }
 
@@ -1956,7 +1913,7 @@ class EpgService {
     required String nextTitleFallback,
     required String sourceLayer,
   }) {
-    final totalMin = slot.stop.difference(slot.start).inMinutes.clamp(1, 360);
+    final totalMin = slot.stop.difference(slot.start).inMinutes.clamp(1, 480);
     final elapsedMin = slotTime.difference(slot.start).inMinutes.clamp(0, totalMin);
     final sH = slot.start.hour.toString().padLeft(2, '0');
     final sM = slot.start.minute.toString().padLeft(2, '0');
@@ -1969,162 +1926,12 @@ class EpgService {
       timeRange: '$sH:$sM - $eH:$eM',
       nextTitle: nextTitleFallback,
       progress: isCurrentSlot ? (elapsedMin / totalMin).clamp(0.04, 0.96) : 0.0,
-      remainingMinutes: (totalMin - elapsedMin).clamp(1, 360),
+      remainingMinutes: (totalMin - elapsedMin).clamp(1, 480),
       startTime: slot.start,
       endTime: slot.stop,
       isLiveEvent: slot.title.startsWith('🔴'),
       sourceLayer: sourceLayer,
     );
-  }
-
-  static bool _isSportsOrMovieChannel(
-    String brandKey,
-    String lowerName,
-    String lowerCat,
-  ) {
-    return _isSportsBrand(brandKey) ||
-        lowerCat.contains('deporte') ||
-        lowerCat.contains('sport') ||
-        lowerCat.contains('cine') ||
-        lowerCat.contains('pelicula') ||
-        lowerName.contains('hbo') ||
-        lowerName.contains('cinecanal') ||
-        lowerName.contains('space') ||
-        lowerName.contains('tnt') ||
-        lowerName.contains('golden');
-  }
-
-  static Map<String, String> _resolveChannelSpecificFallback({
-    required String cleanName,
-    required String lowerName,
-    required String lowerCat,
-    required String brandKey,
-    required String countryFeed,
-    required DateTime slotStart,
-    required int channelSeed,
-  }) {
-    final int hour = slotStart.hour;
-    final int halfHourSlot = (hour * 2) + (slotStart.minute >= 30 ? 1 : 0);
-    final feedLabel = countryFeed == 'LATAM' ? 'Señal Internacional' : 'Señal $countryFeed';
-
-    if (brandKey == 'discoverykids') {
-      const dkShows = [
-        {
-          'title': 'Mini Beat Power Rockers',
-          'subtitle': 'Fuz, Wat, Myo y Carlos hacen música en la guardería • Discovery Kids'
-        },
-        {
-          'title': 'Peppa Pig',
-          'subtitle': 'Aventuras familiares con Peppa y George • Discovery Kids'
-        },
-        {
-          'title': 'Mi Perro Pat',
-          'subtitle': 'Pat protege a Lola en divertidas misiones • Discovery Kids'
-        },
-        {
-          'title': 'El Mundo de Luna',
-          'subtitle': 'Luna investiga los misterios de la ciencia • Discovery Kids'
-        },
-        {
-          'title': 'Doki',
-          'subtitle': 'Expediciones por todo el mundo • Discovery Kids'
-        },
-        {
-          'title': '44 Gatos',
-          'subtitle': 'Las aventuras musicales de los Buffycats • Discovery Kids'
-        },
-      ];
-      return dkShows[halfHourSlot % dkShows.length];
-    }
-
-    if (brandKey == 'discoverychannel') {
-      const discShows = [
-        {
-          'title': 'Supervivencia al Desnudo',
-          'subtitle': '21 días de supervivencia extrema en la selva • Discovery Channel'
-        },
-        {
-          'title': 'Supervivencia al Desnudo XL',
-          'subtitle': 'Reto de 40 días en entornos hostiles • Discovery Channel'
-        },
-        {
-          'title': 'Fiebre del Oro',
-          'subtitle': 'Excavaciones de oro en el Yukón • Discovery Channel'
-        },
-        {
-          'title': 'Pesca Mortal',
-          'subtitle': 'Pesca en el tempestuoso Mar de Bering • Discovery Channel'
-        },
-        {
-          'title': 'Sobre Ruedas (Wheeler Dealers)',
-          'subtitle': 'Restauración de vehículos clásicos • Discovery Channel'
-        },
-      ];
-      if (hour >= 19 && hour <= 22) return discShows[0];
-      return discShows[hour % discShows.length];
-    }
-
-    if (brandKey == 'history' || brandKey == 'history2') {
-      const histShows = [
-        {
-          'title': 'El Precio de la Historia',
-          'subtitle': 'Objetos históricos en Las Vegas con Rick Harrison • History'
-        },
-        {
-          'title': 'Alienígenas Ancestrales',
-          'subtitle': 'Evidencias arqueológicas y misterios milenarios • History'
-        },
-        {
-          'title': 'Desafío Sobre Fuego',
-          'subtitle': 'Competencia de forja y cuchillos legendarios • History'
-        },
-      ];
-      return histShows[hour % histShows.length];
-    }
-
-    if (brandKey == 'natgeo') {
-      const natShows = [
-        {
-          'title': 'Alerta Aeropuerto',
-          'subtitle': 'Operativos de seguridad y aduanas internacionales • National Geographic'
-        },
-        {
-          'title': 'Mayday: Catástrofes Aéreas',
-          'subtitle': 'Investigaciones de accidentes aéreos • National Geographic'
-        },
-      ];
-      return natShows[hour % natShows.length];
-    }
-
-    if (brandKey == 'cartoonnetwork') {
-      const cnShows = [
-        {
-          'title': 'Los Jóvenes Titanes en Acción',
-          'subtitle': 'Robin, Starfire, Cyborg, Raven y Chico Bestia • Cartoon Network'
-        },
-        {
-          'title': 'El Increíble Mundo de Gumball',
-          'subtitle': 'Comedia animada con Gumball y Darwin • Cartoon Network'
-        },
-        {
-          'title': 'Escandalosos',
-          'subtitle': 'Aventuras con Pardo, Panda y Polar • Cartoon Network'
-        },
-      ];
-      return cnShows[halfHourSlot % cnShows.length];
-    }
-
-    if (_isSportsBrand(brandKey) || lowerCat.contains('deporte') || lowerCat.contains('sport')) {
-      return {
-        'title': 'Transmisión Deportiva en Vivo ($cleanName)',
-        'subtitle': 'Sincronizando cartelera deportiva oficial ($feedLabel)...',
-      };
-    }
-
-    return {
-      'title': 'Programación en Vivo • $cleanName',
-      'subtitle': 'Sincronizando guía de TV en tiempo real ($feedLabel)...',
-    };
   }
 
   static String _getChannelName(dynamic item) {

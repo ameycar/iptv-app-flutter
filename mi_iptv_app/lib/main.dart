@@ -28,10 +28,17 @@ import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
 import 'widgets/live_chat_overlay.dart';
 
-// SERVICIO NATIVO PARA ALARMAS Y RECORDATORIOS CON LA APP CERRADA
+// SERVICIO NATIVO PARA ALARMAS CON AUTO-SINTONIZACIÓN EXACTA DE CANAL
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
+
+  // Stream en vivo cuando el usuario toca la notificación con la app minimizada/abierta
+  static final StreamController<String> alarmPayloadStream =
+      StreamController<String>.broadcast();
+
+  // Guarda el payload si la app estaba totalmente cerrada y se abrió tocando la alarma
+  static String? pendingLaunchPayload;
 
   static Future<void> initialize() async {
     try {
@@ -47,10 +54,34 @@ class NotificationService {
         InitializationSettings(android: androidSettings);
 
     try {
-      await _notificationsPlugin.initialize(initSettings);
+      await _notificationsPlugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) {
+          final payload = response.payload;
+          if (payload != null && payload.trim().isNotEmpty) {
+            pendingLaunchPayload = payload;
+            alarmPayloadStream.add(payload);
+          }
+        },
+      );
+
+      final launchDetails =
+          await _notificationsPlugin.getNotificationAppLaunchDetails();
+      if (launchDetails != null && launchDetails.didNotificationLaunchApp) {
+        final payload = launchDetails.notificationResponse?.payload;
+        if (payload != null && payload.trim().isNotEmpty) {
+          pendingLaunchPayload = payload;
+        }
+      }
     } catch (e) {
       debugPrint('Error inicializando FlutterLocalNotifications: $e');
     }
+  }
+
+  static String? consumePendingPayload() {
+    final temp = pendingLaunchPayload;
+    pendingLaunchPayload = null;
+    return temp;
   }
 
   static Future<void> requestPermissionsSafely() async {
@@ -71,6 +102,8 @@ class NotificationService {
     required String title,
     required String body,
     required DateTime scheduledDate,
+    required String channelName,
+    required String streamUrl,
   }) async {
     try {
       final difference = scheduledDate.difference(DateTime.now());
@@ -92,6 +125,11 @@ class NotificationService {
       const NotificationDetails details =
           NotificationDetails(android: androidDetails);
 
+      final String encodedPayload = jsonEncode({
+        'name': channelName,
+        'url': streamUrl,
+      });
+
       await _notificationsPlugin.zonedSchedule(
         id,
         title,
@@ -101,6 +139,7 @@ class NotificationService {
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
+        payload: encodedPayload,
       );
     } catch (e) {
       debugPrint('Error programando alarma local: $e');
@@ -158,9 +197,12 @@ class _AmeycarTVAppState extends State<AmeycarTVApp> {
     try {
       final res = await AuthService.checkAutoLogin();
       if (mounted) {
+        final bool launchedFromAlarm =
+            NotificationService.pendingLaunchPayload != null;
         setState(() {
           _isAuthenticated = res != null;
-          _hasSelectedProfile = false;
+          // Si abrió tocando una alarma, entra directo al reproductor sin frenar en perfiles
+          _hasSelectedProfile = launchedFromAlarm;
           _customDirectScreen = null;
           _isCheckingAuth = false;
         });
@@ -290,6 +332,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String _currentTime = '';
 
   StreamSubscription<UserModel?>? _accountGuardSub;
+  StreamSubscription<String>? _alarmTapSub;
 
   String get _currentProfileId =>
       AuthService.currentActiveProfile?.id ??
@@ -314,12 +357,86 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     EpgService.ensureInitialized();
     _startClockTimer();
     _startAccountHardwareGuard();
+    _listenToAlarmNotificationTaps();
     _loadSavedChannels();
     _ensureUserHasReferralCode();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       NotificationService.requestPermissionsSafely();
     });
+  }
+
+  /// Escucha cuando el usuario toca una alarma estando la app en segundo plano o abierta
+  void _listenToAlarmNotificationTaps() {
+    _alarmTapSub?.cancel();
+    _alarmTapSub = NotificationService.alarmPayloadStream.stream.listen((payload) {
+      NotificationService.consumePendingPayload();
+      _tuneChannelFromAlarmPayload(payload);
+    });
+  }
+
+  /// Busca primero por URL exacta (para no confundir países/idiomas) y luego por nombre exacto
+  void _tuneChannelFromAlarmPayload(String rawPayload) {
+    if (!mounted || _channels.isEmpty || rawPayload.trim().isEmpty) return;
+
+    String targetName = rawPayload.trim();
+    String targetUrl = '';
+
+    try {
+      final decoded = jsonDecode(rawPayload);
+      if (decoded is Map) {
+        targetName = (decoded['name'] ?? '').toString().trim();
+        targetUrl = (decoded['url'] ?? '').toString().trim();
+      }
+    } catch (_) {
+      // Si era un payload plano antiguo, usamos rawPayload como nombre
+    }
+
+    int foundIndex = -1;
+
+    // 1. Prioridad absoluta: URL exacta del stream (evita confundir Chile/Colombia/Brasil)
+    if (targetUrl.isNotEmpty) {
+      foundIndex = _channels.indexWhere(
+        (c) => c.streamUrl.trim() == targetUrl,
+      );
+    }
+
+    // 2. Segunda prioridad: Nombre exacto completo (ignorando mayúsculas)
+    if (foundIndex == -1 && targetName.isNotEmpty) {
+      final lowerExact = targetName.toLowerCase();
+      foundIndex = _channels.indexWhere(
+        (c) => c.name.trim().toLowerCase() == lowerExact,
+      );
+    }
+
+    // 3. Respaldo: coincidencia parcial si la lista fue recargada
+    if (foundIndex == -1 && targetName.isNotEmpty) {
+      final lowerPart = targetName.toLowerCase();
+      foundIndex = _channels.indexWhere(
+        (c) => c.name.toLowerCase().contains(lowerPart),
+      );
+    }
+
+    if (foundIndex != -1) {
+      final targetChannel = _channels[foundIndex];
+      setState(() {
+        _selectedSection = 'En Vivo';
+        _selectedCategory = 'Todos';
+        _isSearching = false;
+        _searchQuery = '';
+        _searchController.clear();
+      });
+
+      _changeChannel(targetChannel);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('⏰ Sintonizando tu recordatorio: ${targetChannel.name}'),
+          backgroundColor: const Color(0xFF00C853),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   Future<void> _syncAutoPipState(bool enabled) async {
@@ -480,6 +597,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _channels = M3USanitizerService.parseAndSanitize(savedM3u);
       } else {
         _channels = M3USanitizerService.getCuratedChannels();
+      }
+
+      // Verificar si se abrió la app tocando una notificación de alarma
+      final pendingAlarmPayload = NotificationService.consumePendingPayload();
+      if (pendingAlarmPayload != null && _channels.isNotEmpty) {
+        if (mounted) setState(() {});
+        _tuneChannelFromAlarmPayload(pendingAlarmPayload);
+        return;
       }
 
       if (_channels.isNotEmpty) {
@@ -796,7 +921,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       },
       onCategorySelected: (cat) {
         setState(() {
-          _selectedCategory = cat;
+          // Emparejamiento flexible con las categorías reales de la lista M3U
+          final match = _categories.firstWhere(
+            (existing) => existing.toLowerCase().contains(cat.toLowerCase()) ||
+                cat.toLowerCase().contains(existing.toLowerCase()),
+            orElse: () => 'Todos',
+          );
+          _selectedCategory = match;
           _searchQuery = '';
           _searchController.clear();
         });
@@ -807,6 +938,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _searchQuery = '';
           _searchController.clear();
         });
+      },
+      onOpenEpg: () {
+        if (_channels.isNotEmpty && _selectedChannelIndex < _channels.length) {
+          _openEpgScheduleModal(_channels[_selectedChannelIndex]);
+        }
       },
     );
   }
@@ -912,6 +1048,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 onTap: () {
                   Navigator.pop(ctx);
                   _openM3uDialog();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.alarm_on,
+                color: const Color(0xFFFFB703),
+                title: 'Mis Alarmas Programadas (${_activeAlarms.length})',
+                subtitle: 'Ver o cancelar recordatorios activos',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openActiveAlarmsManagerModal();
                 },
               ),
               _buildSettingsTile(
@@ -1403,10 +1549,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       itemCount: alarmsList.length,
                       itemBuilder: (context, index) {
                         final alarmId = alarmsList[index];
-                        final parts = alarmId.split('-');
-                        final channelName = parts.isNotEmpty ? parts[0] : 'Canal';
-                        final programTitle = parts.length > 1 ? parts[1] : alarmId;
-                        final programTime = parts.length > 2 ? parts[2] : '';
+                        final parts = alarmId.split('||');
+                        final channelName = parts.isNotEmpty ? parts[0] : alarmId.split('-').first;
+                        final programTitle = parts.length > 1
+                            ? parts[1]
+                            : (alarmId.split('-').length > 1 ? alarmId.split('-')[1] : alarmId);
+                        final programTime = parts.length > 2
+                            ? parts[2]
+                            : (alarmId.split('-').length > 2 ? alarmId.split('-')[2] : '');
+                        final savedUrl = parts.length > 3 ? parts[3] : '';
 
                         return Container(
                           margin: const EdgeInsets.only(bottom: 10),
@@ -1416,37 +1567,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: const Color(0x33FFB703)),
                           ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.alarm, color: Color(0xFFFFB703), size: 20),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      programTitle,
-                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                                    ),
-                                    Text(
-                                      '$channelName ${programTime.isNotEmpty ? "• $programTime" : ""}',
-                                      style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
-                                    ),
-                                  ],
+                          child: InkWell(
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _tuneChannelFromAlarmPayload(jsonEncode({
+                                'name': channelName,
+                                'url': savedUrl,
+                              }));
+                            },
+                            child: Row(
+                              children: [
+                                const Icon(Icons.alarm, color: Color(0xFFFFB703), size: 20),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        programTitle,
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                      ),
+                                      Text(
+                                        '$channelName ${programTime.isNotEmpty ? "• $programTime" : ""}',
+                                        style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                                onPressed: () async {
-                                  final int notificationId = alarmId.hashCode.abs() % 2147483647;
-                                  await NotificationService.cancelAlarm(notificationId);
-                                  setState(() => _activeAlarms.remove(alarmId));
-                                  setModalState(() {});
-                                  final prefs = await SharedPreferences.getInstance();
-                                  await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
-                                },
-                              ),
-                            ],
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                                  onPressed: () async {
+                                    final int notificationId = alarmId.hashCode.abs() % 2147483647;
+                                    await NotificationService.cancelAlarm(notificationId);
+                                    setState(() => _activeAlarms.remove(alarmId));
+                                    setModalState(() {});
+                                    final prefs = await SharedPreferences.getInstance();
+                                    await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
+                                  },
+                                ),
+                              ],
+                            ),
                           ),
                         );
                       },
@@ -1469,6 +1629,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       backgroundColor: Colors.transparent,
       builder: (ctx) => StatefulBuilder(
         builder: (modalContext, setModalState) => Container(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.82),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
           decoration: BoxDecoration(
             color: const Color(0xFF070A10).withOpacity(0.98),
@@ -1482,24 +1643,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      _buildChannelLogo(channel, true),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            channel.name,
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        _buildChannelLogo(channel, true),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                channel.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15.5),
+                              ),
+                              Text(
+                                'Guía EPG en Tiempo Real • 🕒 $_currentTime',
+                                style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                              ),
+                            ],
                           ),
-                          Text(
-                            'Guía EPG en Tiempo Real • 🕒 $_currentTime',
-                            style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                    ],
+                        ),
+                      ],
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.white54),
@@ -1507,7 +1674,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                 ],
               ),
-              const Divider(color: Colors.white12, height: 20),
+              const Divider(color: Colors.white12, height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Toca el reloj para programar auto-sintonía:',
+                    style: TextStyle(color: Colors.white60, fontSize: 11.5),
+                  ),
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _openActiveAlarmsManagerModal();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0x22FFB703),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFFB703), width: 0.8),
+                      ),
+                      child: Text(
+                        '⏰ ${_activeAlarms.length} activas',
+                        style: const TextStyle(color: Color(0xFFFFB703), fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               Flexible(
                 child: ListView.builder(
                   shrinkWrap: true,
@@ -1515,7 +1710,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   itemBuilder: (context, index) {
                     final prog = schedule[index];
                     final isNow = index == 0;
-                    final alarmId = '${channel.name}-${prog.title}-${prog.timeFormatted}';
+                    final alarmId =
+                        '${channel.name}||${prog.title}||${prog.timeFormatted}||${channel.streamUrl}';
                     final hasAlarm = _activeAlarms.contains(alarmId);
 
                     return Container(
@@ -1565,7 +1761,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               color: isNow ? const Color(0xFF00E5FF) : (hasAlarm ? const Color(0xFFFFB703) : Colors.white38),
                             ),
                             onPressed: () async {
-                              if (isNow) return;
+                              if (isNow) {
+                                Navigator.pop(ctx);
+                                _changeChannel(channel);
+                                return;
+                              }
                               final prefs = await SharedPreferences.getInstance();
                               final startTimeStr = prog.timeFormatted.split(' - ')[0];
                               final targetTime = _parseProgramStartTime(startTimeStr);
@@ -1579,11 +1779,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   await NotificationService.scheduleAlarm(
                                     id: notificationId,
                                     title: '⏰ ¡Comienza ${prog.title}!',
-                                    body: 'En sintonía por ${channel.name}.',
+                                    body: 'Toca aquí para sintonizar ${channel.name} al instante.',
                                     scheduledDate: targetTime,
+                                    channelName: channel.name,
+                                    streamUrl: channel.streamUrl,
                                   );
                                 }
                                 setState(() => _activeAlarms.add(alarmId));
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('⏰ Alarma lista: "${prog.title}" en ${channel.name}'),
+                                      backgroundColor: const Color(0xFF7B2CBF),
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
                               }
                               setModalState(() {});
                               await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
@@ -2064,6 +2275,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
               _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
               _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
+              _buildSideMenuItem(Icons.alarm_on, 'Alarmas (${_activeAlarms.length})', _openActiveAlarmsManagerModal),
               _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
               _buildSideMenuItem(Icons.forum_outlined, 'Chat / Emojis Vivo', () => setState(() => _showLiveChat = !_showLiveChat)),
               _buildSideMenuItem(Icons.playlist_add, 'Mis Listas (${_savedPlaylists.length}/5)', _openM3uDialog),
@@ -2335,6 +2547,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           color: const Color(0xFF00E5FF),
                           tooltip: 'Gestor de Listas M3U (Hasta 5)',
                           onPressed: _openM3uDialog,
+                        ),
+
+                        _buildTopBarActionItem(
+                          icon: Icons.alarm_on,
+                          color: Colors.white,
+                          badgeCount: _activeAlarms.length,
+                          tooltip: 'Alarmas Activas',
+                          onPressed: _openActiveAlarmsManagerModal,
                         ),
 
                         _buildTopBarActionItem(
@@ -3413,6 +3633,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _syncAutoPipState(false);
     WakelockPlus.disable();
     _accountGuardSub?.cancel();
+    _alarmTapSub?.cancel();
     _clockTimer?.cancel();
     _osdHideTimer?.cancel();
     _videoPlayerController?.dispose();
