@@ -1,19 +1,19 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart'; 
+import 'package:url_launcher/url_launcher.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import 'family_panel_screen.dart';
 
 class ProfileSelectorScreen extends StatefulWidget {
   final VoidCallback? onLogout;
-  final VoidCallback onProfileSelected;
+  final VoidCallback? onProfileSelected;
 
   const ProfileSelectorScreen({
     super.key,
     this.onLogout,
-    required this.onProfileSelected,
+    this.onProfileSelected,
   });
 
   @override
@@ -21,8 +21,14 @@ class ProfileSelectorScreen extends StatefulWidget {
 }
 
 class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
-  final UserModel? _currentUser = AuthService.currentUser;
+  UserModel? get _currentUser => AuthService.currentUser;
   bool _isManageMode = false;
+
+  bool get _canSeePaymentBanks {
+    final u = _currentUser;
+    if (u == null) return false;
+    return u.isFamilyAdmin || !u.isPartOfFamily || (u.familyId == null || u.familyId!.isEmpty);
+  }
 
   static const List<Map<String, dynamic>> _avatarStyles = [
     {
@@ -57,6 +63,14 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     },
   ];
 
+  void _finishProfileSelection() {
+    if (widget.onProfileSelected != null) {
+      widget.onProfileSelected!();
+    } else if (Navigator.canPop(context)) {
+      Navigator.pop(context, true);
+    }
+  }
+
   void _openSupportMenu() {
     showModalBottomSheet(
       context: context,
@@ -87,12 +101,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 style: TextStyle(color: Colors.white60, fontSize: 12),
               ),
               const SizedBox(height: 20),
-              
               _buildSupportOption(
                 icon: Icons.autorenew,
                 title: 'Renovar o recuperar mi servicio',
                 subtitle: 'Si tu proveedor anterior ya no responde',
-                message: 'Hola Ameycar TV, mi proveedor original ya no me atiende y deseo renovar mi perfil directamente con ustedes.',
+                message: 'Hola Ameycar TV, deseo renovar o activar mi perfil directamente con ustedes.',
               ),
               const SizedBox(height: 10),
               _buildSupportOption(
@@ -115,19 +128,24 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     );
   }
 
-  Widget _buildSupportOption({required IconData icon, required String title, required String subtitle, required String message}) {
+  Widget _buildSupportOption({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required String message,
+  }) {
     return InkWell(
       onTap: () async {
-        Navigator.pop(context); 
-        const phoneNumber = "51905823660"; 
+        Navigator.pop(context);
+        const phoneNumber = "51905823660";
         final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(message)}");
-        
+
         try {
           if (await canLaunchUrl(url)) {
             await launchUrl(url);
           } else {
-             final webUrl = Uri.parse("https://wa.me/$phoneNumber?text=${Uri.encodeComponent(message)}");
-             await launchUrl(webUrl, mode: LaunchMode.externalApplication);
+            final webUrl = Uri.parse("https://wa.me/$phoneNumber?text=${Uri.encodeComponent(message)}");
+            await launchUrl(webUrl, mode: LaunchMode.externalApplication);
           }
         } catch (e) {
           debugPrint("Error al abrir WhatsApp: $e");
@@ -168,6 +186,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
   Widget build(BuildContext context) {
     final familyId = _currentUser?.effectiveFamilyId ?? '';
     final bool isHeadUser = _currentUser?.isFamilyAdmin ?? false;
+    final bool canSeeBanks = _canSeePaymentBanks;
 
     return Scaffold(
       backgroundColor: const Color(0xFF070A10),
@@ -175,7 +194,9 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
         child: StreamBuilder<List<UserModel>>(
           stream: AuthService.getFamilyMembersStream(familyId),
           builder: (context, snapshot) {
-            final members = snapshot.data ?? [_currentUser ?? _dummyUser()];
+            final members = (snapshot.data != null && snapshot.data!.isNotEmpty)
+                ? snapshot.data!
+                : [_currentUser ?? _dummyUser()];
             final usedScreens = members.length;
             const maxScreens = 5;
             final canAddMore = usedScreens < maxScreens && isHeadUser;
@@ -196,14 +217,20 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                               shape: BoxShape.circle,
                               border: Border.all(color: const Color(0xFFC77DFF)),
                             ),
-                            child: const Icon(Icons.family_restroom, color: Color(0xFFC77DFF), size: 18),
+                            child: Icon(
+                              isHeadUser ? Icons.family_restroom : Icons.person,
+                              color: const Color(0xFFC77DFF),
+                              size: 18,
+                            ),
                           ),
                           const SizedBox(width: 10),
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'FAMILIA ${_currentUser?.username.toUpperCase() ?? ""}',
+                                isHeadUser
+                                    ? 'FAMILIA ${_currentUser?.username.toUpperCase() ?? ""}'
+                                    : (_currentUser?.username.toUpperCase() ?? 'MI CUENTA'),
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w900,
@@ -232,7 +259,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                           ),
                         ],
                       ),
-                      
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -277,9 +303,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                     ],
                   ),
                 ),
-
                 const Spacer(flex: 1),
-
                 const Text(
                   '¿Quién está viendo hoy?',
                   style: TextStyle(
@@ -296,9 +320,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                       : 'Selecciona tu pantalla para iniciar la transmisión',
                   style: const TextStyle(color: Colors.white54, fontSize: 13),
                 ),
-
                 const SizedBox(height: 28),
-
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Center(
@@ -313,9 +335,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                     ),
                   ),
                 ),
-
                 const Spacer(flex: 2),
-
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                   decoration: const BoxDecoration(
@@ -328,12 +348,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                       TextButton.icon(
                         icon: const Icon(Icons.confirmation_number, color: Color(0xFF00E676), size: 16),
                         label: Text(
-                          isHeadUser ? 'Renovar Plan' : 'Canjear PIN',
+                          canSeeBanks ? 'Renovar Plan' : 'Canjear PIN',
                           style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 13),
                         ),
-                        onPressed: () => _showPaymentOptionsModal(context, isHead: isHeadUser),
+                        onPressed: () => _showPaymentOptionsModal(context, isHead: canSeeBanks),
                       ),
-
                       if (isHeadUser)
                         ElevatedButton.icon(
                           onPressed: () {
@@ -353,7 +372,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                           ),
                         ),
-
                       IconButton(
                         icon: const Icon(Icons.power_settings_new, color: Colors.white54, size: 20),
                         tooltip: 'Cerrar Sesión',
@@ -378,8 +396,8 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     final bool isHead = member.isFamilyAdmin;
     final bool hasPinLock = isHead || (member.pinCode != null && member.pinCode!.isNotEmpty);
 
-    String displayName = (member.deviceName != null && member.deviceName!.isNotEmpty) 
-        ? member.deviceName! 
+    String displayName = (member.deviceName != null && member.deviceName!.isNotEmpty)
+        ? member.deviceName!
         : member.username;
 
     if (displayName.toLowerCase().contains('dispositivo') || displayName.trim().isEmpty) {
@@ -512,7 +530,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
 
     if (AuthService.currentActiveProfile?.id == member.id) {
       AuthService.setActiveProfile(member);
-      widget.onProfileSelected();
+      _finishProfileSelection();
       return;
     }
 
@@ -520,7 +538,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
       _showProfilePasswordDialog(member, isHead: false);
     } else {
       AuthService.setActiveProfile(member);
-      widget.onProfileSelected();
+      _finishProfileSelection();
     }
   }
 
@@ -613,7 +631,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 if (isAuthorized) {
                   Navigator.pop(ctx);
                   AuthService.setActiveProfile(member);
-                  widget.onProfileSelected();
+                  _finishProfileSelection();
                 } else {
                   setDialogState(() {
                     errorText = isHead ? 'Contraseña o PIN de Jefe incorrecto' : 'PIN incorrecto';
@@ -834,11 +852,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     String defaultName = (member.deviceName != null && member.deviceName!.isNotEmpty)
         ? member.deviceName!
         : member.username;
-        
+
     if (member.isFamilyAdmin && (defaultName.toLowerCase().contains('dispositivo') || defaultName.isEmpty)) {
       defaultName = member.username.toUpperCase();
     }
-    
+
     final nameCtrl = TextEditingController(text: defaultName);
     final pinCtrl = TextEditingController(text: member.pinCode ?? '');
     final bool isHead = member.isFamilyAdmin;
@@ -870,7 +888,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            
             TextField(
               controller: nameCtrl,
               style: const TextStyle(color: Colors.white),
@@ -883,7 +900,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
               ),
             ),
             const SizedBox(height: 10),
-            
             TextField(
               controller: pinCtrl,
               keyboardType: TextInputType.number,
@@ -913,7 +929,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                         await AuthService.adminResetHardware(member.id);
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Dispositivo liberado. Ahora puede vincularse en un nuevo televisor.')),
+                            const SnackBar(content: Text('Dispositivo liberado.')),
                           );
                         }
                       },
@@ -963,6 +979,7 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
 
   void _showPaymentOptionsModal(BuildContext context, {required bool isHead}) {
     final pinCtrl = TextEditingController();
+    final refCtrl = TextEditingController();
     bool isProcessing = false;
 
     showModalBottomSheet(
@@ -995,7 +1012,6 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                   ),
                 ),
                 const SizedBox(height: 14),
-
                 Row(
                   children: [
                     Icon(isHead ? Icons.stars : Icons.confirmation_number, color: const Color(0xFFFFD700), size: 24),
@@ -1011,13 +1027,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                 const SizedBox(height: 4),
                 Text(
                   isHead
-                      ? 'Métodos seguros para extender tu plan familiar sin comisiones.'
+                      ? 'Métodos seguros para extender tu plan sin comisiones.'
                       : 'Ingresa el código proporcionado por el titular para activar tu pantalla.',
                   style: const TextStyle(color: Colors.white60, fontSize: 12),
                 ),
                 const SizedBox(height: 16),
-
-                // ZONA DE CANJEAR PIN
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
@@ -1096,11 +1110,26 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                     ],
                   ),
                 ),
-
                 if (isHead) ...[
+                  const SizedBox(height: 14),
+                  // CÍRCULO AMEYCAR - CÓDIGO DE REFERIDO OPCIONAL
+                  TextField(
+                    controller: refCtrl,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(color: Color(0xFFFFD600), fontWeight: FontWeight.bold),
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.card_giftcard, color: Color(0xFFFFD600), size: 18),
+                      labelText: '¿Te invitó un amigo? Código opcional (+15 días para él)',
+                      labelStyle: const TextStyle(color: Colors.white60, fontSize: 11),
+                      hintText: 'AMEY-NOMBRE-0000',
+                      hintStyle: const TextStyle(color: Colors.white24, fontSize: 12),
+                      filled: true,
+                      fillColor: const Color(0xFF131A29),
+                      isDense: true,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
                   const SizedBox(height: 20),
-                  
-                  // SECCIÓN A: PERÚ (SIN COMISIONES)
                   const Row(
                     children: [
                       Text('🇵🇪 ', style: TextStyle(fontSize: 16)),
@@ -1108,13 +1137,12 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                     ],
                   ),
                   const SizedBox(height: 10),
-
                   _buildPaymentTile(
                     icon: Icons.phone_android,
                     color: const Color(0xFF7B2CBF),
-                    title: 'Yape',
-                    subtitle: '51931573805 • Titular: ACOSTA NN CARLOS RAFAEL', 
-                    copyText: '51931573805', 
+                    title: 'Yape / Plin',
+                    subtitle: '51905823660 • Titular: AMEYCAR TV',
+                    copyText: '51905823660',
                     context: context,
                   ),
                   const SizedBox(height: 8),
@@ -1122,14 +1150,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                     icon: Icons.account_balance,
                     color: const Color(0xFFFF7043),
                     title: 'BCP - Cuenta Soles',
-                    subtitle: '19194759620085 • Titular: ACOSTA NN CARLOS RAFAEL', 
+                    subtitle: '19194759620085 • Titular: ACOSTA NN CARLOS RAFAEL',
                     copyText: '19194759620085',
                     context: context,
                   ),
-
                   const SizedBox(height: 20),
-
-                  // SECCIÓN B: INTERNACIONAL (ANTI-FRAUDE)
                   const Row(
                     children: [
                       Text('🌎 ', style: TextStyle(fontSize: 16)),
@@ -1137,13 +1162,12 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                     ],
                   ),
                   const SizedBox(height: 10),
-
                   _buildPaymentTile(
                     icon: Icons.currency_bitcoin,
                     color: const Color(0xFFFFD700),
                     title: 'Binance Pay (USDT - Inmediato)',
-                    subtitle: 'Pay ID: 214778098', 
-                    copyText: '214778098', 
+                    subtitle: 'Pay ID: 214778098',
+                    copyText: '214778098',
                     context: context,
                   ),
                   const SizedBox(height: 8),
@@ -1151,14 +1175,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                     icon: Icons.account_balance_wallet,
                     color: const Color(0xFF0072FF),
                     title: 'PayPal',
-                    subtitle: 'carlos_87_21@hotmail.com', 
-                    copyText: 'carlos_87_21@hotmail.com', 
+                    subtitle: 'carlos_87_21@hotmail.com',
+                    copyText: 'carlos_87_21@hotmail.com',
                     context: context,
                   ),
-
                   const SizedBox(height: 20),
-
-                  // BOTÓN FINAL DE VALIDACIÓN VÍA WHATSAPP
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(14),
@@ -1197,10 +1218,11 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           ),
                           onPressed: () async {
-                            final msg = '¡Hola! He realizado una transferencia para renovar mi plan. Mi usuario es: ${_currentUser?.username ?? "cliente"}. Adjunto mi voucher de pago.';
+                            final refTxt = refCtrl.text.trim().isNotEmpty ? ' | Código amigo: ${refCtrl.text.trim()}' : '';
+                            final msg = '¡Hola! He realizado una transferencia para renovar mi plan hoy. Mi usuario es: ${_currentUser?.username ?? "cliente"}$refTxt. Adjunto mi voucher de pago.';
                             Clipboard.setData(ClipboardData(text: msg));
-                            
-                            const phoneNumber = "51905823660"; 
+
+                            const phoneNumber = "51905823660";
                             final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(msg)}");
                             try {
                               if (await canLaunchUrl(url)) {

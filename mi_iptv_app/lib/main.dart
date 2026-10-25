@@ -10,6 +10,10 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:simple_pip_mode/simple_pip_mode.dart';
 
 import 'models/channel_model.dart';
 import 'models/user_model.dart';
@@ -23,6 +27,7 @@ import 'screens/profile_selector_screen.dart';
 import 'widgets/alexa_voice_sheet.dart';
 import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
+import 'widgets/live_chat_overlay.dart';
 
 // SERVICIO NATIVO PARA ALARMAS Y RECORDATORIOS CON LA APP CERRADA
 class NotificationService {
@@ -244,12 +249,12 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<ChannelModel> _channels = [];
   int _selectedChannelIndex = 0;
   String _selectedCategory = 'Todos';
   String _selectedSection = 'En Vivo';
-  
+
   VideoPlayerController? _videoPlayerController;
   bool _isVideoLoading = false;
   bool _hasVideoError = false;
@@ -257,13 +262,23 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showOsd = true;
   double _currentVolume = 1.0;
 
+  // NUEVO: Controladores de Ventana Flotante (PiP) y Estadio Virtual (Chat)
+  late SimplePip _pip;
+  bool _isInPipMode = false;
+  bool _showLiveChat = false;
+  String _selectedLanguage = 'Español (Latinoamérica)';
+  int _customAvatarIdx = 0;
+
+  // NUEVO: Gestor de hasta 5 Listas M3U por perfil
+  List<Map<String, dynamic>> _savedPlaylists = [];
+
   final Map<String, VideoPlayerController> _prebufferedPool = {};
   final Set<String> _prebufferingInProgress = {};
   int _zappingToken = 0;
   Timer? _osdHideTimer;
 
   static const Map<String, String> _fastStreamHeaders = {
-    'User-Agent': 'TiviMate/4.7.0 (Linux; Android 13) ExoPlayerLib/2.19.1',
+    'User-Agent': 'AmeycarTV/2.0 (Linux; Android 13) ExoPlayerLib/2.19.1',
     'Connection': 'keep-alive',
   };
 
@@ -276,23 +291,106 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _clockTimer;
   String _currentTime = '';
 
-  // Suscripción en vivo al blindaje de cuenta / hardware del usuario actual
   StreamSubscription<UserModel?>? _accountGuardSub;
+
+  String get _currentProfileId =>
+      AuthService.currentActiveProfile?.id ??
+      AuthService.currentUser?.id ??
+      'default_profile';
+
+  // REGLA DE ORO FINANCIERA: Individuales o Jefes de Familia ven bancos de pago
+  bool get _canSeePaymentBanks {
+    final user = AuthService.currentUser;
+    if (user == null) return true;
+    if (user.isAdmin || user.isFamilyAdmin) return true;
+    final famId = user.familyId ?? '';
+    return !user.isPartOfFamily || famId.trim().isEmpty;
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WakelockPlus.enable();
+
+    _pip = SimplePip(
+      onPipEntered: () {
+        if (mounted) setState(() => _isInPipMode = true);
+      },
+      onPipExited: () {
+        if (mounted) setState(() => _isInPipMode = false);
+      },
+    );
+
     EpgService.ensureInitialized();
     _startClockTimer();
     _startAccountHardwareGuard();
     _loadSavedChannels();
+    _ensureUserHasReferralCode();
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       NotificationService.requestPermissionsSafely();
     });
   }
 
-  /// Vigila en tiempo real si el admin desactiva la cuenta, vence la suscripción
-  /// o si la cuenta es vinculada a otro Hardware ID para expulsar sesiones clonadas al instante.
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    // Respaldo automático: si Android encoge la ventana a miniatura PiP, ocultamos toda la UI
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final size = MediaQuery.of(context).size;
+      final bool looksLikePip = size.height < 300 && size.width < 520;
+      if (looksLikePip != _isInPipMode) {
+        setState(() => _isInPipMode = looksLikePip);
+      }
+    });
+  }
+
+  /// Garantiza que todo cliente (incluso antiguo) tenga su propio código del Círculo AMEYCAR
+  Future<void> _ensureUserHasReferralCode() async {
+    final user = AuthService.currentUser;
+    if (user == null || !AuthService.isFirebaseAvailable) return;
+    try {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(user.id).get();
+      if (doc.exists) {
+        final data = doc.data() ?? {};
+        if (data['referralCode'] == null || data['referralCode'].toString().isEmpty) {
+          final clean = user.username.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+          final suffix = user.id.hashCode.abs().toString().padLeft(4, '0').substring(0, 4);
+          final generated = 'AMEY-$clean-$suffix';
+          await FirebaseFirestore.instance.collection('users').doc(user.id).set(
+            {'referralCode': generated},
+            SetOptions(merge: true),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Aviso generando referralCode automático: $e');
+    }
+  }
+
+  /// Activa el modo flotante nativo (PiP) redimensionable de Android
+  Future<void> _enterNativePiP() async {
+    try {
+      final available = await SimplePip.isPipAvailable;
+      if (available) {
+        await _pip.enterPipMode(aspectRatio: const (16, 9));
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Activa "Imagen en imagen" en los ajustes de tu teléfono para flotar el video.'),
+              backgroundColor: Color(0xFF7B2CBF),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error activando PiP: $e');
+    }
+  }
+
   void _startAccountHardwareGuard() async {
     final user = AuthService.currentUser;
     if (user == null || user.isAdmin) return;
@@ -349,10 +447,43 @@ class _HomeScreenState extends State<HomeScreen> {
   void _loadSavedChannels() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final savedM3u = prefs.getString('saved_m3u_content');
+      _customAvatarIdx = prefs.getInt('custom_avatar_$_currentProfileId') ?? 0;
+      _selectedLanguage = prefs.getString('app_lang') ?? 'Español (Latinoamérica)';
+
+      // Cargar las hasta 5 listas M3U del perfil
+      final rawLists = prefs.getString('m3u_lists_$_currentProfileId');
+      if (rawLists != null && rawLists.isNotEmpty) {
+        final List decoded = jsonDecode(rawLists);
+        _savedPlaylists = decoded.map((e) => Map<String, dynamic>.from(e)).toList();
+      } else {
+        final legacyUrl = prefs.getString('saved_m3u_url') ?? '';
+        if (legacyUrl.isNotEmpty) {
+          _savedPlaylists = [
+            {
+              'id': 'pl_1',
+              'name': 'Lista Principal',
+              'url': legacyUrl,
+              'isActive': true,
+            }
+          ];
+          await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+        }
+      }
+
+      final activeList = _savedPlaylists.where((l) => l['isActive'] == true).toList();
+      String? savedM3u;
+      if (activeList.isNotEmpty) {
+        savedM3u = prefs.getString('m3u_cache_${activeList.first['id']}') ??
+            prefs.getString('saved_m3u_content');
+      } else {
+        savedM3u = prefs.getString('saved_m3u_content');
+      }
+
       final lastIndex = prefs.getInt('last_played_channel_index') ?? 0;
       final savedAlarmsList = prefs.getStringList('saved_active_alarms') ?? [];
-      _activeAlarms.addAll(savedAlarmsList);
+      _activeAlarms
+        ..clear()
+        ..addAll(savedAlarmsList);
 
       if (savedM3u != null && savedM3u.isNotEmpty) {
         unawaited(EpgService.extractAndSaveEpgUrlFromM3u(savedM3u));
@@ -581,9 +712,8 @@ class _HomeScreenState extends State<HomeScreen> {
     int realIndex = _channels.indexOf(ch);
     if (realIndex == -1) {
       realIndex = _channels.indexWhere((c) =>
-        c.streamUrl.trim() == ch.streamUrl.trim() ||
-        c.name.trim().toLowerCase() == ch.name.trim().toLowerCase()
-      );
+          c.streamUrl.trim() == ch.streamUrl.trim() ||
+          c.name.trim().toLowerCase() == ch.name.trim().toLowerCase());
     }
     if (realIndex == -1) {
       _channels.add(ch);
@@ -660,7 +790,7 @@ class _HomeScreenState extends State<HomeScreen> {
           } else if (item.isSeries && _selectedSection != 'Series') {
             setState(() => _selectedSection = 'Series');
           }
-          
+
           Future.delayed(const Duration(milliseconds: 150), () {
             if (mounted) {
               _changeChannel(item);
@@ -688,25 +818,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _adjustVolume(bool up) {
-    setState(() {
-      if (up) {
-        _currentVolume = (_currentVolume + 0.2).clamp(0.0, 1.0);
-      } else {
-        _currentVolume = (_currentVolume - 0.2).clamp(0.0, 1.0);
-      }
-      _videoPlayerController?.setVolume(_currentVolume);
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('🔊 Volumen: ${(_currentVolume * 100).toInt()}%'),
-        duration: const Duration(seconds: 1),
-        backgroundColor: const Color(0xFF7B2CBF),
-      ),
-    );
-  }
-
   DateTime? _parseProgramStartTime(String timeStr) {
     try {
       final clean = timeStr.trim();
@@ -728,6 +839,501 @@ class _HomeScreenState extends State<HomeScreen> {
       debugPrint('Error parseando hora del programa: $e');
     }
     return null;
+  }
+
+  // ===========================================================================
+  // ENGRANAJE ⚙️: MENÚ MAESTRO DE CONFIGURACIÓN, SOPORTE, PERFIL Y REFERIDOS
+  // ===========================================================================
+  void _showSettingsMenu() {
+    final user = AuthService.currentActiveProfile ?? AuthService.currentUser;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF101726),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Icon(Icons.settings, color: Color(0xFF00E5FF), size: 24),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Centro de Configuración',
+                          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
+                        ),
+                        Text(
+                          'Sesión activa: ${user?.username ?? "Usuario"} • ${user?.daysRemaining ?? 0} días restantes',
+                          style: const TextStyle(color: Colors.white60, fontSize: 11.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              _buildSettingsTile(
+                icon: Icons.card_giftcard,
+                color: const Color(0xFFFFD600),
+                title: 'Círculo AMEYCAR (Gana +15 Días Gratis)',
+                subtitle: 'Comparte tu código de invitación automático',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showReferralClubModal();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.person_outline,
+                color: const Color(0xFF00E5FF),
+                title: 'Editar Perfil, Avatar y Hardware',
+                subtitle: 'Personalizar foto de perfil y ver ID de equipo',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showAccountProfileModal();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.playlist_play,
+                color: const Color(0xFF9D4EDD),
+                title: 'Gestor Multi-Lista M3U (${_savedPlaylists.length}/5)',
+                subtitle: 'Administrar hasta 5 listas de canales y Guía EPG',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openM3uDialog();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.picture_in_picture_alt_rounded,
+                color: Colors.cyanAccent,
+                title: 'Activar Pantalla Flotante (PiP)',
+                subtitle: 'Minimizar video redimensionable sobre otras apps',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _enterNativePiP();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.headset_mic,
+                color: const Color(0xFF00E676),
+                title: 'Soporte Directo / Contactar al CEO',
+                subtitle: 'Atención inmediata por WhatsApp oficial',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openSupportMenu();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.language,
+                color: Colors.amberAccent,
+                title: 'Idioma de la Interfaz',
+                subtitle: 'Actual: $_selectedLanguage',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showLanguageSelectorDialog();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.switch_account,
+                color: const Color(0xFFC77DFF),
+                title: 'Cambiar de Perfil / Cuenta',
+                subtitle: AuthService.currentUser?.isPartOfFamily == true
+                    ? 'Volver al selector "¿Quién está viendo hoy?"'
+                    : 'Cambiar a otra cuenta de usuario',
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  if (AuthService.currentUser?.isPartOfFamily == true) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ProfileSelectorScreen(
+                          onLogout: widget.onLogout,
+                          onProfileSelected: () {
+                            Navigator.pop(context);
+                            _loadSavedChannels();
+                          },
+                        ),
+                      ),
+                    );
+                  } else {
+                    _videoPlayerController?.pause();
+                    await AuthService.logout();
+                    widget.onLogout?.call();
+                  }
+                },
+              ),
+              const Divider(color: Colors.white12, height: 22),
+              _buildSettingsTile(
+                icon: Icons.logout,
+                color: Colors.redAccent,
+                title: 'Cerrar Sesión Segura',
+                subtitle: 'Salir de la cuenta actual en este dispositivo',
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  _videoPlayerController?.pause();
+                  await AuthService.logout();
+                  widget.onLogout?.call();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingsTile({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(vertical: 2),
+      leading: Container(
+        padding: const EdgeInsets.all(9),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.15),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: color, size: 20),
+      ),
+      title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13.5)),
+      subtitle: Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11.5)),
+      trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white24, size: 14),
+      onTap: onTap,
+    );
+  }
+
+  void _showLanguageSelectorDialog() {
+    final langs = ['Español (Latinoamérica)', 'English (US)', 'Português (Brasil)'];
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF131A29),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Seleccionar Idioma', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: langs.map((l) {
+            final sel = _selectedLanguage == l;
+            return ListTile(
+              leading: Icon(sel ? Icons.radio_button_checked : Icons.radio_button_off, color: const Color(0xFF00E5FF)),
+              title: Text(l, style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+              onTap: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('app_lang', l);
+                setState(() => _selectedLanguage = l);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  // MODAL DEL CLUB DE REFERIDOS ("CÍRCULO AMEYCAR")
+  void _showReferralClubModal() async {
+    final user = AuthService.currentUser;
+    if (user == null) return;
+
+    String refCode = 'AMEY-${user.username.toUpperCase()}-VIP';
+    int invitedCount = 0;
+
+    if (AuthService.isFirebaseAvailable) {
+      try {
+        final doc = await FirebaseFirestore.instance.collection('users').doc(user.id).get();
+        if (doc.exists) {
+          final data = doc.data() ?? {};
+          if (data['referralCode'] != null && data['referralCode'].toString().isNotEmpty) {
+            refCode = data['referralCode'].toString();
+          }
+          invitedCount = (data['referralsCount'] is int) ? data['referralsCount'] as int : 0;
+        }
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF131A29),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xFFFFD600), width: 1.5),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.card_giftcard, color: Color(0xFFFFD600)),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Círculo AMEYCAR (+15 Días)',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Comparte tu código único con tus amigos. Cada vez que un amigo active su plan e ingrese tu código al canjear su PIN, el sistema te sumará +15 DÍAS GRATIS automáticamente.',
+              style: TextStyle(color: Colors.white70, fontSize: 12.5),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFD600).withOpacity(0.14),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFFD600)),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    refCode,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFFFFD600),
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.8,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Amigos invitados con éxito: $invitedCount (+${invitedCount * 15} días ganados)',
+                    style: const TextStyle(color: Colors.white60, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFFD600),
+              foregroundColor: Colors.black,
+            ),
+            icon: const Icon(Icons.share, size: 16),
+            label: const Text('Copiar Invitación', style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: () {
+              final shareMsg =
+                  '¡Te invito a ver TV en vivo, fútbol y cine en AMEYCAR TV! 🍿⚽\nUsa mi código de invitación *$refCode* al activar tu cuenta.';
+              Clipboard.setData(ClipboardData(text: shareMsg));
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('¡Invitación copiada! Pégala en WhatsApp para tus amigos.'),
+                  backgroundColor: Color(0xFF00E676),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // SOPORTE DIRECTO Y CONTACTO CON EL CEO POR WHATSAPP
+  void _openSupportMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161F36),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.only(top: 20, left: 20, right: 20, bottom: 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.support_agent, color: Color(0xFF00E5FF), size: 28),
+                SizedBox(width: 10),
+                Text(
+                  'Soporte Directo & CEO',
+                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Selecciona tu consulta para abrir chat directo en WhatsApp:',
+              style: TextStyle(color: Colors.white60, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            _buildSupportOption(
+              icon: Icons.verified,
+              title: 'Contactar directamente al CEO (Ameycar)',
+              subtitle: 'Atención VIP, alianzas o consultas especiales',
+              message: 'Hola CEO de Ameycar TV, mi usuario es "${AuthService.currentUser?.username ?? "cliente"}" y deseo comunicarme directamente contigo.',
+            ),
+            const SizedBox(height: 10),
+            _buildSupportOption(
+              icon: Icons.autorenew,
+              title: 'Renovar o activar suscripción',
+              subtitle: 'Adquirir PIN o validar comprobante de pago',
+              message: 'Hola Ameycar TV, deseo renovar mi cuenta (${AuthService.currentUser?.username ?? "cliente"}).',
+            ),
+            const SizedBox(height: 10),
+            _buildSupportOption(
+              icon: Icons.wifi_tethering_error_rounded,
+              title: 'Reportar señal o pedir Reset HW',
+              subtitle: 'Soporte técnico inmediato en mi pantalla',
+              message: 'Hola soporte Ameycar TV, necesito ayuda técnica con mi usuario (${AuthService.currentUser?.username ?? "cliente"}).',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSupportOption({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required String message,
+  }) {
+    return InkWell(
+      onTap: () async {
+        Navigator.pop(context);
+        const phoneNumber = "51905823660";
+        final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(message)}");
+        try {
+          if (await canLaunchUrl(url)) {
+            await launchUrl(url);
+          } else {
+            final webUrl = Uri.parse("https://wa.me/$phoneNumber?text=${Uri.encodeComponent(message)}");
+            await launchUrl(webUrl, mode: LaunchMode.externalApplication);
+          }
+        } catch (e) {
+          debugPrint("Error abriendo WhatsApp: $e");
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: const Color(0xFF00E5FF).withOpacity(0.12), shape: BoxShape.circle),
+              child: Icon(icon, color: const Color(0xFF00E5FF), size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white38, size: 14),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // MOTOR AUTOMÁTICO DE RECOMPENSA DE REFERIDOS (+15 DÍAS SIN INTERVENCIÓN MANUAL)
+  Future<String?> _processAutomaticReferralReward(String rawRefCode) async {
+    final code = rawRefCode.trim().toUpperCase();
+    if (code.isEmpty || !AuthService.isFirebaseAvailable) return null;
+
+    final currentUser = AuthService.currentUser;
+    if (currentUser == null) return null;
+
+    try {
+      final myDoc = await FirebaseFirestore.instance.collection('users').doc(currentUser.id).get();
+      if (myDoc.exists && (myDoc.data()?['alreadyUsedReferral'] == true)) {
+        return 'Nota: Tu cuenta ya utilizó un código de invitación anteriormente.';
+      }
+
+      final query = await FirebaseFirestore.instance
+          .collection('users')
+          .where('referralCode', isEqualTo: code)
+          .limit(1)
+          .get();
+
+      if (query.docs.isEmpty) {
+        return 'Código de referido no encontrado (tu PIN sí fue aplicado).';
+      }
+
+      final inviterDoc = query.docs.first;
+      if (inviterDoc.id == currentUser.id) {
+        return 'No puedes usar tu propio código de invitación.';
+      }
+
+      final inviterData = inviterDoc.data();
+      DateTime baseExp = DateTime.now();
+      if (inviterData['expirationDate'] != null) {
+        final parsed = DateTime.tryParse(inviterData['expirationDate'].toString());
+        if (parsed != null && parsed.isAfter(DateTime.now())) {
+          baseExp = parsed;
+        }
+      }
+
+      final newInviterExp = baseExp.add(const Duration(days: 15));
+      final prevCount = (inviterData['referralsCount'] is int) ? inviterData['referralsCount'] as int : 0;
+
+      // Sumamos +15 días automáticamente al embajador y marcamos al invitado para evitar abusos
+      await FirebaseFirestore.instance.collection('users').doc(inviterDoc.id).update({
+        'expirationDate': newInviterExp.toIso8601String(),
+        'isActive': true,
+        'referralsCount': prevCount + 1,
+      });
+
+      await FirebaseFirestore.instance.collection('users').doc(currentUser.id).set({
+        'alreadyUsedReferral': true,
+        'referredByCode': code,
+        'referredByUser': inviterData['username'] ?? '',
+      }, SetOptions(merge: true));
+
+      return '🎁 ¡ Tu amigo "${inviterData['username'] ?? 'Embajador'}" acaba de recibir +15 DÍAS GRATIS automáticamente!';
+    } catch (e) {
+      debugPrint('Error procesando recompensa automática: $e');
+      return null;
+    }
   }
 
   void _openActiveAlarmsManagerModal() {
@@ -786,23 +1392,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
                 const Divider(color: Colors.white12, height: 24),
-
                 if (alarmsList.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 30),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 30),
                     child: Center(
                       child: Column(
-                        children: const [
+                        children: [
                           Icon(Icons.notifications_off_outlined, color: Colors.white24, size: 48),
                           SizedBox(height: 12),
                           Text(
                             'No tienes recordatorios activos',
                             style: TextStyle(color: Colors.white70, fontSize: 14),
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            'Entra a la Guía EPG de un canal para programar tus programas.',
-                            style: TextStyle(color: Colors.white38, fontSize: 11),
                           ),
                         ],
                       ),
@@ -830,15 +1430,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           child: Row(
                             children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: const Color(0x227B2CBF),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: const Color(0xFF9D4EDD)),
-                                ),
-                                child: const Icon(Icons.alarm, color: Color(0xFFFFB703), size: 18),
-                              ),
+                              const Icon(Icons.alarm, color: Color(0xFFFFB703), size: 20),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
@@ -848,56 +1440,22 @@ class _HomeScreenState extends State<HomeScreen> {
                                       programTitle,
                                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                                     ),
-                                    const SizedBox(height: 2),
-                                    Row(
-                                      children: [
-                                        Text(
-                                          channelName,
-                                          style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11, fontWeight: FontWeight.bold),
-                                        ),
-                                        if (programTime.isNotEmpty) ...[
-                                          const Text('  •  ', style: TextStyle(color: Colors.white30, fontSize: 11)),
-                                          Text(
-                                            programTime,
-                                            style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
-                                          ),
-                                        ],
-                                      ],
+                                    Text(
+                                      '$channelName ${programTime.isNotEmpty ? "• $programTime" : ""}',
+                                      style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
                                     ),
                                   ],
                                 ),
                               ),
-                              ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.redAccent.withOpacity(0.2),
-                                  foregroundColor: Colors.redAccent,
-                                  side: const BorderSide(color: Colors.redAccent, width: 1),
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                                icon: const Icon(Icons.alarm_off, size: 16),
-                                label: const Text('Quitar', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                                 onPressed: () async {
                                   final int notificationId = alarmId.hashCode.abs() % 2147483647;
                                   await NotificationService.cancelAlarm(notificationId);
-                                  
-                                  setState(() {
-                                    _activeAlarms.remove(alarmId);
-                                  });
+                                  setState(() => _activeAlarms.remove(alarmId));
                                   setModalState(() {});
-
                                   final prefs = await SharedPreferences.getInstance();
                                   await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
-
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('🔕 Alarma cancelada para "$programTitle"'),
-                                        backgroundColor: Colors.redAccent,
-                                        duration: const Duration(seconds: 2),
-                                      ),
-                                    );
-                                  }
                                 },
                               ),
                             ],
@@ -913,6 +1471,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
   void _openEpgScheduleModal(ChannelModel channel) {
     final schedule = EpgService.getUpcomingPrograms(channel.name, channel.groupCategory);
 
@@ -946,18 +1505,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             channel.name,
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
                           ),
-                          Row(
-                            children: [
-                              const Text(
-                                'Guía EPG en Tiempo Real',
-                                style: TextStyle(color: Color(0xFFC77DFF), fontSize: 11),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '🕒 $_currentTime',
-                                style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
-                              ),
-                            ],
+                          Text(
+                            'Guía EPG en Tiempo Real • 🕒 $_currentTime',
+                            style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
@@ -970,51 +1520,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
               const Divider(color: Colors.white12, height: 20),
-              
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Programas y Recordatorios:',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  InkWell(
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      _openActiveAlarmsManagerModal();
-                    },
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1E293B),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: _activeAlarms.isNotEmpty ? const Color(0xFFFFB703) : Colors.white10,
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _activeAlarms.isNotEmpty ? Icons.notifications_active : Icons.notifications_none,
-                            color: const Color(0xFFFFB703),
-                            size: 14,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${_activeAlarms.length} activas (Ver/Apagar)',
-                            style: const TextStyle(color: Color(0xFFFFB703), fontSize: 11, fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-
               Flexible(
                 child: ListView.builder(
                   shrinkWrap: true,
@@ -1061,83 +1566,39 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  prog.title,
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                                ),
-                                Text(
-                                  prog.timeFormatted,
-                                  style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
-                                ),
+                                Text(prog.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                Text(prog.timeFormatted, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11)),
                               ],
                             ),
                           ),
                           IconButton(
                             icon: Icon(
-                              isNow
-                                  ? Icons.play_circle
-                                  : hasAlarm
-                                      ? Icons.alarm_on
-                                      : Icons.alarm_add,
-                              color: isNow
-                                  ? const Color(0xFF00E5FF)
-                                  : hasAlarm
-                                      ? const Color(0xFFFFB703)
-                                      : Colors.white38,
+                              isNow ? Icons.play_circle : (hasAlarm ? Icons.alarm_on : Icons.alarm_add),
+                              color: isNow ? const Color(0xFF00E5FF) : (hasAlarm ? const Color(0xFFFFB703) : Colors.white38),
                             ),
-                            tooltip: isNow ? 'En emisión' : hasAlarm ? 'Desactivar Alarma' : 'Activar Alarma',
                             onPressed: () async {
-                              if (!isNow) {
-                                final prefs = await SharedPreferences.getInstance();
-                                final startTimeStr = prog.timeFormatted.split(' - ')[0];
-                                final targetTime = _parseProgramStartTime(startTimeStr);
-                                final int notificationId = alarmId.hashCode.abs() % 2147483647;
+                              if (isNow) return;
+                              final prefs = await SharedPreferences.getInstance();
+                              final startTimeStr = prog.timeFormatted.split(' - ')[0];
+                              final targetTime = _parseProgramStartTime(startTimeStr);
+                              final int notificationId = alarmId.hashCode.abs() % 2147483647;
 
-                                if (hasAlarm) {
-                                  await NotificationService.cancelAlarm(notificationId);
-                                  setState(() {
-                                    _activeAlarms.remove(alarmId);
-                                  });
-                                  setModalState(() {});
-                                  await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
-
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('🔕 Alarma cancelada para "${prog.title}"'),
-                                        backgroundColor: Colors.redAccent,
-                                      ),
-                                    );
-                                  }
-                                } else {
-                                  if (targetTime != null) {
-                                    await NotificationService.scheduleAlarm(
-                                      id: notificationId,
-                                      title: '⏰ ¡Comienza ${prog.title}!',
-                                      body: 'En sintonía por ${channel.name}. Toca para abrir AmeycarTV.',
-                                      scheduledDate: targetTime,
-                                    );
-                                  }
-
-                                  setState(() {
-                                    _activeAlarms.add(alarmId);
-                                  });
-                                  setModalState(() {});
-                                  await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
-
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          '⏰ ¡Alarma activada para "${prog.title}" a las $startTimeStr!\nSonará incluso con la app cerrada.',
-                                        ),
-                                        backgroundColor: const Color(0xFF7B2CBF),
-                                        duration: const Duration(seconds: 3),
-                                      ),
-                                    );
-                                  }
+                              if (hasAlarm) {
+                                await NotificationService.cancelAlarm(notificationId);
+                                setState(() => _activeAlarms.remove(alarmId));
+                              } else {
+                                if (targetTime != null) {
+                                  await NotificationService.scheduleAlarm(
+                                    id: notificationId,
+                                    title: '⏰ ¡Comienza ${prog.title}!',
+                                    body: 'En sintonía por ${channel.name}.',
+                                    scheduledDate: targetTime,
+                                  );
                                 }
+                                setState(() => _activeAlarms.add(alarmId));
                               }
+                              setModalState(() {});
+                              await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
                             },
                           ),
                         ],
@@ -1153,254 +1614,276 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ===========================================================================
+  // GESTOR MULTI-LISTA M3U (HASTA 5 LISTAS POR PERFIL - SIN PALABRA TIVIMATE)
+  // ===========================================================================
   void _openM3uDialog() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedM3uUrl = prefs.getString('saved_m3u_url') ?? '';
     final savedCustomEpgUrl = await EpgService.getCustomEpgUrl();
-    final autoDetectedEpgUrl = await EpgService.getAutoDetectedEpgUrl();
     bool usePublicSatellite = await EpgService.getUsePublicSatelliteConnector();
 
-    final m3uController = TextEditingController(text: savedM3uUrl);
+    final listNameCtrl = TextEditingController();
+    final m3uController = TextEditingController();
     final epgController = TextEditingController(text: savedCustomEpgUrl);
 
     if (!mounted) return;
 
-    showDialog(
+    showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0F172A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (ctx) => StatefulBuilder(
-        builder: (dialogCtx, setDialogState) => BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-          child: AlertDialog(
-            backgroundColor: const Color(0xFF0F172A).withOpacity(0.96),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: const BorderSide(color: Color(0xFF7B2CBF), width: 1.5),
-            ),
-            title: const Row(
+        builder: (modalCtx, setModalState) => Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.settings_input_antenna, color: Color(0xFF00E5FF)),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Gestor TiviMate: Lista M3U y Guía EPG',
-                    style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '1. Enlace de Lista de Canales (M3U / M3U8):',
-                    style: TextStyle(color: Color(0xFFC77DFF), fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: m3uController,
-                    style: const TextStyle(color: Colors.white, fontSize: 12.5),
-                    decoration: InputDecoration(
-                      hintText: 'https://servidor.com/lista.m3u',
-                      hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
-                      filled: true,
-                      fillColor: const Color(0xFF1E293B),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-
-                  const Text(
-                    '2. Enlace Guía EPG Privada (XMLTV .xml o .xml.gz - Opcional):',
-                    style: TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Si tienes un enlace EPG privado pégalo aquí. Si lo dejas vacío, se usa el auto-detectado en el M3U o el Satélite Público.',
-                    style: TextStyle(color: Colors.white60, fontSize: 10.5),
-                  ),
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: epgController,
-                    style: const TextStyle(color: Colors.white, fontSize: 12.5),
-                    decoration: InputDecoration(
-                      hintText: 'https://proveedor.com/xmltv.xml.gz',
-                      hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
-                      filled: true,
-                      fillColor: const Color(0xFF1E293B),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF131B2E),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.white12),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
                       children: [
-                        Row(
+                        const Icon(Icons.playlist_play_rounded, color: Color(0xFF00E5FF), size: 28),
+                        const SizedBox(width: 10),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Icon(Icons.radar, color: Color(0xFFFFB703), size: 15),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                autoDetectedEpgUrl.isNotEmpty
-                                    ? 'Auto-detección M3U: $autoDetectedEpgUrl'
-                                    : 'Auto-detección M3U: Sin etiqueta url-tvg en la lista actual',
-                                style: const TextStyle(color: Colors.white70, fontSize: 10.5),
-                              ),
+                            const Text(
+                              'Gestor AMEYCAR: Listas M3U & EPG',
+                              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            const Icon(Icons.memory, color: Color(0xFF00E5FF), size: 15),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                '${EpgService.epgStatusMessage} (${EpgService.cachedXmlTvChannelsCount} llaves en caché)',
-                                style: const TextStyle(
-                                  color: Color(0xFF00E5FF),
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                            Text(
+                              'Listas guardadas en este perfil: ${_savedPlaylists.length} / 5',
+                              style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11.5, fontWeight: FontWeight.bold),
                             ),
                           ],
                         ),
                       ],
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white54),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                if (_savedPlaylists.isNotEmpty) ...[
+                  const Text(
+                    'Tus Listas Guardadas (Toca una para activarla):',
+                    style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
-
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    activeColor: const Color(0xFF00E5FF),
-                    title: const Text(
-                      'Conector Satelital Público por Defecto',
-                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: const Text(
-                      'Descarga guías XMLTV oficiales + API ESPN en vivo en caché RAM y Disco',
-                      style: TextStyle(color: Colors.white54, fontSize: 10),
-                    ),
-                    value: usePublicSatellite,
-                    onChanged: (val) async {
-                      setDialogState(() => usePublicSatellite = val);
-                      await EpgService.setUsePublicSatelliteConnector(val);
-                    },
-                  ),
-
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF00E5FF),
-                            side: const BorderSide(color: Color(0xFF00E5FF)),
-                          ),
-                          icon: const Icon(Icons.sync, size: 16),
-                          label: const Text('Sincronizar EPG', style: TextStyle(fontSize: 11)),
+                  ..._savedPlaylists.map((pl) {
+                    final bool isActive = pl['isActive'] == true;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: isActive ? const Color(0xFF7B2CBF).withOpacity(0.25) : const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isActive ? const Color(0xFF00E5FF) : Colors.white10,
+                          width: isActive ? 1.5 : 1,
+                        ),
+                      ),
+                      child: ListTile(
+                        dense: true,
+                        leading: Icon(
+                          isActive ? Icons.radio_button_checked : Icons.radio_button_off,
+                          color: isActive ? const Color(0xFF00E5FF) : Colors.white38,
+                        ),
+                        title: Text(
+                          pl['name'] ?? 'Lista M3U',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        subtitle: Text(
+                          pl['url'] ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white54, fontSize: 10.5),
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 19),
                           onPressed: () async {
-                            await EpgService.setCustomEpgUrl(
-                              epgController.text.trim(),
-                              syncImmediately: false,
-                            );
-                            setDialogState(() {});
-                            await EpgService.syncAllEpgSources(forceNetwork: true);
-                            await EpgService.refreshRealTimeSportsEpg();
-                            if (mounted) setState(() {});
-                            setDialogState(() {});
+                            _savedPlaylists.removeWhere((item) => item['id'] == pl['id']);
+                            if (_savedPlaylists.isNotEmpty && !_savedPlaylists.any((x) => x['isActive'] == true)) {
+                              _savedPlaylists.first['isActive'] = true;
+                            }
+                            await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+                            await prefs.remove('m3u_cache_${pl['id']}');
+                            setModalState(() {});
+                            _loadSavedChannels();
                           },
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.orangeAccent,
-                          side: const BorderSide(color: Colors.orangeAccent),
-                        ),
-                        icon: const Icon(Icons.delete_sweep, size: 16),
-                        label: const Text('Limpiar Caché', style: TextStyle(fontSize: 11)),
-                        onPressed: () async {
-                          await EpgService.clearEpgCache();
-                          if (mounted) setState(() {});
-                          setDialogState(() {});
+                        onTap: () async {
+                          for (var item in _savedPlaylists) {
+                            item['isActive'] = (item['id'] == pl['id']);
+                          }
+                          await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          _downloadAndSanitizeM3u(pl['url'], playlistId: pl['id'], playlistName: pl['name']);
                         },
                       ),
-                    ],
-                  ),
+                    );
+                  }),
+                  const Divider(color: Colors.white12, height: 22),
                 ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
-                onPressed: () async {
-                  final url = m3uController.text.trim();
-                  final customEpg = epgController.text.trim();
 
-                  await EpgService.setCustomEpgUrl(customEpg, syncImmediately: true);
+                if (_savedPlaylists.length < 5) ...[
+                  Text(
+                    'Agregar Nueva Lista (${_savedPlaylists.length + 1} de 5):',
+                    style: const TextStyle(color: Color(0xFF00E676), fontSize: 12.5, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: listNameCtrl,
+                    style: const TextStyle(color: Colors.white, fontSize: 12.5),
+                    decoration: InputDecoration(
+                      labelText: 'Nombre de la Lista (Ej: Deportes Premium, Cine 4K)',
+                      labelStyle: const TextStyle(color: Colors.white60, fontSize: 11.5),
+                      filled: true,
+                      fillColor: const Color(0xFF1E293B),
+                      isDense: true,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: m3uController,
+                    style: const TextStyle(color: Colors.white, fontSize: 12.5),
+                    decoration: InputDecoration(
+                      labelText: 'Enlace M3U / M3U8 (http://...)',
+                      labelStyle: const TextStyle(color: Colors.white60, fontSize: 11.5),
+                      filled: true,
+                      fillColor: const Color(0xFF1E293B),
+                      isDense: true,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ] else
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text(
+                      'Has alcanzado el máximo de 5 listas guardadas. Elimina alguna arriba si deseas agregar otra.',
+                      style: TextStyle(color: Colors.amber, fontSize: 11.5),
+                    ),
+                  ),
 
-                  if (url.isNotEmpty) {
-                    await prefs.setString('saved_m3u_url', url);
-                    if (ctx.mounted) Navigator.pop(ctx);
-                    _downloadAndSanitizeM3u(url);
-                  } else {
-                    if (ctx.mounted) Navigator.pop(ctx);
-                    if (mounted) {
-                      setState(() {});
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('¡Guía EPG actualizada y sincronizada!'),
-                          backgroundColor: Color(0xFF7B2CBF),
-                        ),
-                      );
-                    }
-                  }
-                },
-                child: const Text(
-                  'Cargar y Sanitizar',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                const SizedBox(height: 14),
+                const Text(
+                  'Guía EPG XMLTV (Opcional):',
+                  style: TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold),
                 ),
-              ),
-            ],
+                const SizedBox(height: 6),
+                TextField(
+                  controller: epgController,
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                  decoration: InputDecoration(
+                    hintText: 'https://proveedor.com/xmltv.xml.gz',
+                    hintStyle: const TextStyle(color: Colors.white30, fontSize: 11.5),
+                    filled: true,
+                    fillColor: const Color(0xFF1E293B),
+                    isDense: true,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  activeColor: const Color(0xFF00E5FF),
+                  title: const Text(
+                    'Conector Satelital EPG Automático',
+                    style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  value: usePublicSatellite,
+                  onChanged: (val) async {
+                    setModalState(() => usePublicSatellite = val);
+                    await EpgService.setUsePublicSatelliteConnector(val);
+                  },
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF00E5FF),
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    icon: const Icon(Icons.cloud_download),
+                    label: const Text('GUARDAR Y CARGAR LISTA', style: TextStyle(fontWeight: FontWeight.w900)),
+                    onPressed: () async {
+                      final url = m3uController.text.trim();
+                      final name = listNameCtrl.text.trim().isEmpty
+                          ? 'Lista ${_savedPlaylists.length + 1}'
+                          : listNameCtrl.text.trim();
+                      final customEpg = epgController.text.trim();
+
+                      await EpgService.setCustomEpgUrl(customEpg, syncImmediately: true);
+
+                      if (url.isNotEmpty && _savedPlaylists.length < 5) {
+                        final newId = 'pl_${DateTime.now().millisecondsSinceEpoch}';
+                        for (var item in _savedPlaylists) {
+                          item['isActive'] = false;
+                        }
+                        _savedPlaylists.add({
+                          'id': newId,
+                          'name': name,
+                          'url': url,
+                          'isActive': true,
+                        });
+                        await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+                        await prefs.setString('saved_m3u_url', url);
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        _downloadAndSanitizeM3u(url, playlistId: newId, playlistName: name);
+                      } else {
+                        if (ctx.mounted) Navigator.pop(ctx);
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  void _downloadAndSanitizeM3u(String url) async {
+  void _downloadAndSanitizeM3u(String url, {String? playlistId, String? playlistName}) async {
     setState(() => _isVideoLoading = true);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Descargando lista M3U y auto-detectando guía EPG...')),
+      SnackBar(content: Text('Sincronizando ${playlistName ?? "lista M3U"} y guía EPG...')),
     );
 
     try {
       final res = await http.get(Uri.parse(url));
       if (res.statusCode == 200) {
-        final detectedEpg = await EpgService.extractAndSaveEpgUrlFromM3u(res.body);
+        await EpgService.extractAndSaveEpgUrlFromM3u(res.body);
         final parsed = M3USanitizerService.parseAndSanitize(res.body);
         if (parsed.isNotEmpty) {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('saved_m3u_content', res.body);
           await prefs.setString('saved_m3u_url', url);
+          if (playlistId != null) {
+            await prefs.setString('m3u_cache_$playlistId', res.body);
+          }
           await prefs.setInt('last_played_channel_index', 0);
 
           setState(() {
@@ -1411,24 +1894,24 @@ class _HomeScreenState extends State<HomeScreen> {
           });
           _initializeVideo(_channels[0].streamUrl);
 
-          final epgSuffix = detectedEpg != null
-              ? ' + EPG M3U auto-detectado'
-              : ' + EPG Satelital activo';
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('¡${parsed.length} elementos sanitizados con éxito$epgSuffix!'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('¡${parsed.length} canales activados en "${playlistName ?? "Lista"}"!'),
+                backgroundColor: const Color(0xFF00C853),
+              ),
+            );
+          }
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al cargar lista: $e'), backgroundColor: Colors.red),
+        );
+      }
     } finally {
-      setState(() => _isVideoLoading = false);
+      if (mounted) setState(() => _isVideoLoading = false);
     }
   }
 
@@ -1455,6 +1938,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // MODO VENTANA FLOTANTE NATIVA (PiP): Solo video limpio redimensionable al 100%
+    if (_isInPipMode) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: (_videoPlayerController != null && _videoPlayerController!.value.isInitialized)
+              ? AspectRatio(
+                  aspectRatio: _videoPlayerController!.value.aspectRatio,
+                  child: VideoPlayer(_videoPlayerController!),
+                )
+              : const CircularProgressIndicator(color: Color(0xFF00E5FF)),
+        ),
+      );
+    }
+
     return PopScope(
       canPop: !_isFullScreenMode,
       onPopInvokedWithResult: (didPop, result) {
@@ -1504,7 +2002,6 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           _buildTopGlassBar(activeChannel),
           _buildSectionTabs(),
-
           if (_selectedSection == 'En Vivo') ...[
             _buildVideoPlayerSection(activeChannel),
             _buildLiveEpgCard(activeChannel),
@@ -1552,13 +2049,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return Row(
       children: [
         Container(
-          width: 190,
+          width: 195,
           decoration: BoxDecoration(
             color: const Color(0xFF0F172A).withOpacity(0.85),
             border: const Border(right: BorderSide(color: Color(0x337B2CBF))),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: ListView(
             children: [
               Padding(
                 padding: const EdgeInsets.only(left: 16, top: 20, bottom: 12),
@@ -1584,70 +2080,24 @@ class _HomeScreenState extends State<HomeScreen> {
               _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
               _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
               _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
-              _buildSideMenuItem(Icons.calendar_month, 'Guía EPG', () {
-                if (activeChannel != null) {
-                  _openEpgScheduleModal(activeChannel);
-                } else if (_channels.isNotEmpty) {
-                  _openEpgScheduleModal(_channels.first);
-                }
-              }),
-              _buildSideMenuItem(
-                Icons.alarm,
-                'Alarmas (${_activeAlarms.length})',
-                _openActiveAlarmsManagerModal,
-              ),
+              _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
+              _buildSideMenuItem(Icons.forum_outlined, 'Chat / Emojis Vivo', () => setState(() => _showLiveChat = !_showLiveChat)),
+              _buildSideMenuItem(Icons.playlist_add, 'Mis Listas (${_savedPlaylists.length}/5)', _openM3uDialog),
               const Divider(color: Colors.white12),
-              _buildSideMenuItem(Icons.search, 'Buscar', () => setState(() => _isSearching = !_isSearching)),
-              _buildSideMenuItem(Icons.mic, 'Asistente Alexa', _startVoiceSearch),
-              _buildSideMenuItem(Icons.playlist_add, 'Listas M3U', _openM3uDialog),
-
-              // ACCESO A PERFILES FAMILIARES (DISNEY+) EN DRAWER
-              if (AuthService.currentUser?.isPartOfFamily == true)
-                _buildSideMenuItem(Icons.account_circle, 'Cambiar Perfil', () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ProfileSelectorScreen(
-                        onLogout: widget.onLogout,
-                        onProfileSelected: () {
-                          Navigator.pop(context);
-                          setState(() {});
-                        },
-                      ),
-                    ),
-                  );
-                }),
-
-              // ACCESO A GRUPO FAMILIAR (5) EN DRAWER
-              if (AuthService.isFamilyAdmin)
-                _buildSideMenuItem(Icons.family_restroom, 'Mi Familia (5)', () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => FamilyPanelScreen(onLogout: widget.onLogout),
-                    ),
-                  ).then((_) => setState(() {}));
-                }),
-
+              _buildSideMenuItem(Icons.confirmation_number_outlined, 'Renovar / Pagos', _showRenewSubscriptionModal),
+              _buildSideMenuItem(Icons.card_giftcard, 'Gana +15 Días', _showReferralClubModal),
+              _buildSideMenuItem(Icons.headset_mic, 'Soporte / CEO', _openSupportMenu),
+              _buildSideMenuItem(Icons.settings, 'Configuración', _showSettingsMenu),
               if (AuthService.isAdmin)
                 _buildSideMenuItem(Icons.admin_panel_settings, 'Panel Admin VIP', () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(
-                      builder: (_) => const AdminPanelScreen(),
-                    ),
-                  ).then((_) {
-                    if (AuthService.currentUser == null) {
-                      widget.onLogout?.call();
-                    }
-                  });
+                    MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
+                  );
                 }),
-              _buildSideMenuItem(Icons.confirmation_number_outlined, 'Renovar / PIN', _showRenewSubscriptionModal),
-              _buildSideMenuItem(Icons.verified_user, 'Mi Cuenta VIP', _showAccountProfileModal),
             ],
           ),
         ),
-
         if (_selectedSection == 'En Vivo') ...[
           Expanded(
             flex: 3,
@@ -1720,7 +2170,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ? _buildActiveSearchBar()
           : Row(
               children: [
-                // 1. TÍTULO Y BADGE FIJOS / ESTÁTICOS A LA IZQUIERDA
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1748,10 +2197,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-
                 const SizedBox(width: 6),
-
-                // 2. ICONOS DE ACCIONES DESLIZABLES HORIZONTALMENTE (SLIDER TÁCTIL Y FLUIDO)
                 Expanded(
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
@@ -1759,7 +2205,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // SI ES ADMINISTRADOR: BOTÓN DESTACADO ORO "PANEL ADMIN"
                         if (AuthService.isAdmin) ...[
                           Material(
                             color: const Color(0xFFFFD600),
@@ -1769,13 +2214,9 @@ class _HomeScreenState extends State<HomeScreen> {
                               onTap: () {
                                 Navigator.push(
                                   context,
-                                  MaterialPageRoute(
-                                    builder: (_) => const AdminPanelScreen(),
-                                  ),
+                                  MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
                                 ).then((_) {
-                                  if (AuthService.currentUser == null) {
-                                    widget.onLogout?.call();
-                                  }
+                                  if (AuthService.currentUser == null) widget.onLogout?.call();
                                 });
                               },
                               child: const Padding(
@@ -1786,13 +2227,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     Icon(Icons.shield, color: Colors.black, size: 14),
                                     SizedBox(width: 4),
                                     Text(
-                                      'PANEL ADMIN',
-                                      style: TextStyle(
-                                        color: Colors.black,
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 0.5,
-                                      ),
+                                      'ADMIN',
+                                      style: TextStyle(color: Colors.black, fontSize: 10.5, fontWeight: FontWeight.w900),
                                     ),
                                   ],
                                 ),
@@ -1802,7 +2238,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 6),
                         ],
 
-                        // BOTÓN PERFILES FAMILIARES ESTILO DISNEY+
                         if (AuthService.currentUser?.isPartOfFamily == true) ...[
                           Material(
                             color: const Color(0xFF00E5FF),
@@ -1817,7 +2252,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       onLogout: widget.onLogout,
                                       onProfileSelected: () {
                                         Navigator.pop(context);
-                                        setState(() {});
+                                        _loadSavedChannels();
                                       },
                                     ),
                                   ),
@@ -1831,13 +2266,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     const Icon(Icons.account_circle, color: Colors.black, size: 14),
                                     const SizedBox(width: 4),
                                     Text(
-                                      AuthService.currentActiveProfile?.deviceName ?? 'PERFILES',
-                                      style: const TextStyle(
-                                        color: Colors.black,
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 0.5,
-                                      ),
+                                      AuthService.currentActiveProfile?.deviceName ?? 'PERFIL',
+                                      style: const TextStyle(color: Colors.black, fontSize: 10.5, fontWeight: FontWeight.w900),
                                     ),
                                   ],
                                 ),
@@ -1847,7 +2277,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 6),
                         ],
 
-                        // BOTÓN MORADO VIOLETA "MI FAMILIA" (SI ES ADMIN DE GRUPO FAMILIAR)
                         if (AuthService.isFamilyAdmin) ...[
                           Material(
                             color: const Color(0xFFC77DFF),
@@ -1857,9 +2286,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               onTap: () {
                                 Navigator.push(
                                   context,
-                                  MaterialPageRoute(
-                                    builder: (_) => FamilyPanelScreen(onLogout: widget.onLogout),
-                                  ),
+                                  MaterialPageRoute(builder: (_) => FamilyPanelScreen(onLogout: widget.onLogout)),
                                 ).then((_) => setState(() {}));
                               },
                               child: const Padding(
@@ -1870,13 +2297,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     Icon(Icons.family_restroom, color: Colors.black, size: 14),
                                     SizedBox(width: 4),
                                     Text(
-                                      'MI FAMILIA (5)',
-                                      style: TextStyle(
-                                        color: Colors.black,
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 0.5,
-                                      ),
+                                      'FAMILIA',
+                                      style: TextStyle(color: Colors.black, fontSize: 10.5, fontWeight: FontWeight.w900),
                                     ),
                                   ],
                                 ),
@@ -1886,7 +2308,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 6),
                         ],
 
-                        // BOTÓN RENOVAR / PIN 24/7
+                        // BOTÓN VERDE RENOVAR (Con Panel de Pagos real para Individuales y Jefe)
                         Material(
                           color: const Color(0xFF00E676),
                           borderRadius: BorderRadius.circular(16),
@@ -1902,12 +2324,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   SizedBox(width: 4),
                                   Text(
                                     'RENOVAR',
-                                    style: TextStyle(
-                                      color: Colors.black,
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: 0.5,
-                                    ),
+                                    style: TextStyle(color: Colors.black, fontSize: 10.5, fontWeight: FontWeight.w900),
                                   ),
                                 ],
                               ),
@@ -1916,89 +2333,69 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(width: 6),
 
-                        // SUBIR / CARGAR LISTAS M3U
+                        // BOTÓN VENTANA FLOTANTE PiP DIRECTO EN BARRA
+                        _buildTopBarActionItem(
+                          icon: Icons.picture_in_picture_alt_rounded,
+                          color: const Color(0xFF00E5FF),
+                          tooltip: 'Ventana Flotante (PiP)',
+                          onPressed: _enterNativePiP,
+                        ),
+
+                        // BOTÓN ESTADIO VIRTUAL (CHAT & EMOJIS EN VIVO)
+                        _buildTopBarActionItem(
+                          icon: _showLiveChat ? Icons.forum : Icons.forum_outlined,
+                          color: _showLiveChat ? const Color(0xFFFFD600) : Colors.white70,
+                          tooltip: 'Chat y Emojis en Vivo',
+                          onPressed: () => setState(() => _showLiveChat = !_showLiveChat),
+                        ),
+
+                        // GESTOR DE 5 LISTAS M3U
                         _buildTopBarActionItem(
                           icon: Icons.playlist_add,
                           color: const Color(0xFF00E5FF),
-                          tooltip: 'Cargar Lista M3U / Guía EPG',
+                          tooltip: 'Gestor de Listas M3U (Hasta 5)',
                           onPressed: _openM3uDialog,
                         ),
 
-                        const SizedBox(width: 4),
-
-                        // RELOJ DIGITAL
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1E293B),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0x3300E5FF)),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.access_time, color: Color(0xFF00E5FF), size: 11),
-                              const SizedBox(width: 4),
-                              Text(
-                                _currentTime.isNotEmpty ? _currentTime : '--:--',
-                                style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 10.5, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        const SizedBox(width: 4),
-
-                        // GUÍA EPG & ALARMAS
-                        _buildTopBarActionItem(
-                          icon: Icons.calendar_month,
-                          color: Colors.white,
-                          badgeCount: _activeAlarms.length,
-                          tooltip: _activeAlarms.isNotEmpty
-                              ? '${_activeAlarms.length} alarmas activas • Toca para ver'
-                              : 'Guía EPG y Horarios',
-                          onPressed: () {
-                            if (activeChannel != null) {
-                              _openEpgScheduleModal(activeChannel);
-                            } else if (_channels.isNotEmpty) {
-                              _openEpgScheduleModal(_channels.first);
-                            }
-                          },
-                        ),
-
-                        const SizedBox(width: 4),
-
-                        // BUSCADOR DE CANALES
+                        // BUSCADOR
                         _buildTopBarActionItem(
                           icon: Icons.search,
                           color: const Color(0xFFC77DFF),
-                          tooltip: 'Buscar en $_selectedSection',
+                          tooltip: 'Buscar',
                           onPressed: () => setState(() => _isSearching = true),
                         ),
 
-                        const SizedBox(width: 4),
-
-                        // ASISTENTE DE VOZ ALEXA
+                        // ASISTENTE VOZ ALEXA
                         _buildTopBarActionItem(
                           icon: Icons.mic,
                           color: const Color(0xFF00E5FF),
                           isGlowing: true,
-                          tooltip: 'Asistente Alexa de Voz',
+                          tooltip: 'Asistente de Voz',
                           onPressed: _startVoiceSearch,
                         ),
 
-                        const SizedBox(width: 4),
-
-                        // MI CUENTA & DISPOSITIVO VIP
+                        // SOPORTE DIRECTO / CEO
                         _buildTopBarActionItem(
-                          icon: Icons.verified_user,
+                          icon: Icons.headset_mic,
                           color: const Color(0xFF00E676),
-                          tooltip: 'Mi Cuenta VIP / Estado Hardware',
-                          onPressed: _showAccountProfileModal,
+                          tooltip: 'Soporte y Contacto CEO',
+                          onPressed: _openSupportMenu,
                         ),
                       ],
                     ),
                   ),
+                ),
+
+                const SizedBox(width: 4),
+
+                // ENGRANAJE ⚙️ SIEMPRE VISIBLE A LA DERECHA (FIJO, NUNCA SE ESCONDE)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  tooltip: 'Configuración y Ajustes',
+                  icon: const Icon(Icons.settings, color: Colors.white, size: 20),
+                  onPressed: _showSettingsMenu,
                 ),
               ],
             ),
@@ -2027,12 +2424,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: color.withOpacity(0.5),
-                          blurRadius: 6,
-                        ),
-                      ],
+                      boxShadow: [BoxShadow(color: color.withOpacity(0.5), blurRadius: 6)],
                     ),
                     child: Icon(icon, color: color, size: 17),
                   )
@@ -2052,73 +2444,305 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ===========================================================================
+  // PANEL DE PAGOS COMPLETO PARA INDIVIDUALES Y JEFES + AUTO-REFERIDO +15 DÍAS
+  // ===========================================================================
   void _showRenewSubscriptionModal() {
     final pinCtrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF131A29),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: const BorderSide(color: Color(0xFF00E676), width: 1.5),
-        ),
-        title: const Row(
-          children: [
-            Icon(Icons.confirmation_number_outlined, color: Color(0xFF00E676)),
-            SizedBox(width: 8),
-            Text('Renovar Suscripción 24/7', style: TextStyle(color: Colors.white, fontSize: 16)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Ingresa el PIN de activación prepago recibido por WhatsApp o Mercado Pago para extender tu servicio de inmediato:',
-              style: TextStyle(color: Colors.white70, fontSize: 13),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: pinCtrl,
-              textCapitalization: TextCapitalization.characters,
-              style: const TextStyle(color: Color(0xFF00E676), fontSize: 18, letterSpacing: 2, fontWeight: FontWeight.bold),
-              decoration: InputDecoration(
-                hintText: 'AMEY-30D-XXXX',
-                hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 1),
-                filled: true,
-                fillColor: Colors.black38,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00E676),
-              foregroundColor: Colors.black,
-            ),
-            onPressed: () async {
-              final code = pinCtrl.text.trim();
-              if (code.isEmpty) return;
-              Navigator.pop(ctx);
+    final refCtrl = TextEditingController();
+    bool isProcessing = false;
+    final bool showBanks = _canSeePaymentBanks;
+    final currentUser = AuthService.currentActiveProfile ?? AuthService.currentUser;
 
-              final res = await AuthService.redeemActivationPin(code);
-              if (mounted) {
-                setState(() {});
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    backgroundColor: res.isSuccess ? const Color(0xFF00E676) : Colors.redAccent,
-                    content: Text(res.message, style: TextStyle(color: res.isSuccess ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E1320),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Container(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.88),
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 18,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 4,
+                    decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
                   ),
-                );
-              }
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Icon(showBanks ? Icons.stars : Icons.confirmation_number, color: const Color(0xFFFFD700), size: 24),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        showBanks ? 'Renovación de Suscripción VIP' : 'Canjear PIN de Activación',
+                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  showBanks
+                      ? 'Extiende tu cuenta individual o familiar sin comisiones.'
+                      : 'Ingresa el PIN proporcionado por el titular de tu grupo familiar.',
+                  style: const TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+                const SizedBox(height: 16),
+
+                // CAJA DE CANJE DE PIN + CÓDIGO DE AMIGO AUTOMÁTICO
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF131A29),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.45), width: 1.2),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.confirmation_number, color: Color(0xFF00E5FF), size: 18),
+                          SizedBox(width: 8),
+                          Text(
+                            'Activación Automática 24/7 con PIN',
+                            style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: refCtrl,
+                        textCapitalization: TextCapitalization.characters,
+                        style: const TextStyle(color: Color(0xFFFFD600), fontSize: 12.5, fontWeight: FontWeight.bold),
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.card_giftcard, color: Color(0xFFFFD600), size: 18),
+                          hintText: '¿Te invitó un amigo? Pon su código aquí (Opcional)',
+                          hintStyle: const TextStyle(color: Colors.white38, fontSize: 11.5, fontWeight: FontWeight.normal),
+                          filled: true,
+                          fillColor: Colors.black26,
+                          isDense: true,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: pinCtrl,
+                              style: const TextStyle(color: Colors.white, letterSpacing: 1.5, fontWeight: FontWeight.bold),
+                              textCapitalization: TextCapitalization.characters,
+                              decoration: InputDecoration(
+                                hintText: 'PIN: AMEY-30D-XXXX',
+                                hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 0),
+                                filled: true,
+                                fillColor: Colors.black38,
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: isProcessing
+                                ? null
+                                : () async {
+                                    final code = pinCtrl.text.trim();
+                                    if (code.isEmpty) return;
+                                    setModalState(() => isProcessing = true);
+                                    final res = await AuthService.redeemActivationPin(code);
+
+                                    String? bonusMsg;
+                                    if (res.isSuccess && refCtrl.text.trim().isNotEmpty) {
+                                      bonusMsg = await _processAutomaticReferralReward(refCtrl.text.trim());
+                                    }
+
+                                    setModalState(() => isProcessing = false);
+                                    if (mounted) {
+                                      Navigator.pop(ctx);
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text(bonusMsg != null ? '${res.message}\n$bonusMsg' : res.message),
+                                          backgroundColor: res.isSuccess ? const Color(0xFF00C853) : Colors.redAccent,
+                                          duration: const Duration(seconds: 5),
+                                        ),
+                                      );
+                                      if (res.isSuccess) setState(() {});
+                                    }
+                                  },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF00E5FF),
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: const Text('Canjear', style: TextStyle(fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                if (showBanks) ...[
+                  const SizedBox(height: 18),
+                  const Row(
+                    children: [
+                      Text('🇵🇪 ', style: TextStyle(fontSize: 16)),
+                      Text('Pago Nacional (Cero Comisiones):', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  _buildPaymentTile(
+                    icon: Icons.phone_android,
+                    color: const Color(0xFF7B2CBF),
+                    title: 'Yape / Plin Oficial',
+                    subtitle: '51905823660 • Titular: AMEYCAR TV',
+                    copyText: '51905823660',
+                  ),
+                  const SizedBox(height: 8),
+                  _buildPaymentTile(
+                    icon: Icons.account_balance,
+                    color: const Color(0xFFFF7043),
+                    title: 'BCP - Cuenta Soles',
+                    subtitle: '19194759620085 • Titular: ACOSTA NN CARLOS RAFAEL',
+                    copyText: '19194759620085',
+                  ),
+                  const SizedBox(height: 18),
+                  const Row(
+                    children: [
+                      Text('🌎 ', style: TextStyle(fontSize: 16)),
+                      Text('Pago Internacional:', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  _buildPaymentTile(
+                    icon: Icons.currency_bitcoin,
+                    color: const Color(0xFFFFD700),
+                    title: 'Binance Pay (USDT - Inmediato)',
+                    subtitle: 'Pay ID: 214778098',
+                    copyText: '214778098',
+                  ),
+                  const SizedBox(height: 8),
+                  _buildPaymentTile(
+                    icon: Icons.account_balance_wallet,
+                    color: const Color(0xFF0072FF),
+                    title: 'PayPal',
+                    subtitle: 'carlos_87_21@hotmail.com',
+                    copyText: 'carlos_87_21@hotmail.com',
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E283D),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFF25D366).withOpacity(0.5), width: 1.5),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text(
+                          '¿Ya realizaste el pago? Envía tu comprobante y recibe tu PIN al instante:',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white70, fontSize: 11.5),
+                        ),
+                        const SizedBox(height: 10),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.chat, color: Colors.white, size: 16),
+                          label: const Text('Enviar Voucher por WhatsApp', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF25D366),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: () async {
+                            final refInfo = refCtrl.text.trim().isNotEmpty
+                                ? ' | Invitado con código: ${refCtrl.text.trim().toUpperCase()}'
+                                : '';
+                            final msg =
+                                '¡Hola! He realizado una transferencia hoy para renovar mi plan. Mi usuario es: ${currentUser?.username ?? "cliente"}$refInfo. Adjunto mi voucher de pago.';
+                            Clipboard.setData(ClipboardData(text: msg));
+
+                            const phoneNumber = "51905823660";
+                            final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(msg)}");
+                            try {
+                              if (await canLaunchUrl(url)) {
+                                await launchUrl(url);
+                              } else {
+                                final webUrl = Uri.parse("https://wa.me/$phoneNumber?text=${Uri.encodeComponent(msg)}");
+                                await launchUrl(webUrl, mode: LaunchMode.externalApplication);
+                              }
+                            } catch (_) {}
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPaymentTile({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required String copyText,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131A29),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: color.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy, color: Color(0xFF00E5FF), size: 18),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: copyText));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('¡Copiado: $copyText!'), duration: const Duration(seconds: 2)),
+              );
             },
-            child: const Text('Canjear PIN', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -2128,118 +2752,108 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showAccountProfileModal() async {
     final user = AuthService.currentUser;
     final hwId = await AuthService.getDeviceHardwareId();
+    final avatarIcons = [Icons.person, Icons.stars, Icons.movie, Icons.sports_soccer, Icons.rocket_launch];
     if (!mounted) return;
 
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF101726),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.verified_user, color: Color(0xFF00E676), size: 26),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Cuenta Blindada: ${user?.username ?? "Invitado"}',
-                    style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                if (user?.isVip == true)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFD600),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Text(
-                      'VIP',
-                      style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 11),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) => Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Text(
-                    'Estado: ${user?.isActive == true ? "ACTIVO" : "INACTIVO"} • Días restantes: ${user?.daysRemaining ?? 0}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Hardware ID Vinculado: $hwId',
-                    style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace'),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                if (AuthService.isAdmin) ...[
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const AdminPanelScreen(),
-                          ),
-                        ).then((_) {
-                          if (AuthService.currentUser == null) {
-                            widget.onLogout?.call();
-                          }
-                        });
-                      },
-                      icon: const Icon(Icons.admin_panel_settings, size: 18),
-                      label: const Text('Panel Admin'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFFD600),
-                        foregroundColor: Colors.black,
-                      ),
-                    ),
+                  CircleAvatar(
+                    backgroundColor: const Color(0xFF7B2CBF),
+                    child: Icon(avatarIcons[_customAvatarIdx % avatarIcons.length], color: Colors.white),
                   ),
                   const SizedBox(width: 10),
-                ],
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      _videoPlayerController?.pause();
-                      await AuthService.logout();
-                      widget.onLogout?.call();
-                    },
-                    icon: const Icon(Icons.logout, color: Color(0xFFFF5252), size: 18),
-                    label: const Text('Cerrar Sesión', style: TextStyle(color: Color(0xFFFF5252))),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFFFF5252)),
+                  Expanded(
+                    child: Text(
+                      'Perfil: ${user?.username ?? "Invitado"}',
+                      style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
                     ),
                   ),
+                  if (user?.isVip == true)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(color: const Color(0xFFFFD600), borderRadius: BorderRadius.circular(6)),
+                      child: const Text('VIP', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 11)),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              const Text('Elegir Ícono / Foto de Perfil:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: List.generate(avatarIcons.length, (i) {
+                  final sel = _customAvatarIdx == i;
+                  return GestureDetector(
+                    onTap: () async {
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setInt('custom_avatar_$_currentProfileId', i);
+                      setState(() => _customAvatarIdx = i);
+                      setModalState(() {});
+                    },
+                    child: CircleAvatar(
+                      radius: 22,
+                      backgroundColor: sel ? const Color(0xFF00E5FF) : Colors.white10,
+                      child: Icon(avatarIcons[i], color: sel ? Colors.black : Colors.white70),
+                    ),
+                  );
+                }),
+              ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white12),
                 ),
-              ],
-            ),
-          ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Estado: ${user?.isActive == true ? "ACTIVO" : "INACTIVO"} • Días restantes: ${user?.daysRemaining ?? 0}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Hardware ID Celular: $hwId',
+                      style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    _videoPlayerController?.pause();
+                    await AuthService.logout();
+                    widget.onLogout?.call();
+                  },
+                  icon: const Icon(Icons.logout, color: Color(0xFFFF5252), size: 18),
+                  label: const Text('Cerrar Sesión', style: TextStyle(color: Color(0xFFFF5252))),
+                  style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFFFF5252))),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+
   Widget _buildActiveSearchBar() {
     return Row(
       children: [
@@ -2256,9 +2870,7 @@ class _HomeScreenState extends State<HomeScreen> {
               border: InputBorder.none,
               isDense: true,
             ),
-            onChanged: (val) {
-              setState(() => _searchQuery = val.trim());
-            },
+            onChanged: (val) => setState(() => _searchQuery = val.trim()),
           ),
         ),
         IconButton(
@@ -2280,10 +2892,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildSearchInputHeader() {
     if (!_isSearching) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: _buildActiveSearchBar(),
-    );
+    return Padding(padding: const EdgeInsets.all(8.0), child: _buildActiveSearchBar());
   }
 
   Widget _buildSectionTabs() {
@@ -2306,9 +2915,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
-                border: isSelected
-                    ? const Border(bottom: BorderSide(color: Color(0xFFC77DFF), width: 2))
-                    : null,
+                border: isSelected ? const Border(bottom: BorderSide(color: Color(0xFFC77DFF), width: 2)) : null,
               ),
               child: Text(
                 section,
@@ -2338,108 +2945,39 @@ class _HomeScreenState extends State<HomeScreen> {
       height: double.infinity,
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [
-            Color(0xFF070A10),
-            Color(0xFF131B2E),
-            Color(0xFF090D16),
-          ],
+          colors: [Color(0xFF070A10), Color(0xFF131B2E), Color(0xFF090D16)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0F172A),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.45)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF00E5FF).withOpacity(0.2),
-                      blurRadius: 14,
-                    ),
-                  ],
-                ),
-                child: _buildChannelLogo(activeChannel, true),
+      child: Center(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.45)),
               ),
-              const SizedBox(width: 12),
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF00E5FF).withOpacity(0.18),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            'CH $chNum',
-                            style: const TextStyle(
-                              color: Color(0xFF00E5FF),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        const SizedBox(
-                          width: 11,
-                          height: 11,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Color(0xFF00E5FF),
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        const Text(
-                          'SINTONIZANDO...',
-                          style: TextStyle(
-                            color: Color(0xFF00E5FF),
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.8,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      activeChannel.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      currentProg.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
+              child: _buildChannelLogo(activeChannel, true),
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('CH $chNum • SINTONIZANDO...', style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 10, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 4),
+                  Text(activeChannel.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                  Text(currentProg.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                ],
               ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2450,6 +2988,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _videoPlayerController != null &&
         _videoPlayerController!.value.isInitialized;
 
+    final safeChannelId = (activeChannel?.name ?? 'general').replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
+
     return GestureDetector(
       onTap: _toggleOsd,
       onVerticalDragEnd: (details) {
@@ -2458,11 +2998,9 @@ class _HomeScreenState extends State<HomeScreen> {
           if (details.primaryVelocity! > 120) _previousChannel();
         }
       },
-      onDoubleTap: () {
-        setState(() => _isFullScreenMode = !_isFullScreenMode);
-      },
+      onDoubleTap: () => setState(() => _isFullScreenMode = !_isFullScreenMode),
       child: Container(
-        height: 215,
+        height: 225,
         width: double.infinity,
         color: const Color(0xFF070A10),
         child: Stack(
@@ -2485,16 +3023,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             children: [
                               const Icon(Icons.cloud_off, color: Colors.white38, size: 36),
                               const SizedBox(height: 6),
-                              const Text(
-                                'Señal no disponible temporalmente',
-                                style: TextStyle(color: Colors.white54, fontSize: 12),
-                              ),
+                              const Text('Señal no disponible temporalmente', style: TextStyle(color: Colors.white54, fontSize: 12)),
                               const SizedBox(height: 8),
                               ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF7B2CBF),
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                ),
+                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
                                 onPressed: () {
                                   if (activeChannel != null) _initializeVideo(activeChannel.streamUrl);
                                 },
@@ -2507,7 +3039,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       : _buildSmoothTuningTransition(activeChannel),
             ),
 
-            if (_showOsd && activeChannel != null)
+            // ESTADIO VIRTUAL (CHAT + EMOJIS FLOTANTES EN VIVO)
+            if (_showLiveChat && activeChannel != null)
+              Positioned.fill(
+                child: LiveChatOverlay(
+                  channelId: safeChannelId,
+                  channelName: activeChannel.name,
+                ),
+              ),
+
+            if (_showOsd && activeChannel != null && !_showLiveChat)
               ZappingChannelOverlay(
                 channel: activeChannel,
                 channelIndex: _selectedChannelIndex,
@@ -2516,11 +3057,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 onPlayPause: () {
                   if (_videoPlayerController != null) {
                     setState(() {
-                      if (_videoPlayerController!.value.isPlaying) {
-                        _videoPlayerController!.pause();
-                      } else {
-                        _videoPlayerController!.play();
-                      }
+                      _videoPlayerController!.value.isPlaying
+                          ? _videoPlayerController!.pause()
+                          : _videoPlayerController!.play();
                     });
                   }
                 },
@@ -2529,13 +3068,67 @@ class _HomeScreenState extends State<HomeScreen> {
                 onOpenEpg: () => _openEpgScheduleModal(activeChannel),
                 onToggleFullScreen: () => setState(() => _isFullScreenMode = true),
               ),
+
+            // BOTONES FLOTANTES RÁPIDOS SOBRE EL REPRODUCTOR (PiP + Chat Vivo)
+            if (_showOsd)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildMiniPlayerPillButton(
+                      icon: _showLiveChat ? Icons.forum : Icons.emoji_emotions_outlined,
+                      label: _showLiveChat ? 'Cerrar Chat' : 'Vivo 💬',
+                      color: _showLiveChat ? const Color(0xFFFFD600) : Colors.black54,
+                      textColor: _showLiveChat ? Colors.black : Colors.white,
+                      onTap: () => setState(() => _showLiveChat = !_showLiveChat),
+                    ),
+                    const SizedBox(width: 6),
+                    _buildMiniPlayerPillButton(
+                      icon: Icons.picture_in_picture_alt_rounded,
+                      label: 'Flotar',
+                      color: Colors.black54,
+                      textColor: const Color(0xFF00E5FF),
+                      onTap: _enterNativePiP,
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  // TARJETA DE PROGRAMACIÓN CON SUSCRIPCIÓN REACTIVA EN VIVO
+  Widget _buildMiniPlayerPillButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required Color textColor,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: textColor, size: 14),
+            const SizedBox(width: 4),
+            Text(label, style: TextStyle(color: textColor, fontSize: 10.5, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildLiveEpgCard(ChannelModel? activeChannel) {
     if (activeChannel == null) return const SizedBox.shrink();
 
@@ -2581,10 +3174,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      currentProg.timeFormatted,
-                      style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11, fontWeight: FontWeight.bold),
-                    ),
+                    Text(currentProg.timeFormatted, style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11, fontWeight: FontWeight.bold)),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -2599,11 +3189,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Quedan ${currentProg.remainingMinutes} min',
-                      style: const TextStyle(color: Colors.white54, fontSize: 10),
-                    ),
+                    Text('Quedan ${currentProg.remainingMinutes} min', style: const TextStyle(color: Colors.white54, fontSize: 10)),
                   ],
                 ),
                 const SizedBox(height: 6),
@@ -2612,9 +3198,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: LinearProgressIndicator(
                     value: currentProg.progress,
                     backgroundColor: const Color(0xFF1E293B),
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      isSyncing ? const Color(0xFFFFB703) : const Color(0xFF9D4EDD),
-                    ),
+                    valueColor: AlwaysStoppedAnimation<Color>(isSyncing ? const Color(0xFFFFB703) : const Color(0xFF9D4EDD)),
                     minHeight: 3,
                   ),
                 ),
@@ -2645,18 +3229,12 @@ class _HomeScreenState extends State<HomeScreen> {
               decoration: BoxDecoration(
                 color: isSelected ? const Color(0xFF7B2CBF) : const Color(0xFF1E293B).withOpacity(0.8),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: isSelected ? const Color(0xFFC77DFF) : Colors.white10,
-                ),
+                border: Border.all(color: isSelected ? const Color(0xFFC77DFF) : Colors.white10),
               ),
               child: Center(
                 child: Text(
                   category,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  ),
+                  style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
                 ),
               ),
             ),
@@ -2671,18 +3249,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (list.isEmpty) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.search_off, color: Colors.white30, size: 40),
-            const SizedBox(height: 8),
-            Text(
-              _searchQuery.isNotEmpty
-                  ? 'No se encontraron canales para "$_searchQuery"'
-                  : 'No hay canales disponibles en esta categoría',
-              style: const TextStyle(color: Colors.white54, fontSize: 12),
-            ),
-          ],
+        child: Text(
+          _searchQuery.isNotEmpty
+              ? 'No se encontraron canales para "$_searchQuery"'
+              : 'No hay canales disponibles en esta categoría',
+          style: const TextStyle(color: Colors.white54, fontSize: 12),
         ),
       );
     }
@@ -2696,57 +3267,23 @@ class _HomeScreenState extends State<HomeScreen> {
             _selectedChannelIndex < _channels.length &&
             _channels[_selectedChannelIndex].streamUrl == channel.streamUrl;
 
-        return Focus(
-          onKey: (node, event) {
-            if (event is RawKeyDownEvent && event.logicalKey == LogicalKeyboardKey.select) {
-              _changeChannel(channel);
-              return KeyEventResult.handled;
-            }
-            return KeyEventResult.ignored;
-          },
-          child: Builder(
-            builder: (ctx) {
-              final isFocused = Focus.of(ctx).hasFocus;
-              return Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                decoration: BoxDecoration(
-                  color: isFocused
-                      ? const Color(0x339D4EDD)
-                      : isSelected
-                          ? const Color(0xFF1E293B).withOpacity(0.9)
-                          : const Color(0xFF0F172A).withOpacity(0.4),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: isFocused
-                        ? const Color(0xFFC77DFF)
-                        : isSelected
-                            ? const Color(0xFF9D4EDD)
-                            : Colors.transparent,
-                    width: isFocused ? 2 : 1,
-                  ),
-                ),
-                child: ListTile(
-                  dense: true,
-                  leading: _buildChannelLogo(channel, isSelected),
-                  title: Text(
-                    channel.name,
-                    style: TextStyle(
-                      color: isSelected ? const Color(0xFFC77DFF) : Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  subtitle: Text(
-                    'Grupo: ${channel.groupCategory} • ${channel.resolution}',
-                    style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
-                  ),
-                  trailing: isSelected
-                      ? const Icon(Icons.volume_up, color: Color(0xFFC77DFF), size: 18)
-                      : null,
-                  onTap: () => _changeChannel(channel),
-                ),
-              );
-            },
+        return Container(
+          margin: const EdgeInsets.only(bottom: 6),
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFF1E293B).withOpacity(0.9) : const Color(0xFF0F172A).withOpacity(0.4),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: isSelected ? const Color(0xFF9D4EDD) : Colors.transparent),
+          ),
+          child: ListTile(
+            dense: true,
+            leading: _buildChannelLogo(channel, isSelected),
+            title: Text(
+              channel.name,
+              style: TextStyle(color: isSelected ? const Color(0xFFC77DFF) : Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+            ),
+            subtitle: Text('Grupo: ${channel.groupCategory} • ${channel.resolution}', style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
+            trailing: isSelected ? const Icon(Icons.volume_up, color: Color(0xFFC77DFF), size: 18) : null,
+            onTap: () => _changeChannel(channel),
           ),
         );
       },
@@ -2758,10 +3295,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return Container(
         width: 36,
         height: 36,
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.4),
-          borderRadius: BorderRadius.circular(6),
-        ),
+        decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), borderRadius: BorderRadius.circular(6)),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(6),
           child: Image.network(
@@ -2779,14 +3313,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return CircleAvatar(
       radius: 16,
       backgroundColor: isSelected ? const Color(0xFF7B2CBF) : const Color(0xFF1E293B),
-      child: Text(
-        '${channel.number}',
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 10,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
+      child: Text('${channel.number}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
     );
   }
 
@@ -2795,6 +3322,8 @@ class _HomeScreenState extends State<HomeScreen> {
         !_hasVideoError &&
         _videoPlayerController != null &&
         _videoPlayerController!.value.isInitialized;
+
+    final safeChannelId = (activeChannel?.name ?? 'general').replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
 
     return GestureDetector(
       onTap: _toggleOsd,
@@ -2818,34 +3347,18 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: VideoPlayer(_videoPlayerController!),
                       ),
                     )
-                  : _hasVideoError
-                      ? Center(
-                          key: const ValueKey<String>('immersive_error'),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
-                              const SizedBox(height: 12),
-                              Text(
-                                'No se pudo reproducir: ${activeChannel?.name ?? "Canal"}',
-                                style: const TextStyle(color: Colors.white, fontSize: 14),
-                              ),
-                              const SizedBox(height: 12),
-                              ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
-                                onPressed: () {
-                                  if (activeChannel != null) _initializeVideo(activeChannel.streamUrl);
-                                },
-                                icon: const Icon(Icons.refresh, color: Colors.white),
-                                label: const Text('Reintentar', style: TextStyle(color: Colors.white)),
-                              ),
-                            ],
-                          ),
-                        )
-                      : _buildSmoothTuningTransition(activeChannel),
+                  : _buildSmoothTuningTransition(activeChannel),
             ),
 
-            if (_showOsd && activeChannel != null)
+            if (_showLiveChat && activeChannel != null)
+              Positioned.fill(
+                child: LiveChatOverlay(
+                  channelId: safeChannelId,
+                  channelName: activeChannel.name,
+                ),
+              ),
+
+            if (_showOsd && activeChannel != null && !_showLiveChat)
               Positioned(
                 bottom: 16,
                 left: 16,
@@ -2858,11 +3371,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPlayPause: () {
                     if (_videoPlayerController != null) {
                       setState(() {
-                        if (_videoPlayerController!.value.isPlaying) {
-                          _videoPlayerController!.pause();
-                        } else {
-                          _videoPlayerController!.play();
-                        }
+                        _videoPlayerController!.value.isPlaying
+                            ? _videoPlayerController!.pause()
+                            : _videoPlayerController!.play();
                       });
                     }
                   },
@@ -2877,17 +3388,37 @@ class _HomeScreenState extends State<HomeScreen> {
               Positioned(
                 top: 24,
                 right: 24,
-                child: IconButton(
-                  icon: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white24),
+                child: Row(
+                  children: [
+                    _buildMiniPlayerPillButton(
+                      icon: Icons.forum,
+                      label: _showLiveChat ? 'Ocultar Chat' : 'Chat Vivo 🔥',
+                      color: _showLiveChat ? const Color(0xFFFFD600) : Colors.black54,
+                      textColor: _showLiveChat ? Colors.black : Colors.white,
+                      onTap: () => setState(() => _showLiveChat = !_showLiveChat),
                     ),
-                    child: const Icon(Icons.fullscreen_exit, color: Colors.white, size: 22),
-                  ),
-                  onPressed: () => setState(() => _isFullScreenMode = false),
+                    const SizedBox(width: 8),
+                    _buildMiniPlayerPillButton(
+                      icon: Icons.picture_in_picture_alt_rounded,
+                      label: 'PiP Flotante',
+                      color: Colors.black54,
+                      textColor: const Color(0xFF00E5FF),
+                      onTap: _enterNativePiP,
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white24),
+                        ),
+                        child: const Icon(Icons.fullscreen_exit, color: Colors.white, size: 22),
+                      ),
+                      onPressed: () => setState(() => _isFullScreenMode = false),
+                    ),
+                  ],
                 ),
               ),
           ],
@@ -2907,6 +3438,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    WakelockPlus.disable();
     _accountGuardSub?.cancel();
     _clockTimer?.cancel();
     _osdHideTimer?.cancel();
