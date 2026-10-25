@@ -273,7 +273,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     ElevatedButton.icon(
                       icon: const Icon(Icons.flash_on, size: 14),
                       label: const Text('Liberar HW', style: TextStyle(fontSize: 11)),
-                      onPressed: () => _showErgonomicResetModal(context, u), // CAMBIO ERGONÓMICO
+                      onPressed: () => _showErgonomicResetModal(context, u), 
                       style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFD600), foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
                     ),
                   ],
@@ -341,12 +341,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
 
-  // --- NUEVA LÓGICA DE INTERFAZ DUAL (MÓVIL Y TV) ---
+  // --- LÓGICA DE INTERFAZ DUAL (MÓVIL Y TV) ---
   Widget _buildDualDeviceIndicator(UserModel user) {
-    // Simulación visual basada en el hardwareId actual para no romper la BD.
-    // En el futuro, tu UserModel tendrá `hardwareIdMobile` y `hardwareIdTv`.
     final hasHw = user.registeredHardwareId != null && user.registeredHardwareId!.isNotEmpty;
-    // Para efectos de UI, si hay HW asignado, lo marcamos como TV.
     final bool isMobileLinked = false; 
     final bool isTvLinked = hasHw;
 
@@ -456,7 +453,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     decoration: BoxDecoration(color: Colors.white.withOpacity(0.04), borderRadius: BorderRadius.circular(8)),
                     child: Row(
                       children: [
-                        Icon(isHead ? Icons.admin_panel_settings : Icons.person, size: 16, color: isHead ? const Color(0xFFC77DFF) : Colors.white54),
+                        Icon(isHead ? Icons.admin_panel_settings : Icons.tv, size: 16, color: isHead ? const Color(0xFFC77DFF) : const Color(0xFF00E5FF)),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Column(
@@ -468,11 +465,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                             ],
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), 
-                          tooltip: 'Liberar HW Ergonómico', 
-                          onPressed: () => _showErgonomicResetModal(context, m)
-                        ),
+                        IconButton(icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), tooltip: 'Reset HW', onPressed: () => _showErgonomicResetModal(context, m)),
                       ],
                     ),
                   );
@@ -545,8 +538,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           const SizedBox(height: 10),
           const Divider(color: Colors.white10, height: 1),
           const SizedBox(height: 10),
-          
-          // REEMPLAZO POR INDICADOR DUAL
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -554,16 +545,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               _buildDualDeviceIndicator(user),
             ],
           ),
-          
           const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              TextButton.icon(
-                onPressed: () => _showErgonomicResetModal(context, user), 
-                icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), 
-                label: const Text('Reset HW', style: TextStyle(color: Color(0xFFFFD600), fontSize: 11))
-              ),
+              TextButton.icon(onPressed: () => _showErgonomicResetModal(context, user), icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), label: const Text('Reset HW', style: TextStyle(color: Color(0xFFFFD600), fontSize: 11))),
               TextButton.icon(onPressed: () => _extendSubscription(user, 30), icon: const Icon(Icons.add_circle_outline, size: 16, color: Color(0xFF00E676)), label: const Text('+30 Días', style: TextStyle(color: Color(0xFF00E676), fontSize: 11))),
               IconButton(onPressed: () => _generatePinAndShare(user), icon: const Icon(Icons.pin, size: 18, color: Color(0xFF00E5FF)), tooltip: 'PIN Express'),
               IconButton(onPressed: () => _deleteUser(user), icon: const Icon(Icons.delete_outline, size: 18, color: Colors.white38), tooltip: 'Eliminar'),
@@ -592,12 +578,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Selecciona qué dispositivo deseas liberar para el usuario "${user.username}". Esto no afectará la conexión de su otra pantalla.',
+              'Selecciona qué dispositivo deseas liberar para el usuario "${user.username}".',
               style: const TextStyle(color: Colors.white60, fontSize: 12),
             ),
             const SizedBox(height: 20),
             
-            // Opción CELULAR
             ListTile(
               tileColor: const Color(0xFF1E283D),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -611,7 +596,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ),
             const SizedBox(height: 10),
             
-            // Opción TV
             ListTile(
               tileColor: const Color(0xFF1E283D),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -625,7 +609,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ),
             const SizedBox(height: 10),
             
-            // Opción AMBOS
             ListTile(
               tileColor: Colors.redAccent.withOpacity(0.1),
               shape: RoundedRectangleBorder(
@@ -645,10 +628,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
 
-  // Ejecuta la limpieza según el tipo (Adaptado a tu base actual)
   Future<void> _performReset(UserModel user, {required String type}) async {
-    // Si tu backend (AuthService) aún no tiene métodos separados para Celular y TV, 
-    // llamamos al reset general. Cuando escales la base de datos, aquí separarás la llamada.
     final success = await AuthService.adminResetHardware(user.id);
     if (success && mounted) {
       setState(() {});
@@ -838,6 +818,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                   final uname = adminUserCtrl.text.trim();
                   final pwd = adminPassCtrl.text.trim();
                   if (famName.isEmpty || uname.isEmpty || pwd.isEmpty) return;
+                  
+                  // MAGIA DE REFERIDOS: Generamos el código automáticamente
+                  final cleanName = uname.toUpperCase().replaceAll(' ', '');
+                  final refCode = 'AMEY-$cleanName-${Random().nextInt(9999).toString().padLeft(4, '0')}';
 
                   await AuthService.createFamilyGroup(
                     familyName: famName,
@@ -850,7 +834,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                   if (context.mounted) {
                     Navigator.pop(ctx);
                     setState(() {});
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('¡Grupo Familiar "$famName" creado!')));
+                    
+                    // VENTANA EMERGENTE CON LOS DATOS LISTOS PARA MANDAR POR WHATSAPP
+                    _showSuccessDialog(uname, pwd, refCode);
                   }
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC77DFF), foregroundColor: Colors.black, minimumSize: const Size(double.infinity, 44)),
@@ -934,6 +920,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                   if (uname.isEmpty || pwd.isEmpty) return;
 
                   final id = 'usr_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(9999)}';
+                  
+                  // MAGIA DE REFERIDOS: Generamos el código de invitación único
+                  final cleanName = uname.toUpperCase().replaceAll(' ', '');
+                  final refCode = 'AMEY-$cleanName-${Random().nextInt(9999).toString().padLeft(4, '0')}';
+
                   final newUser = UserModel(
                     id: id,
                     username: uname,
@@ -942,11 +933,22 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     isActive: true,
                     isVip: isVip,
                     expirationDate: DateTime.now().add(Duration(days: selectedMonths * 30)),
+                    // IMPORTANTE: Cuando agregues la propiedad 'referralCode' a tu UserModel,
+                    // podrás descomentar esta línea para que se guarde directo en tu BD.
+                    // referralCode: refCode, 
                   );
+                  
                   await AuthService.createClientUser(newUser);
+                  
+                  // Inyectamos el código a Firebase usando el actualizador de mapas para no romper nada
+                  await AuthService.updateClientUser(id, {'referralCode': refCode});
+
                   if (context.mounted) {
                     Navigator.pop(ctx);
                     setState(() {});
+                    
+                    // VENTANA EMERGENTE CON LOS DATOS LISTOS PARA MANDAR POR WHATSAPP
+                    _showSuccessDialog(uname, pwd, refCode);
                   }
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E5FF), foregroundColor: Colors.black, minimumSize: const Size(double.infinity, 44)),
@@ -955,6 +957,88 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+  
+  // NUEVO MODAL DE ÉXITO: Para copiar y enviar los datos del cliente + Referido
+  void _showSuccessDialog(String uname, String pwd, String refCode) {
+    showDialog(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF131A29),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xFF00E676), width: 1.5),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Color(0xFF00E676)),
+            SizedBox(width: 10),
+            Text('¡Cliente Creado!', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Envía estos datos al cliente:', style: TextStyle(color: Colors.white54, fontSize: 12)),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('👤 Usuario: $uname', style: const TextStyle(color: Colors.white, fontSize: 14)),
+                  const SizedBox(height: 4),
+                  Text('🔑 Clave: $pwd', style: const TextStyle(color: Colors.white, fontSize: 14)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text('Su Código de Invitación (El Círculo AMEYCAR):', style: TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFD600).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFFD600)),
+              ),
+              child: Text(
+                refCode,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFFFFD600), fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 2),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.copy, size: 16),
+            label: const Text('Copiar Todo'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00E676),
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () {
+              final msg = '¡Hola! Bienvenido a AMEYCAR TV 🍿\n\n👤 Usuario: $uname\n🔑 Clave: $pwd\n\n🎁 *CLUB DE REFERIDOS*\nSi un amigo compra un plan e ingresa tu código: *$refCode*, ¡Tú ganas 15 Días GRATIS automáticamente!';
+              Clipboard.setData(ClipboardData(text: msg));
+              Navigator.pop(dCtx);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('¡Datos copiados! Listos para pegar en WhatsApp.')));
+            },
+          ),
+        ],
       ),
     );
   }
