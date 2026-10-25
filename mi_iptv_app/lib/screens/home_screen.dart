@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // NUEVO: Necesario para copiar al portapapeles
+import 'package:flutter/services.dart'; 
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; 
@@ -52,6 +52,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'Perfil';
 
   bool get _isJefeProfile => AuthService.isFamilyAdmin;
+
+  // CORRECCIÓN LÓGICA FINANCIERA: Usuarios Individuales o Jefes de Familia ven los bancos.
+  bool get _canSeePaymentBanks {
+    final user = AuthService.currentUser;
+    if (user == null) return false;
+    // Es verdadero si es Jefe de Familia O si no pertenece a ninguna familia (Cuenta Individual)
+    return user.isFamilyAdmin || !user.isPartOfFamily || (user.familyId == null || user.familyId!.isEmpty);
+  }
 
   @override
   void initState() {
@@ -613,6 +621,117 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return list;
   }
 
+  // MENÚ DE CONFIGURACIÓN (ENGRANAJE)
+  void _showSettingsMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161F36),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 16, bottom: 32, left: 20, right: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Configuración y Ajustes',
+                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              _buildSettingsTile(
+                icon: Icons.person,
+                color: const Color(0xFF00E5FF),
+                title: 'Editar Interfaz y Perfil',
+                subtitle: 'Cambiar avatar, nombre y diseño',
+                onTap: () {
+                  Navigator.pop(context);
+                  // Próxima implementación
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.switch_account,
+                color: const Color(0xFFC77DFF),
+                title: 'Cambiar de Cuenta / Perfil',
+                subtitle: 'Ir al selector de pantallas familiares',
+                onTap: () {
+                  Navigator.pop(context);
+                  _switchProfile();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.language,
+                color: const Color(0xFFFFD600),
+                title: 'Cambiar Idioma',
+                subtitle: 'Actualmente: Español (Latinoamérica)',
+                onTap: () {
+                  Navigator.pop(context);
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.headset_mic,
+                color: const Color(0xFF00E676),
+                title: 'Soporte Técnico Especializado',
+                subtitle: 'Contactar al administrador por fallas',
+                onTap: () {
+                  Navigator.pop(context);
+                  _openSupportMenu();
+                },
+              ),
+              const Divider(color: Colors.white10, height: 24),
+              _buildSettingsTile(
+                icon: Icons.logout,
+                color: Colors.redAccent,
+                title: 'Cerrar Sesión Segura',
+                subtitle: 'Desconectar cuenta de este dispositivo',
+                onTap: () async {
+                  Navigator.pop(context);
+                  await AuthService.logout();
+                  if (mounted) {
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(builder: (context) => const ProfileSelectorScreen()),
+                      (route) => false,
+                    );
+                  }
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSettingsTile({required IconData icon, required Color color, required String title, required String subtitle, required VoidCallback onTap}) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.15),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: color, size: 20),
+      ),
+      title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+      subtitle: Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+      trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white24, size: 14),
+      onTap: onTap,
+    );
+  }
+
   void _openSupportMenu() {
     showModalBottomSheet(
       context: context,
@@ -720,7 +839,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  // MÉTODO NUEVO INYECTADO: El Panel de Pagos para la barra superior
   void _showPaymentOptionsModal(BuildContext context, {required bool isHead}) {
     final pinCtrl = TextEditingController();
     bool isProcessing = false;
@@ -772,7 +890,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 const SizedBox(height: 4),
                 Text(
                   isHead
-                      ? 'Métodos seguros para extender tu plan familiar sin comisiones.'
+                      ? 'Métodos seguros para extender tu plan sin comisiones.'
                       : 'Ingresa el código proporcionado por el titular para activar tu pantalla.',
                   style: const TextStyle(color: Colors.white60, fontSize: 12),
                 ),
@@ -871,9 +989,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   _buildPaymentTile(
                     icon: Icons.phone_android,
                     color: const Color(0xFF7B2CBF),
-                    title: 'Yape / Plin',
-                    subtitle: '51905823660 • Titular: AMEYCAR TV', 
-                    copyText: '51905823660', 
+                    title: 'Yape',
+                    subtitle: '931573805 • Titular: AMEYCAR TV', 
+                    copyText: '931573805', 
                     context: context,
                   ),
                   const SizedBox(height: 8),
@@ -1028,6 +1146,52 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ),
         ],
       ),
+    );
+  }
+
+  // INDICADOR VISUAL (Ajustado para detectar Celular en la UI actual)
+  Widget _buildDeviceSyncStatus() {
+    bool isPhoneLinked = true; 
+    bool isTvLinked = false;   
+
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildDeviceIcon(Icons.smartphone, isPhoneLinked),
+          const SizedBox(width: 4),
+          _buildDeviceIcon(Icons.tv, isTvLinked),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDeviceIcon(IconData icon, bool isLinked) {
+    return Stack(
+      alignment: Alignment.topRight,
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(2.0),
+          child: Icon(
+            icon,
+            size: 16,
+            color: isLinked ? const Color(0xFF00E5FF) : Colors.white24,
+          ),
+        ),
+        if (!isLinked)
+          const Positioned(
+            right: 0,
+            top: 0,
+            child: Icon(Icons.lock, size: 8, color: Colors.redAccent),
+          ),
+      ],
     );
   }
 
@@ -1259,10 +1423,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                   ),
 
-                  // INYECTADO: BOTÓN VERDE "RENOVAR" (Abrirá el panel en modo isHead=true para ver los bancos)
+                  // BOTÓN RENOVAR
                   const SizedBox(width: 8),
                   InkWell(
-                    onTap: () => _showPaymentOptionsModal(context, isHead: true), 
+                    onTap: () => _showPaymentOptionsModal(context, isHead: _canSeePaymentBanks), 
                     borderRadius: BorderRadius.circular(5),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1289,6 +1453,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ),
                   
                   const Spacer(),
+                  
+                  // Indicador Visual de 2 Pantallas (Celular & TV)
+                  _buildDeviceSyncStatus(),
+
                   // Botón del Perfil Activo
                   InkWell(
                     onTap: _switchProfile,
@@ -1332,13 +1500,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ],
               ),
         actions: [
-          // BOTÓN DE SOPORTE INTEGRADO
+          // NUEVO: ÍCONO DE ENGRANAJE QUE ABRE EL MENÚ MAESTRO
           if (!_isSearching)
             IconButton(
-              tooltip: 'Soporte y Renovaciones',
-              icon: const Icon(Icons.headset_mic, color: Color(0xFF00E5FF)),
-              onPressed: _openSupportMenu,
+              tooltip: 'Configuración',
+              icon: const Icon(Icons.settings, color: Colors.white70),
+              onPressed: _showSettingsMenu,
             ),
+            
           if (!_isSearching)
             IconButton(
               tooltip: 'Buscar contenido',

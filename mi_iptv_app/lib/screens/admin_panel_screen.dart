@@ -344,8 +344,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   // --- LÓGICA DE INTERFAZ DUAL (MÓVIL Y TV) ---
   Widget _buildDualDeviceIndicator(UserModel user) {
     final hasHw = user.registeredHardwareId != null && user.registeredHardwareId!.isNotEmpty;
-    final bool isMobileLinked = false; 
-    final bool isTvLinked = hasHw;
+    // CORRECCIÓN: Encendemos el celular porque la app actual es móvil
+    final bool isMobileLinked = hasHw; 
+    final bool isTvLinked = false; 
 
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -538,6 +539,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           const SizedBox(height: 10),
           const Divider(color: Colors.white10, height: 1),
           const SizedBox(height: 10),
+          
+          // REEMPLAZO POR INDICADOR DUAL
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -545,11 +548,16 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               _buildDualDeviceIndicator(user),
             ],
           ),
+          
           const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              TextButton.icon(onPressed: () => _showErgonomicResetModal(context, user), icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), label: const Text('Reset HW', style: TextStyle(color: Color(0xFFFFD600), fontSize: 11))),
+              TextButton.icon(
+                onPressed: () => _showErgonomicResetModal(context, user), 
+                icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), 
+                label: const Text('Reset HW', style: TextStyle(color: Color(0xFFFFD600), fontSize: 11))
+              ),
               TextButton.icon(onPressed: () => _extendSubscription(user, 30), icon: const Icon(Icons.add_circle_outline, size: 16, color: Color(0xFF00E676)), label: const Text('+30 Días', style: TextStyle(color: Color(0xFF00E676), fontSize: 11))),
               IconButton(onPressed: () => _generatePinAndShare(user), icon: const Icon(Icons.pin, size: 18, color: Color(0xFF00E5FF)), tooltip: 'PIN Express'),
               IconButton(onPressed: () => _deleteUser(user), icon: const Icon(Icons.delete_outline, size: 18, color: Colors.white38), tooltip: 'Eliminar'),
@@ -578,11 +586,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Selecciona qué dispositivo deseas liberar para el usuario "${user.username}".',
+              'Selecciona qué dispositivo deseas liberar para el usuario "${user.username}". Esto no afectará la conexión de su otra pantalla.',
               style: const TextStyle(color: Colors.white60, fontSize: 12),
             ),
             const SizedBox(height: 20),
             
+            // Opción CELULAR
             ListTile(
               tileColor: const Color(0xFF1E283D),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -596,6 +605,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ),
             const SizedBox(height: 10),
             
+            // Opción TV
             ListTile(
               tileColor: const Color(0xFF1E283D),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -609,6 +619,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ),
             const SizedBox(height: 10),
             
+            // Opción AMBOS
             ListTile(
               tileColor: Colors.redAccent.withOpacity(0.1),
               shape: RoundedRectangleBorder(
@@ -628,6 +639,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
 
+  // Ejecuta la limpieza según el tipo (Adaptado a tu base actual)
   Future<void> _performReset(UserModel user, {required String type}) async {
     final success = await AuthService.adminResetHardware(user.id);
     if (success && mounted) {
@@ -933,9 +945,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     isActive: true,
                     isVip: isVip,
                     expirationDate: DateTime.now().add(Duration(days: selectedMonths * 30)),
-                    // IMPORTANTE: Cuando agregues la propiedad 'referralCode' a tu UserModel,
-                    // podrás descomentar esta línea para que se guarde directo en tu BD.
-                    // referralCode: refCode, 
                   );
                   
                   await AuthService.createClientUser(newUser);

@@ -333,11 +333,12 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
   // --- INDICADOR VISUAL DUAL (MÓVIL Y TV) ---
   Widget _buildDualDeviceIndicator(UserModel user) {
     final hasHw = user.registeredHardwareId != null && user.registeredHardwareId!.isNotEmpty;
-    // UI temporal: Si hay algo vinculado, lo marcamos como TV por ahora
-    final bool isMobileLinked = false; 
-    final bool isTvLinked = hasHw;
+    // CORRECCIÓN: Encendemos el celular porque la app actual es móvil
+    final bool isMobileLinked = hasHw; 
+    final bool isTvLinked = false; 
 
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         _buildDeviceIcon(Icons.smartphone, isMobileLinked),
         const SizedBox(width: 8),
