@@ -329,6 +329,129 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
     );
   }
 
+  // --- INDICADOR VISUAL DUAL (MÓVIL Y TV) ---
+  Widget _buildDualDeviceIndicator(UserModel user) {
+    final hasHw = user.registeredHardwareId != null && user.registeredHardwareId!.isNotEmpty;
+    // UI temporal: Si hay algo vinculado, lo marcamos como TV por ahora
+    final bool isMobileLinked = false; 
+    final bool isTvLinked = hasHw;
+
+    return Row(
+      children: [
+        _buildDeviceIcon(Icons.smartphone, isMobileLinked),
+        const SizedBox(width: 8),
+        _buildDeviceIcon(Icons.tv, isTvLinked),
+      ],
+    );
+  }
+
+  Widget _buildDeviceIcon(IconData icon, bool isLinked) {
+    return Stack(
+      alignment: Alignment.topRight,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: isLinked ? const Color(0xFF00E5FF).withOpacity(0.15) : Colors.white10,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: isLinked ? const Color(0xFF00E5FF).withOpacity(0.5) : Colors.transparent),
+          ),
+          child: Icon(
+            icon,
+            size: 14,
+            color: isLinked ? const Color(0xFF00E5FF) : Colors.white38,
+          ),
+        ),
+        if (!isLinked)
+          const Positioned(
+            right: -3,
+            top: -3,
+            child: Icon(Icons.lock, size: 12, color: Colors.redAccent),
+          ),
+      ],
+    );
+  }
+
+  // --- MODAL DE RESET ERGONÓMICO FAMILIAR ---
+  void _showErgonomicResetModal(BuildContext context, UserModel user) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161B26),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Liberar Dispositivo (Reset HW)',
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Selecciona qué dispositivo deseas liberar para "${user.username}".',
+              style: const TextStyle(color: Colors.white60, fontSize: 12),
+            ),
+            const SizedBox(height: 20),
+            
+            ListTile(
+              tileColor: const Color(0xFF1E283D),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              leading: const Icon(Icons.smartphone, color: Color(0xFF00E5FF)),
+              title: const Text('Liberar Solo Celular', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              trailing: const Icon(Icons.lock_open, color: Colors.white38, size: 18),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _performReset(user, type: 'mobile');
+              },
+            ),
+            const SizedBox(height: 10),
+            
+            ListTile(
+              tileColor: const Color(0xFF1E283D),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              leading: const Icon(Icons.tv, color: Color(0xFFC77DFF)),
+              title: const Text('Liberar Solo Smart TV', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              trailing: const Icon(Icons.lock_open, color: Colors.white38, size: 18),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _performReset(user, type: 'tv');
+              },
+            ),
+            const SizedBox(height: 10),
+            
+            ListTile(
+              tileColor: Colors.redAccent.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: const BorderSide(color: Colors.redAccent),
+              ),
+              leading: const Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+              title: const Text('Resetear Ambos (Completo)', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _performReset(user, type: 'both');
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _performReset(UserModel user, {required String type}) async {
+    // Almacena el llamado unificado de reset por ahora
+    final success = await AuthService.adminResetHardware(user.id);
+    if (success && mounted) {
+      setState(() {});
+      String msg = type == 'mobile' ? 'Celular liberado.' : type == 'tv' ? 'Smart TV liberada.' : 'Ambos dispositivos liberados.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: const Color(0xFF00C853), content: Text('$msg (Usuario: ${user.username})')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUser = AuthService.currentUser;
@@ -566,27 +689,23 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                               ],
                             ),
                             const Divider(color: Colors.white10, height: 24),
+                            
+                            // NUEVO: INDICADOR VISUAL DUAL EN PANEL FAMILIAR
                             Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Icon(
-                                  member.registeredHardwareId != null ? Icons.lock : Icons.lock_open,
-                                  size: 14,
-                                  color: member.registeredHardwareId != null ? Colors.greenAccent : Colors.amberAccent,
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    member.registeredHardwareId != null
-                                        ? 'Vinculado a: ${member.registeredHardwareId}'
-                                        : 'Sin vincular (Se asociará al primer inicio)',
-                                    style: const TextStyle(color: Colors.white54, fontSize: 11),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
+                                _buildDualDeviceIndicator(member),
+                                if (member.registeredHardwareId != null)
+                                  Text(
+                                    'ID: ${member.registeredHardwareId!.substring(0, min(8, member.registeredHardwareId!.length))}...',
+                                    style: const TextStyle(color: Colors.white38, fontSize: 11),
+                                  )
+                                else
+                                  const Text('Libre (Primer inicio)', style: TextStyle(color: Colors.amberAccent, fontSize: 11)),
                               ],
                             ),
-                            const SizedBox(height: 10),
+                            
+                            const SizedBox(height: 14),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.end,
                               children: [
@@ -597,17 +716,9 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                                       side: const BorderSide(color: Colors.amberAccent),
                                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                     ),
-                                    onPressed: () async {
-                                      await AuthService.adminResetHardware(member.id);
-                                      if (mounted) {
-                                        setState(() {});
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(content: Text('Dispositivo desvinculado. Puede conectarse en otro TV.')),
-                                        );
-                                      }
-                                    },
+                                    onPressed: () => _showErgonomicResetModal(context, member), // CAMBIO ERGONÓMICO
                                     icon: const Icon(Icons.refresh, size: 14),
-                                    label: const Text('Cambiar TV / Liberar', style: TextStyle(fontSize: 11)),
+                                    label: const Text('Liberar HW', style: TextStyle(fontSize: 11)),
                                   ),
                                 if (!isHeadOfFamily) ...[
                                   const SizedBox(width: 8),

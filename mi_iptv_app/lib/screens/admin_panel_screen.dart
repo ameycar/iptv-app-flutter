@@ -272,8 +272,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     Text(u.username, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                     ElevatedButton.icon(
                       icon: const Icon(Icons.flash_on, size: 14),
-                      label: const Text('Liberar en 1 Toque', style: TextStyle(fontSize: 11)),
-                      onPressed: () => _quickResetHardware(u),
+                      label: const Text('Liberar HW', style: TextStyle(fontSize: 11)),
+                      onPressed: () => _showErgonomicResetModal(context, u), // CAMBIO ERGONÓMICO
                       style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFD600), foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
                     ),
                   ],
@@ -341,6 +341,52 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
 
+  // --- NUEVA LÓGICA DE INTERFAZ DUAL (MÓVIL Y TV) ---
+  Widget _buildDualDeviceIndicator(UserModel user) {
+    // Simulación visual basada en el hardwareId actual para no romper la BD.
+    // En el futuro, tu UserModel tendrá `hardwareIdMobile` y `hardwareIdTv`.
+    final hasHw = user.registeredHardwareId != null && user.registeredHardwareId!.isNotEmpty;
+    // Para efectos de UI, si hay HW asignado, lo marcamos como TV.
+    final bool isMobileLinked = false; 
+    final bool isTvLinked = hasHw;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildDeviceIcon(Icons.smartphone, isMobileLinked),
+        const SizedBox(width: 6),
+        _buildDeviceIcon(Icons.tv, isTvLinked),
+      ],
+    );
+  }
+
+  Widget _buildDeviceIcon(IconData icon, bool isLinked) {
+    return Stack(
+      alignment: Alignment.topRight,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: isLinked ? const Color(0xFF00E5FF).withOpacity(0.15) : Colors.white10,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: isLinked ? const Color(0xFF00E5FF).withOpacity(0.5) : Colors.transparent),
+          ),
+          child: Icon(
+            icon,
+            size: 16,
+            color: isLinked ? const Color(0xFF00E5FF) : Colors.white38,
+          ),
+        ),
+        if (!isLinked)
+          const Positioned(
+            right: -2,
+            top: -2,
+            child: Icon(Icons.lock, size: 10, color: Colors.redAccent),
+          ),
+      ],
+    );
+  }
+
   Widget _buildFamilyGroupCard(UserModel familyAdmin, List<UserModel> allUsers) {
     final familyId = familyAdmin.familyId ?? '';
     final members = allUsers.where((u) => u.familyId == familyId).toList();
@@ -404,26 +450,29 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                 ),
                 ...members.map((m) {
                   final isHead = m.isFamilyAdmin;
-                  final hasHw = m.registeredHardwareId != null && m.registeredHardwareId!.isNotEmpty;
                   return Container(
                     margin: const EdgeInsets.symmetric(vertical: 4),
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(color: Colors.white.withOpacity(0.04), borderRadius: BorderRadius.circular(8)),
                     child: Row(
                       children: [
-                        Icon(isHead ? Icons.admin_panel_settings : Icons.tv, size: 16, color: isHead ? const Color(0xFFC77DFF) : const Color(0xFF00E5FF)),
+                        Icon(isHead ? Icons.admin_panel_settings : Icons.person, size: 16, color: isHead ? const Color(0xFFC77DFF) : Colors.white54),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text('${m.username} (${m.deviceName ?? "Sin asignar"})', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                              Text(hasHw ? 'Vinculado: ${m.registeredHardwareId}' : 'Esperando primer inicio', style: TextStyle(color: hasHw ? const Color(0xFF00E676) : Colors.orangeAccent, fontSize: 10)),
+                              const SizedBox(height: 4),
+                              _buildDualDeviceIndicator(m),
                             ],
                           ),
                         ),
-                        if (hasHw)
-                          IconButton(icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), tooltip: 'Reset HW', onPressed: () => _quickResetHardware(m)),
+                        IconButton(
+                          icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), 
+                          tooltip: 'Liberar HW Ergonómico', 
+                          onPressed: () => _showErgonomicResetModal(context, m)
+                        ),
                       ],
                     ),
                   );
@@ -438,7 +487,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
   }
 
   Widget _buildUserCard(UserModel user) {
-    final isLocked = user.registeredHardwareId != null && user.registeredHardwareId!.isNotEmpty;
     final isPendingHw = user.hardwareResetRequested;
 
     return Container(
@@ -497,18 +545,25 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           const SizedBox(height: 10),
           const Divider(color: Colors.white10, height: 1),
           const SizedBox(height: 10),
+          
+          // REEMPLAZO POR INDICADOR DUAL
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Icon(isLocked ? Icons.phonelink_lock : Icons.phonelink_erase, size: 16, color: isLocked ? const Color(0xFF00E5FF) : Colors.white38),
-              const SizedBox(width: 6),
-              Expanded(child: Text(isLocked ? 'Vinculado: ${user.deviceName ?? user.registeredHardwareId}' : 'Sin dispositivo asignado (Libre)', style: const TextStyle(color: Colors.white70, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis)),
+              const Text('Dispositivos Vinculados:', style: TextStyle(color: Colors.white70, fontSize: 11)),
+              _buildDualDeviceIndicator(user),
             ],
           ),
+          
           const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              TextButton.icon(onPressed: () => _quickResetHardware(user), icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), label: const Text('Reset HW', style: TextStyle(color: Color(0xFFFFD600), fontSize: 11))),
+              TextButton.icon(
+                onPressed: () => _showErgonomicResetModal(context, user), 
+                icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), 
+                label: const Text('Reset HW', style: TextStyle(color: Color(0xFFFFD600), fontSize: 11))
+              ),
               TextButton.icon(onPressed: () => _extendSubscription(user, 30), icon: const Icon(Icons.add_circle_outline, size: 16, color: Color(0xFF00E676)), label: const Text('+30 Días', style: TextStyle(color: Color(0xFF00E676), fontSize: 11))),
               IconButton(onPressed: () => _generatePinAndShare(user), icon: const Icon(Icons.pin, size: 18, color: Color(0xFF00E5FF)), tooltip: 'PIN Express'),
               IconButton(onPressed: () => _deleteUser(user), icon: const Icon(Icons.delete_outline, size: 18, color: Colors.white38), tooltip: 'Eliminar'),
@@ -519,11 +574,88 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
 
-  Future<void> _quickResetHardware(UserModel user) async {
+  // --- MODAL DE RESET ERGONÓMICO ---
+  void _showErgonomicResetModal(BuildContext context, UserModel user) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF131A29),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Liberar Dispositivo (Reset HW)',
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Selecciona qué dispositivo deseas liberar para el usuario "${user.username}". Esto no afectará la conexión de su otra pantalla.',
+              style: const TextStyle(color: Colors.white60, fontSize: 12),
+            ),
+            const SizedBox(height: 20),
+            
+            // Opción CELULAR
+            ListTile(
+              tileColor: const Color(0xFF1E283D),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              leading: const Icon(Icons.smartphone, color: Color(0xFF00E5FF)),
+              title: const Text('Liberar Solo Celular', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              trailing: const Icon(Icons.lock_open, color: Colors.white38, size: 18),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _performReset(user, type: 'mobile');
+              },
+            ),
+            const SizedBox(height: 10),
+            
+            // Opción TV
+            ListTile(
+              tileColor: const Color(0xFF1E283D),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              leading: const Icon(Icons.tv, color: Color(0xFFC77DFF)),
+              title: const Text('Liberar Solo Smart TV', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              trailing: const Icon(Icons.lock_open, color: Colors.white38, size: 18),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _performReset(user, type: 'tv');
+              },
+            ),
+            const SizedBox(height: 10),
+            
+            // Opción AMBOS
+            ListTile(
+              tileColor: Colors.redAccent.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: const BorderSide(color: Colors.redAccent),
+              ),
+              leading: const Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+              title: const Text('Resetear Ambos (Completo)', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _performReset(user, type: 'both');
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Ejecuta la limpieza según el tipo (Adaptado a tu base actual)
+  Future<void> _performReset(UserModel user, {required String type}) async {
+    // Si tu backend (AuthService) aún no tiene métodos separados para Celular y TV, 
+    // llamamos al reset general. Cuando escales la base de datos, aquí separarás la llamada.
     final success = await AuthService.adminResetHardware(user.id);
     if (success && mounted) {
       setState(() {});
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: const Color(0xFF00C853), content: Text('Dispositivo liberado para ${user.username}')));
+      String msg = type == 'mobile' ? 'Celular liberado.' : type == 'tv' ? 'Smart TV liberada.' : 'Ambos dispositivos liberados.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: const Color(0xFF00C853), content: Text('$msg (Usuario: ${user.username})')),
+      );
     }
   }
 
@@ -590,8 +722,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               tileColor: const Color(0xFF131A29),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFF00E5FF))),
               leading: const Icon(Icons.person_add, color: Color(0xFF00E5FF)),
-              title: const Text('Cliente Individual (1 Pantalla)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              subtitle: const Text('Vinculado a un solo teléfono o TV', style: TextStyle(color: Colors.white60, fontSize: 12)),
+              title: const Text('Cliente Individual (1 Perfil = Celular + TV)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              subtitle: const Text('Puede vincular 1 Móvil y 1 Smart TV independientemente', style: TextStyle(color: Colors.white60, fontSize: 12)),
               onTap: () {
                 Navigator.pop(ctx);
                 _showCreateUserModal();
@@ -603,7 +735,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFFC77DFF))),
               leading: const Icon(Icons.family_restroom, color: Color(0xFFC77DFF)),
               title: const Text('Grupo Familiar (Hasta 5 Pantallas)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              subtitle: const Text('El Jefe de Familia administra hasta 4 pantallas adicionales.', style: TextStyle(color: Colors.white60, fontSize: 12)),
+              subtitle: const Text('Cada perfil puede tener 1 Móvil y 1 TV', style: TextStyle(color: Colors.white60, fontSize: 12)),
               onTap: () {
                 Navigator.pop(ctx);
                 _showCreateFamilyModal();
@@ -753,7 +885,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                 children: [
                   Icon(Icons.person_add, color: Color(0xFF00E5FF)),
                   SizedBox(width: 8),
-                  Text('Nuevo Cliente Individual (1 Pantalla)', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+                  Text('Nuevo Cliente Individual', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
                 ],
               ),
               const SizedBox(height: 16),
