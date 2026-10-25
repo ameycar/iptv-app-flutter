@@ -249,7 +249,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  // Canal nativo directo a Android para Picture-in-Picture (sin paquetes externos frágiles)
   static const MethodChannel _pipChannel = MethodChannel('ameycar.tv/pip');
 
   List<ChannelModel> _channels = [];
@@ -332,7 +331,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
-    // Detecta al instante cuando Android encoge la ventana a PiP y muestra solo el video puro
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final size = MediaQuery.of(context).size;
@@ -516,84 +514,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return targetUri;
   }
 
-  void _warmUpAdjacentChannels() {
-    if (!mounted) return;
-    final list = _filteredChannels;
-    if (list.length <= 1) return;
-
-    final activeCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
-        ? _channels[_selectedChannelIndex]
-        : null;
-    if (activeCh == null) return;
-
-    final curIdx = list.indexOf(activeCh);
-    if (curIdx == -1) return;
-
-    final nextIdx = (curIdx + 1) % list.length;
-    final prevIdx = (curIdx - 1 < 0) ? list.length - 1 : curIdx - 1;
-
-    final nextUrl = list[nextIdx].streamUrl.trim();
-    final prevUrl = list[prevIdx].streamUrl.trim();
-    final activeUrl = activeCh.streamUrl.trim();
-
-    final desiredUrls = <String>{
-      if (nextUrl.isNotEmpty && nextUrl != activeUrl) nextUrl,
-      if (prevUrl.isNotEmpty && prevUrl != activeUrl) prevUrl,
-    };
-
-    final existingKeys = _prebufferedPool.keys.toList();
-    for (final key in existingKeys) {
-      if (!desiredUrls.contains(key)) {
-        final oldPre = _prebufferedPool.remove(key);
-        _disposeControllerInBackground(oldPre);
-      }
-    }
-
-    for (final targetUrl in desiredUrls) {
-      if (_prebufferedPool.containsKey(targetUrl) ||
-          _prebufferingInProgress.contains(targetUrl)) {
-        continue;
-      }
-
-      _prebufferingInProgress.add(targetUrl);
-      Future.microtask(() async {
-        try {
-          final uri = _parseStreamUri(targetUrl);
-          final preController = VideoPlayerController.networkUrl(
-            uri,
-            httpHeaders: _fastStreamHeaders,
-            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-          );
-          await preController.initialize();
-          await preController.setVolume(0.0);
-          await preController.setLooping(true);
-          await preController.play();
-          await Future.delayed(const Duration(milliseconds: 120));
-          await preController.pause();
-
-          _prebufferingInProgress.remove(targetUrl);
-
-          if (!mounted) {
-            _disposeControllerInBackground(preController);
-            return;
-          }
-
-          final currentActive = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
-              ? _channels[_selectedChannelIndex].streamUrl.trim()
-              : '';
-          if (targetUrl == currentActive) {
-            _disposeControllerInBackground(preController);
-            return;
-          }
-
-          _prebufferedPool[targetUrl] = preController;
-        } catch (_) {
-          _prebufferingInProgress.remove(targetUrl);
-        }
-      });
-    }
-  }
-
+  // ===========================================================================
+  // ZAPPING ULTRA RÁPIDO (PRE-BUFFERING EN RAM PARA CAMBIOS EN MILISEGUNDOS)
+  // ===========================================================================
   void _initializeVideo(String rawUrl) async {
     if (!mounted) return;
     final url = rawUrl.trim();
@@ -673,6 +596,84 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _hasVideoError = true;
         });
       }
+    }
+  }
+
+  void _warmUpAdjacentChannels() {
+    if (!mounted) return;
+    final list = _filteredChannels;
+    if (list.length <= 1) return;
+
+    final activeCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+        ? _channels[_selectedChannelIndex]
+        : null;
+    if (activeCh == null) return;
+
+    final curIdx = list.indexOf(activeCh);
+    if (curIdx == -1) return;
+
+    final nextIdx = (curIdx + 1) % list.length;
+    final prevIdx = (curIdx - 1 < 0) ? list.length - 1 : curIdx - 1;
+
+    final nextUrl = list[nextIdx].streamUrl.trim();
+    final prevUrl = list[prevIdx].streamUrl.trim();
+    final activeUrl = activeCh.streamUrl.trim();
+
+    final desiredUrls = <String>{
+      if (nextUrl.isNotEmpty && nextUrl != activeUrl) nextUrl,
+      if (prevUrl.isNotEmpty && prevUrl != activeUrl) prevUrl,
+    };
+
+    final existingKeys = _prebufferedPool.keys.toList();
+    for (final key in existingKeys) {
+      if (!desiredUrls.contains(key)) {
+        final oldPre = _prebufferedPool.remove(key);
+        _disposeControllerInBackground(oldPre);
+      }
+    }
+
+    for (final targetUrl in desiredUrls) {
+      if (_prebufferedPool.containsKey(targetUrl) ||
+          _prebufferingInProgress.contains(targetUrl)) {
+        continue;
+      }
+
+      _prebufferingInProgress.add(targetUrl);
+      Future.microtask(() async {
+        try {
+          final uri = _parseStreamUri(targetUrl);
+          final preController = VideoPlayerController.networkUrl(
+            uri,
+            httpHeaders: _fastStreamHeaders,
+            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+          );
+          await preController.initialize();
+          await preController.setVolume(0.0);
+          await preController.setLooping(true);
+          await preController.play();
+          await Future.delayed(const Duration(milliseconds: 100));
+          await preController.pause();
+
+          _prebufferingInProgress.remove(targetUrl);
+
+          if (!mounted) {
+            _disposeControllerInBackground(preController);
+            return;
+          }
+
+          final currentActive = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+              ? _channels[_selectedChannelIndex].streamUrl.trim()
+              : '';
+          if (targetUrl == currentActive) {
+            _disposeControllerInBackground(preController);
+            return;
+          }
+
+          _prebufferedPool[targetUrl] = preController;
+        } catch (_) {
+          _prebufferingInProgress.remove(targetUrl);
+        }
+      });
     }
   }
 
@@ -833,7 +834,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return null;
   }
 
-  // ENGRANAJE ⚙️: MENÚ MAESTRO DE CONFIGURACIÓN, SOPORTE, PERFIL Y REFERIDOS
   void _showSettingsMenu() {
     final user = AuthService.currentActiveProfile ?? AuthService.currentUser;
     showModalBottomSheet(
@@ -1602,7 +1602,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // GESTOR MULTI-LISTA M3U (HASTA 5 LISTAS POR PERFIL - SIN PALABRA TIVIMATE)
   void _openM3uDialog() async {
     final prefs = await SharedPreferences.getInstance();
     final savedCustomEpgUrl = await EpgService.getCustomEpgUrl();
@@ -1924,7 +1923,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    // MODO VENTANA FLOTANTE NATIVA (PiP): Solo video limpio redimensionable al 100%
     if (_isInPipMode) {
       return Scaffold(
         backgroundColor: Colors.black,
