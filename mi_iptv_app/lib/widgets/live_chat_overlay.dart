@@ -252,9 +252,10 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> with TickerProviderSt
               ),
               const SizedBox(width: 12),
               // Botones de Reacción Rápida
-              _buildReactionButton('🔥'),
-              _buildReactionButton('⚽'),
               _buildReactionButton('😱'),
+              _buildReactionButton('👍'),
+              _buildReactionButton('⚽'),
+              _buildReactionButton('😡'),
             ],
           ),
         ),

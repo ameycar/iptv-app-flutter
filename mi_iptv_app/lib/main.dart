@@ -2803,9 +2803,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   _buildPaymentTile(
                     icon: Icons.phone_android,
                     color: const Color(0xFF7B2CBF),
-                    title: 'Yape / Plin Oficial',
-                    subtitle: '51905823660 • Titular: AMEYCAR TV',
-                    copyText: '51905823660',
+                    title: 'Yape',
+                    subtitle: '931573805 • Titular: CARLOS ACOSTA',
+                    copyText: '931573805',
                   ),
                   const SizedBox(height: 8),
                   _buildPaymentTile(
