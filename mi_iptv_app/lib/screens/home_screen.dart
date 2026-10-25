@@ -53,11 +53,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   bool get _isJefeProfile => AuthService.isFamilyAdmin;
 
-  // CORRECCIÓN LÓGICA FINANCIERA: Usuarios Individuales o Jefes de Familia ven los bancos.
+  // LÓGICA FINANCIERA: Usuarios Individuales o Jefes de Familia ven los bancos.
   bool get _canSeePaymentBanks {
     final user = AuthService.currentUser;
     if (user == null) return false;
-    // Es verdadero si es Jefe de Familia O si no pertenece a ninguna familia (Cuenta Individual)
     return user.isFamilyAdmin || !user.isPartOfFamily || (user.familyId == null || user.familyId!.isEmpty);
   }
 
@@ -621,7 +620,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return list;
   }
 
-  // MENÚ DE CONFIGURACIÓN (ENGRANAJE)
+  // ENGRANAJE: MENÚ MAESTRO DE CONFIGURACIÓN
   void _showSettingsMenu() {
     showModalBottomSheet(
       context: context,
@@ -657,7 +656,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 subtitle: 'Cambiar avatar, nombre y diseño',
                 onTap: () {
                   Navigator.pop(context);
-                  // Próxima implementación
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.playlist_play,
+                color: const Color(0xFF8B5CF6),
+                title: 'Gestor de Listas M3U',
+                subtitle: 'Administra tus proveedores de IPTV',
+                onTap: () {
+                  Navigator.pop(context);
+                  _openPlaylistManagerDialog();
                 },
               ),
               _buildSettingsTile(
@@ -683,7 +691,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 icon: Icons.headset_mic,
                 color: const Color(0xFF00E676),
                 title: 'Soporte Técnico Especializado',
-                subtitle: 'Contactar al administrador por fallas',
+                subtitle: 'Contactar al administrador por WhatsApp',
                 onTap: () {
                   Navigator.pop(context);
                   _openSupportMenu();
@@ -989,9 +997,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   _buildPaymentTile(
                     icon: Icons.phone_android,
                     color: const Color(0xFF7B2CBF),
-                    title: 'Yape',
-                    subtitle: '931573805 • Titular: AMEYCAR TV', 
-                    copyText: '931573805', 
+                    title: 'Yape / Plin',
+                    subtitle: '51905823660 • Titular: AMEYCAR TV', 
+                    copyText: '51905823660', 
                     context: context,
                   ),
                   const SizedBox(height: 8),
@@ -1149,8 +1157,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  // INDICADOR VISUAL (Ajustado para detectar Celular en la UI actual)
   Widget _buildDeviceSyncStatus() {
+    // INDICADOR DUAL: Representa el celular y el TV
     bool isPhoneLinked = true; 
     bool isTvLinked = false;   
 
@@ -1423,7 +1431,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                   ),
 
-                  // BOTÓN RENOVAR
+                  // BOTÓN RENOVAR - Usa la nueva lógica _canSeePaymentBanks
                   const SizedBox(width: 8),
                   InkWell(
                     onTap: () => _showPaymentOptionsModal(context, isHead: _canSeePaymentBanks), 
@@ -1500,7 +1508,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ],
               ),
         actions: [
-          // NUEVO: ÍCONO DE ENGRANAJE QUE ABRE EL MENÚ MAESTRO
+          // ENGRANAJE - Menú de Configuración
           if (!_isSearching)
             IconButton(
               tooltip: 'Configuración',
