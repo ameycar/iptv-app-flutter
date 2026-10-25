@@ -1080,7 +1080,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           ),
                           onPressed: () async {
-                            final msg = '¡Hola! He realizado una transferencia para renovar mi plan. Mi usuario es: ${currentUser?.username ?? "cliente"}. Adjunto mi voucher de pago.';
+                            final msg = '¡Hola! He realizado una transferencia para renovar mi plan hoy. Mi usuario es: ${currentUser?.username ?? "cliente"}. Adjunto mi voucher de pago.';
                             Clipboard.setData(ClipboardData(text: msg));
                             
                             const phoneNumber = "51905823660"; 
