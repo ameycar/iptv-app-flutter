@@ -21,10 +21,12 @@ import 'services/m3u_sanitizer_service.dart';
 import 'services/epg_service.dart';
 import 'services/auth_service.dart';
 import 'services/dvr_recording_service.dart';
+import 'services/remote_control_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/admin_panel_screen.dart';
 import 'screens/family_panel_screen.dart';
 import 'screens/profile_selector_screen.dart';
+import 'screens/remote_control_screen.dart';
 import 'widgets/alexa_voice_sheet.dart';
 import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
@@ -312,6 +314,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _isFullScreenMode = false;
   bool _showOsd = true;
   double _currentVolume = 1.0;
+  double _volumeBeforeMute = 1.0;
 
   // Estados de Timeshift (Retroceso en vivo) y Reproducción DVR
   bool _isBehindLive = false;
@@ -320,6 +323,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   bool _isInPipMode = false;
   bool _showLiveChat = false;
+  bool _isPremiumToolsExpanded = false; // Despliega u oculta el cajón PRO en barra superior
   String _selectedLanguage = 'Español (Latinoamérica)';
   int _customAvatarIdx = 0;
 
@@ -353,6 +357,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       AuthService.currentUser?.id ??
       'default_profile';
 
+  /// Compuerta lista para la futura fase de segmentación Gratis vs Premium/VIP
+  bool get _hasPremiumFeaturesAccess {
+    // Actualmente habilitado para todas tus cuentas activas; en la fase de planes se conectará a user.isVip
+    return true;
+  }
+
   bool get _canSeePaymentBanks {
     final user = AuthService.currentUser;
     if (user == null) return true;
@@ -373,6 +383,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _startClockTimer();
     _startAccountHardwareGuard();
     _listenToAlarmNotificationTaps();
+    _startListeningRemoteTvCommands();
     _loadFavorites();
     _loadSavedChannels();
     _ensureUserHasReferralCode();
@@ -380,6 +391,102 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       NotificationService.requestPermissionsSafely();
     });
+  }
+
+  // ===========================================================================
+  // RECEPTOR EN TIEMPO REAL PARA CUANDO EL CELULAR CONTROLA LA TV / PC
+  // ===========================================================================
+
+  void _startListeningRemoteTvCommands() {
+    RemoteControlService.listenToCommands(
+      onCommandReceived: (command, extra) async {
+        if (!mounted) return;
+        switch (command) {
+          case 'channel_next':
+            _nextChannel();
+            break;
+          case 'channel_prev':
+            _previousChannel();
+            break;
+          case 'play':
+            await _videoPlayerController?.play();
+            if (mounted) setState(() {});
+            break;
+          case 'pause':
+            await _videoPlayerController?.pause();
+            if (mounted) setState(() => _isBehindLive = true);
+            break;
+          case 'rewind_15':
+            await _seekRelativeSeconds(-15);
+            break;
+          case 'forward_15':
+            await _seekRelativeSeconds(15);
+            break;
+          case 'jump_live':
+            _jumpBackToLiveStream();
+            break;
+          case 'toggle_fullscreen':
+            setState(() => _isFullScreenMode = !_isFullScreenMode);
+            break;
+          case 'toggle_rec':
+            final activeCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+                ? _channels[_selectedChannelIndex]
+                : null;
+            await _toggleManualDvrRecording(activeCh);
+            break;
+          case 'vol_up':
+            _currentVolume = (_currentVolume + 0.15).clamp(0.0, 1.0);
+            await _videoPlayerController?.setVolume(_currentVolume);
+            break;
+          case 'vol_down':
+            _currentVolume = (_currentVolume - 0.15).clamp(0.0, 1.0);
+            await _videoPlayerController?.setVolume(_currentVolume);
+            break;
+          case 'mute_toggle':
+            if (_currentVolume > 0.01) {
+              _volumeBeforeMute = _currentVolume;
+              _currentVolume = 0.0;
+            } else {
+              _currentVolume = _volumeBeforeMute > 0.05 ? _volumeBeforeMute : 1.0;
+            }
+            await _videoPlayerController?.setVolume(_currentVolume);
+            break;
+          case 'tune_channel':
+            final url = (extra['url'] ?? '').toString().trim();
+            final name = (extra['name'] ?? '').toString().trim();
+            int idx = -1;
+            if (url.isNotEmpty) {
+              idx = _channels.indexWhere((c) => c.streamUrl.trim() == url);
+            }
+            if (idx == -1 && name.isNotEmpty) {
+              idx = _channels.indexWhere(
+                (c) => c.name.toLowerCase() == name.toLowerCase(),
+              );
+            }
+            if (idx != -1) {
+              setState(() => _selectedSection = 'En Vivo');
+              _changeChannel(_channels[idx]);
+            }
+            break;
+        }
+      },
+    );
+  }
+
+  void _openRemoteControlModalScreen() {
+    final activeCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+        ? _channels[_selectedChannelIndex]
+        : null;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RemoteControlScreen(
+          channels: _channels,
+          favoriteUrls: _favoriteChannelUrls,
+          initialChannel: activeCh,
+        ),
+      ),
+    );
   }
 
   // ===========================================================================
@@ -820,8 +927,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     } catch (_) {}
 
-    // Si estaba grabando actualmente este mismo programa porque el usuario llegó unos minutos tarde,
-    // guardamos lo que lleva grabado hasta ahora y le ofrecemos verlo desde el minuto 00:00!
     if (DvrRecordingService.isRecordingNotifier.value &&
         (DvrRecordingService.activeAlarmId == alarmId ||
             DvrRecordingService.activeRecordingChannel.value.toLowerCase() ==
@@ -833,7 +938,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     }
 
-    // Revisamos si ya se completó una grabación reciente de esta alarma
     final existingRec = DvrRecordingService.findRecordingByChannelOrAlarm(
       alarmId: alarmId,
       channelName: targetName,
@@ -869,8 +973,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       _changeChannel(targetChannel);
 
-      // Si el teléfono despertó por la alarma y tenía Auto-REC activo pero la app estaba cerrada antes,
-      // iniciamos la grabación inmediatamente al abrirse
       if (autoRecord && !DvrRecordingService.isRecordingNotifier.value) {
         final prog = EpgService.getCurrentProgram(targetChannel.name, targetChannel.groupCategory);
         unawaited(
@@ -1484,6 +1586,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 16),
 
+              // Renovación movida aquí al Engranaje como pediste (limpia la barra superior)
+              _buildSettingsTile(
+                icon: Icons.confirmation_number_outlined,
+                color: const Color(0xFF00E676),
+                title: 'Renovar Suscripción / Canjear PIN',
+                subtitle: 'Activar PIN 24/7 o ver medios de pago oficiales',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showRenewSubscriptionModal();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.settings_remote,
+                color: const Color(0xFF00E5FF),
+                title: 'Mando a Distancia TV & Cast',
+                subtitle: 'Controlar Smart TV / PC desde tu celular sin control físico',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openRemoteControlModalScreen();
+                },
+              ),
               _buildSettingsTile(
                 icon: Icons.fiber_smart_record,
                 color: const Color(0xFFFF1744),
@@ -2853,6 +2976,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  // LAYOUT HORIZONTAL CORREGIDO: Proporciones amplias para que el nombre del canal jamás se aplaste
   Widget _buildLandscapeLayout() {
     final activeChannel = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
         ? _channels[_selectedChannelIndex]
@@ -2862,121 +2986,155 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return _buildImmersivePlayer(activeChannel);
     }
 
-    return Row(
-      children: [
-        Container(
-          width: 195,
-          decoration: BoxDecoration(
-            color: const Color(0xFF0F172A).withOpacity(0.85),
-            border: const Border(right: BorderSide(color: Color(0x337B2CBF))),
+    return SafeArea(
+      child: Row(
+        children: [
+          Container(
+            width: 172,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F172A).withOpacity(0.85),
+              border: const Border(right: BorderSide(color: Color(0x337B2CBF))),
+            ),
+            child: ListView(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(left: 14, top: 16, bottom: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'AMEYCAR TV',
+                        style: TextStyle(
+                          color: Color(0xFFC77DFF),
+                          fontWeight: FontWeight.w900,
+                          fontSize: 15,
+                          letterSpacing: 1.1,
+                        ),
+                      ),
+                      Text(
+                        '🕒 $_currentTime',
+                        style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+                _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
+                _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
+                _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
+                _buildSideMenuItem(Icons.settings_remote, 'Mando TV & Cast', _openRemoteControlModalScreen),
+                _buildSideMenuItem(Icons.fiber_smart_record, 'Grabaciones DVR (${DvrRecordingService.recordings.length})', _openDvrRecordingsVaultModal),
+                _buildSideMenuItem(Icons.alarm_on, 'Alarmas (${_activeAlarms.length})', _openActiveAlarmsManagerModal),
+                _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
+                _buildSideMenuItem(Icons.forum_outlined, 'Chat / Emojis Vivo', () => setState(() => _showLiveChat = !_showLiveChat)),
+                _buildSideMenuItem(Icons.playlist_add, 'Mis Listas (${_savedPlaylists.length}/5)', _openM3uDialog),
+                const Divider(color: Colors.white12),
+                _buildSideMenuItem(Icons.confirmation_number_outlined, 'Renovar / Pagos', _showRenewSubscriptionModal),
+                _buildSideMenuItem(Icons.card_giftcard, 'Gana +15 Días', _showReferralClubModal),
+                _buildSideMenuItem(Icons.headset_mic, 'Soporte / CEO', _openSupportMenu),
+                _buildSideMenuItem(Icons.settings, 'Configuración', _showSettingsMenu),
+                if (AuthService.isAdmin)
+                  _buildSideMenuItem(Icons.admin_panel_settings, 'Panel Admin VIP', () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
+                    );
+                  }),
+              ],
+            ),
           ),
-          child: ListView(
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(left: 16, top: 20, bottom: 12),
+          if (_selectedSection == 'En Vivo') ...[
+            Expanded(
+              flex: 5,
+              child: Container(
+                margin: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0x337B2CBF)),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: _buildVideoPlayerSection(activeChannel, fillAvailableHeight: true),
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 4,
+              child: Container(
+                margin: const EdgeInsets.fromLTRB(2, 6, 6, 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A).withOpacity(0.78),
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'AMEYCAR TV',
-                      style: TextStyle(
-                        color: Color(0xFFC77DFF),
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                        letterSpacing: 1.2,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Canales (${_filteredChannels.length})',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white70, fontSize: 11.5, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                            icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 17),
+                            onPressed: () => setState(() => _isSearching = !_isSearching),
+                          ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                            icon: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 17),
+                            onPressed: _startVoiceSearch,
+                          ),
+                        ],
                       ),
                     ),
-                    Text(
-                      '🕒 $_currentTime',
-                      style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
-                    ),
+                    _buildSearchInputHeader(),
+                    _buildCategoryChips(),
+                    Expanded(child: _buildChannelListView(compactLandscape: true)),
                   ],
                 ),
               ),
-              _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
-              _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
-              _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
-              _buildSideMenuItem(Icons.fiber_smart_record, 'Grabaciones DVR (${DvrRecordingService.recordings.length})', _openDvrRecordingsVaultModal),
-              _buildSideMenuItem(Icons.alarm_on, 'Alarmas (${_activeAlarms.length})', _openActiveAlarmsManagerModal),
-              _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
-              _buildSideMenuItem(Icons.forum_outlined, 'Chat / Emojis Vivo', () => setState(() => _showLiveChat = !_showLiveChat)),
-              _buildSideMenuItem(Icons.playlist_add, 'Mis Listas (${_savedPlaylists.length}/5)', _openM3uDialog),
-              const Divider(color: Colors.white12),
-              _buildSideMenuItem(Icons.confirmation_number_outlined, 'Renovar / Pagos', _showRenewSubscriptionModal),
-              _buildSideMenuItem(Icons.card_giftcard, 'Gana +15 Días', _showReferralClubModal),
-              _buildSideMenuItem(Icons.headset_mic, 'Soporte / CEO', _openSupportMenu),
-              _buildSideMenuItem(Icons.settings, 'Configuración', _showSettingsMenu),
-              if (AuthService.isAdmin)
-                _buildSideMenuItem(Icons.admin_panel_settings, 'Panel Admin VIP', () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
-                  );
-                }),
-            ],
-          ),
-        ),
-        if (_selectedSection == 'En Vivo') ...[
-          Expanded(
-            flex: 3,
-            child: Container(
-              margin: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.black,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0x337B2CBF)),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: _buildVideoPlayerSection(activeChannel),
+            ),
+          ] else if (_selectedSection == 'Películas') ...[
+            Expanded(
+              child: VodGridView(
+                items: _movies,
+                contentType: 'movie',
+                searchQuery: _searchQuery,
+                onPlayItem: (item) {
+                  _changeChannel(item);
+                  setState(() => _isFullScreenMode = true);
+                },
               ),
             ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Container(
-              margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F172A).withOpacity(0.7),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                children: [
-                  _buildSearchInputHeader(),
-                  Expanded(child: _buildChannelListView()),
-                ],
+          ] else ...[
+            Expanded(
+              child: VodGridView(
+                items: _series,
+                contentType: 'series',
+                searchQuery: _searchQuery,
+                onPlayItem: (item) {
+                  _changeChannel(item);
+                  setState(() => _isFullScreenMode = true);
+                },
               ),
             ),
-          ),
-        ] else if (_selectedSection == 'Películas') ...[
-          Expanded(
-            child: VodGridView(
-              items: _movies,
-              contentType: 'movie',
-              searchQuery: _searchQuery,
-              onPlayItem: (item) {
-                _changeChannel(item);
-                setState(() => _isFullScreenMode = true);
-              },
-            ),
-          ),
-        ] else ...[
-          Expanded(
-            child: VodGridView(
-              items: _series,
-              contentType: 'series',
-              searchQuery: _searchQuery,
-              onPlayItem: (item) {
-                _changeChannel(item);
-                setState(() => _isFullScreenMode = true);
-              },
-            ),
-          ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
+  // BARRA SUPERIOR DEPURADA: Uso diario directo + Botón Desplegable ✨ PRO (Sin Renovar/DVR/Soporte repetidos)
   Widget _buildTopGlassBar([ChannelModel? activeChannel]) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -2996,8 +3154,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       style: TextStyle(
                         color: Color(0xFFC77DFF),
                         fontWeight: FontWeight.w900,
-                        fontSize: 14,
-                        letterSpacing: 1.1,
+                        fontSize: 13.5,
+                        letterSpacing: 1.0,
                       ),
                     ),
                     const SizedBox(width: 4),
@@ -3026,9 +3184,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         if (AuthService.isAdmin) ...[
                           Material(
                             color: const Color(0xFFFFD600),
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(14),
                             child: InkWell(
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(14),
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -3038,30 +3196,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 });
                               },
                               child: const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                padding: EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(Icons.shield, color: Colors.black, size: 14),
-                                    SizedBox(width: 4),
+                                    Icon(Icons.shield, color: Colors.black, size: 13),
+                                    SizedBox(width: 3),
                                     Text(
                                       'ADMIN',
-                                      style: TextStyle(color: Colors.black, fontSize: 10.5, fontWeight: FontWeight.w900),
+                                      style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.w900),
                                     ),
                                   ],
                                 ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 6),
+                          const SizedBox(width: 5),
                         ],
 
                         if (AuthService.currentUser?.isPartOfFamily == true) ...[
                           Material(
                             color: const Color(0xFF00E5FF),
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(14),
                             child: InkWell(
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(14),
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -3078,30 +3236,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 );
                               },
                               child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const Icon(Icons.account_circle, color: Colors.black, size: 14),
-                                    const SizedBox(width: 4),
+                                    const Icon(Icons.account_circle, color: Colors.black, size: 13),
+                                    const SizedBox(width: 3),
                                     Text(
                                       AuthService.currentActiveProfile?.deviceName ?? 'PERFIL',
-                                      style: const TextStyle(color: Colors.black, fontSize: 10.5, fontWeight: FontWeight.w900),
+                                      style: const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.w900),
                                     ),
                                   ],
                                 ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 6),
+                          const SizedBox(width: 5),
                         ],
 
                         if (AuthService.isFamilyAdmin) ...[
                           Material(
                             color: const Color(0xFFC77DFF),
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(14),
                             child: InkWell(
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(14),
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -3109,92 +3267,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 ).then((_) => setState(() {}));
                               },
                               child: const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                padding: EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(Icons.family_restroom, color: Colors.black, size: 14),
-                                    SizedBox(width: 4),
+                                    Icon(Icons.family_restroom, color: Colors.black, size: 13),
+                                    SizedBox(width: 3),
                                     Text(
                                       'FAMILIA',
-                                      style: TextStyle(color: Colors.black, fontSize: 10.5, fontWeight: FontWeight.w900),
+                                      style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.w900),
                                     ),
                                   ],
                                 ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 6),
+                          const SizedBox(width: 5),
                         ],
 
-                        Material(
-                          color: const Color(0xFF00E676),
-                          borderRadius: BorderRadius.circular(16),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(16),
-                            onTap: _showRenewSubscriptionModal,
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.confirmation_number_outlined, color: Colors.black, size: 14),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'RENOVAR',
-                                    style: TextStyle(color: Colors.black, fontSize: 10.5, fontWeight: FontWeight.w900),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-
-                        ValueListenableBuilder<int>(
-                          valueListenable: DvrRecordingService.recordingsCountNotifier,
-                          builder: (_, recCount, __) => _buildTopBarActionItem(
-                            icon: Icons.fiber_smart_record,
-                            color: const Color(0xFFFF1744),
-                            badgeCount: recCount,
-                            tooltip: 'Mis Grabaciones DVR',
-                            onPressed: _openDvrRecordingsVaultModal,
-                          ),
-                        ),
-
-                        _buildTopBarActionItem(
-                          icon: Icons.picture_in_picture_alt_rounded,
-                          color: const Color(0xFF00E5FF),
-                          tooltip: 'Ventana Flotante (PiP)',
-                          onPressed: _enterNativePiP,
-                        ),
-
-                        _buildTopBarActionItem(
-                          icon: _showLiveChat ? Icons.forum : Icons.forum_outlined,
-                          color: _showLiveChat ? const Color(0xFFFFD600) : Colors.white70,
-                          tooltip: 'Chat y Emojis en Vivo',
-                          onPressed: () => setState(() => _showLiveChat = !_showLiveChat),
-                        ),
-
-                        _buildTopBarActionItem(
-                          icon: Icons.playlist_add,
-                          color: const Color(0xFF00E5FF),
-                          tooltip: 'Gestor de Listas M3U (Hasta 5)',
-                          onPressed: _openM3uDialog,
-                        ),
-
-                        _buildTopBarActionItem(
-                          icon: Icons.alarm_on,
-                          color: Colors.white,
-                          badgeCount: _activeAlarms.length,
-                          tooltip: 'Alarmas Activas',
-                          onPressed: _openActiveAlarmsManagerModal,
-                        ),
-
+                        // === HERRAMIENTAS ESENCIALES DE USO DIARIO ===
                         _buildTopBarActionItem(
                           icon: Icons.search,
                           color: const Color(0xFFC77DFF),
-                          tooltip: 'Buscar',
+                          tooltip: 'Buscar Canal o Película',
                           onPressed: () => setState(() => _isSearching = true),
                         ),
 
@@ -3202,16 +3297,104 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           icon: Icons.mic,
                           color: const Color(0xFF00E5FF),
                           isGlowing: true,
-                          tooltip: 'Asistente de Voz',
+                          tooltip: 'Asistente de Voz IA',
                           onPressed: _startVoiceSearch,
                         ),
 
                         _buildTopBarActionItem(
-                          icon: Icons.headset_mic,
-                          color: const Color(0xFF00E676),
-                          tooltip: 'Soporte y Contacto CEO',
-                          onPressed: _openSupportMenu,
+                          icon: _showLiveChat ? Icons.forum : Icons.emoji_emotions_outlined,
+                          color: _showLiveChat ? const Color(0xFFFFD600) : Colors.white,
+                          tooltip: 'Chat y Reacciones en Vivo',
+                          onPressed: () => setState(() => _showLiveChat = !_showLiveChat),
                         ),
+
+                        _buildTopBarActionItem(
+                          icon: Icons.settings_remote,
+                          color: const Color(0xFF00E5FF),
+                          tooltip: 'Mando TV & Cast',
+                          onPressed: _openRemoteControlModalScreen,
+                        ),
+
+                        // === PÍLDORA DESPLEGABLE DE FUNCIONES PREMIUM (PRO) ===
+                        const SizedBox(width: 3),
+                        Material(
+                          color: _isPremiumToolsExpanded
+                              ? const Color(0xFFFFD600)
+                              : const Color(0x26FFD600),
+                          borderRadius: BorderRadius.circular(14),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(14),
+                            onTap: () {
+                              if (!_hasPremiumFeaturesAccess) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('✨ Funciones exclusivas para usuarios Premium.'),
+                                    backgroundColor: Color(0xFF7B2CBF),
+                                  ),
+                                );
+                                return;
+                              }
+                              setState(() => _isPremiumToolsExpanded = !_isPremiumToolsExpanded);
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: const Color(0xFFFFD600).withOpacity(0.75),
+                                  width: 0.9,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.workspace_premium,
+                                    color: _isPremiumToolsExpanded ? Colors.black : const Color(0xFFFFD600),
+                                    size: 13,
+                                  ),
+                                  const SizedBox(width: 2),
+                                  Text(
+                                    'PRO',
+                                    style: TextStyle(
+                                      color: _isPremiumToolsExpanded ? Colors.black : const Color(0xFFFFD600),
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  Icon(
+                                    _isPremiumToolsExpanded ? Icons.chevron_left : Icons.chevron_right,
+                                    color: _isPremiumToolsExpanded ? Colors.black : const Color(0xFFFFD600),
+                                    size: 13,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        if (_isPremiumToolsExpanded && _hasPremiumFeaturesAccess) ...[
+                          const SizedBox(width: 4),
+                          _buildTopBarActionItem(
+                            icon: Icons.picture_in_picture_alt_rounded,
+                            color: const Color(0xFF00E5FF),
+                            tooltip: 'Ventana Flotante (PiP)',
+                            onPressed: _enterNativePiP,
+                          ),
+                          _buildTopBarActionItem(
+                            icon: Icons.playlist_add,
+                            color: const Color(0xFFC77DFF),
+                            tooltip: 'Gestor de Listas M3U (Hasta 5)',
+                            onPressed: _openM3uDialog,
+                          ),
+                          _buildTopBarActionItem(
+                            icon: Icons.alarm_on,
+                            color: const Color(0xFFFFB703),
+                            badgeCount: _activeAlarms.length,
+                            tooltip: 'Alarmas y Auto-DVR',
+                            onPressed: _openActiveAlarmsManagerModal,
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -3223,7 +3406,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                  tooltip: 'Configuración y Ajustes',
+                  tooltip: 'Configuración, Renovación, DVR y Soporte',
                   icon: const Icon(Icons.settings, color: Colors.white, size: 20),
                   onPressed: _showSettingsMenu,
                 ),
@@ -3719,7 +3902,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildSearchInputHeader() {
     if (!_isSearching) return const SizedBox.shrink();
-    return Padding(padding: const EdgeInsets.all(8.0), child: _buildActiveSearchBar());
+    return Padding(padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 2.0), child: _buildActiveSearchBar());
   }
 
   Widget _buildSectionTabs() {
@@ -3847,7 +4030,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildVideoPlayerSection(ChannelModel? activeChannel) {
+  Widget _buildVideoPlayerSection(ChannelModel? activeChannel, {bool fillAvailableHeight = false}) {
     final isReady = !_isVideoLoading &&
         !_hasVideoError &&
         _videoPlayerController != null &&
@@ -3865,7 +4048,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       },
       onDoubleTap: () => setState(() => _isFullScreenMode = !_isFullScreenMode),
       child: Container(
-        height: 225,
+        height: fillAvailableHeight ? double.infinity : 225,
         width: double.infinity,
         color: const Color(0xFF070A10),
         child: Stack(
@@ -4091,11 +4274,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildCategoryChips() {
     return Container(
-      height: 48,
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      height: 42,
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
         itemCount: _categories.length,
         itemBuilder: (context, index) {
           final category = _categories[index];
@@ -4103,11 +4286,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           return GestureDetector(
             onTap: () => setState(() => _selectedCategory = category),
             child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
                 color: isSelected ? const Color(0xFF7B2CBF) : const Color(0xFF1E293B).withOpacity(0.8),
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: isSelected ? const Color(0xFFC77DFF) : Colors.white10),
               ),
               child: Center(
@@ -4123,22 +4306,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildChannelListView() {
+  // LISTA DE CANALES CON DISEÑO ANTI-APLASTAMIENTO EN VERTICAL Y HORIZONTAL
+  Widget _buildChannelListView({bool compactLandscape = false}) {
     final list = _filteredChannels;
 
     if (list.isEmpty) {
       return Center(
-        child: Text(
-          _searchQuery.isNotEmpty
-              ? 'No se encontraron canales para "$_searchQuery"'
-              : 'No hay canales disponibles en esta categoría',
-          style: const TextStyle(color: Colors.white54, fontSize: 12),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Text(
+            _searchQuery.isNotEmpty
+                ? 'No se encontraron canales para "$_searchQuery"'
+                : 'No hay canales disponibles en esta categoría',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
         ),
       );
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: EdgeInsets.symmetric(horizontal: compactLandscape ? 8 : 12, vertical: 6),
       itemCount: list.length,
       itemBuilder: (context, index) {
         final channel = list[index];
@@ -4150,34 +4338,67 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return Container(
           margin: const EdgeInsets.only(bottom: 6),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF1E293B).withOpacity(0.9) : const Color(0xFF0F172A).withOpacity(0.4),
+            color: isSelected ? const Color(0xFF1E293B).withOpacity(0.92) : const Color(0xFF0F172A).withOpacity(0.45),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: isSelected ? const Color(0xFF9D4EDD) : Colors.transparent),
+            border: Border.all(color: isSelected ? const Color(0xFF9D4EDD) : Colors.white10),
           ),
-          child: ListTile(
-            dense: true,
-            leading: _buildChannelLogo(channel, isSelected),
-            title: Text(
-              channel.name,
-              style: TextStyle(color: isSelected ? const Color(0xFFC77DFF) : Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text('Grupo: ${channel.groupCategory} • ${channel.resolution}', style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: Icon(
-                    isFav ? Icons.star : Icons.star_border,
-                    color: const Color(0xFFFFD600),
-                    size: 20,
-                  ),
-                  onPressed: () => _toggleFavorite(channel),
-                ),
-                if (isSelected)
-                  const Icon(Icons.volume_up, color: Color(0xFFC77DFF), size: 18),
-              ],
-            ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
             onTap: () => _changeChannel(channel),
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: compactLandscape ? 8 : 12,
+                vertical: compactLandscape ? 8 : 10,
+              ),
+              child: Row(
+                children: [
+                  _buildChannelLogo(channel, isSelected),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          channel.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isSelected ? const Color(0xFFC77DFF) : Colors.white,
+                            fontSize: compactLandscape ? 12 : 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${channel.groupCategory} • ${channel.resolution}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () => _toggleFavorite(channel),
+                    child: Padding(
+                      padding: const EdgeInsets.all(6.0),
+                      child: Icon(
+                        isFav ? Icons.star : Icons.star_border,
+                        color: const Color(0xFFFFD600),
+                        size: 19,
+                      ),
+                    ),
+                  ),
+                  if (isSelected) ...[
+                    const SizedBox(width: 2),
+                    const Icon(Icons.volume_up, color: Color(0xFFC77DFF), size: 16),
+                  ],
+                ],
+              ),
+            ),
           ),
         );
       },
@@ -4187,8 +4408,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildChannelLogo(ChannelModel channel, bool isSelected) {
     if (channel.logoUrl.isNotEmpty) {
       return Container(
-        width: 36,
-        height: 36,
+        width: 34,
+        height: 34,
         decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), borderRadius: BorderRadius.circular(6)),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(6),
@@ -4205,7 +4426,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildFallbackAvatar(ChannelModel channel, bool isSelected) {
     return CircleAvatar(
-      radius: 16,
+      radius: 15,
       backgroundColor: isSelected ? const Color(0xFF7B2CBF) : const Color(0xFF1E293B),
       child: Text('${channel.number}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
     );
@@ -4302,6 +4523,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 child: Row(
                   children: [
                     _buildMiniPlayerPillButton(
+                      icon: Icons.settings_remote,
+                      label: 'Mando TV',
+                      color: Colors.black54,
+                      textColor: const Color(0xFF00E5FF),
+                      onTap: _openRemoteControlModalScreen,
+                    ),
+                    const SizedBox(width: 8),
+                    _buildMiniPlayerPillButton(
                       icon: Icons.fiber_smart_record,
                       label: 'Grabaciones',
                       color: Colors.black54,
@@ -4349,8 +4578,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildSideMenuItem(IconData icon, String title, VoidCallback onTap) {
     return ListTile(
       dense: true,
-      leading: Icon(icon, color: const Color(0xFFC77DFF), size: 20),
-      title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 12)),
+      visualDensity: VisualDensity.compact,
+      leading: Icon(icon, color: const Color(0xFFC77DFF), size: 19),
+      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 11.5)),
       onTap: onTap,
     );
   }
@@ -4358,6 +4588,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    RemoteControlService.dispose();
     _syncAutoPipState(false);
     WakelockPlus.disable();
     _accountGuardSub?.cancel();
