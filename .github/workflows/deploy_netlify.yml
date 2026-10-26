@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: # Permite disparar la compilación manualmente desde GitHub
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
@@ -22,7 +22,7 @@ jobs:
       - name: Configurar Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.x'
+          flutter-version: '3.27.4'
           channel: 'stable'
           cache: true
 
@@ -32,7 +32,9 @@ jobs:
 
       - name: Compilar Flutter Web
         working-directory: mi_iptv_app
-        run: flutter build web --release
+        run: |
+          flutter build web --release
+          echo "/* /index.html 200" > build/web/_redirects
 
       - name: Desplegar en Netlify
         uses: nwtgck/actions-netlify@v3.0
