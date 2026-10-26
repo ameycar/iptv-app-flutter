@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
@@ -31,6 +32,7 @@ import 'widgets/alexa_voice_sheet.dart';
 import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
 import 'widgets/live_chat_overlay.dart';
+import 'firebase_options.dart';
 
 // SERVICIO NATIVO PARA ALARMAS CON AUTO-SINTONIZACIÓN Y SOPORTE DVR
 class NotificationService {
@@ -165,20 +167,26 @@ void main() async {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
     try {
-      await Firebase.initializeApp();
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
     } catch (e) {
       debugPrint('Error seguro en Firebase.initializeApp: $e');
     }
-    try {
-      await NotificationService.initialize();
-    } catch (e) {
-      debugPrint('Error seguro en NotificationService: $e');
+
+    if (!kIsWeb) {
+      try {
+        await NotificationService.initialize();
+      } catch (e) {
+        debugPrint('Error seguro en NotificationService: $e');
+      }
+      try {
+        await DvrRecordingService.initialize();
+      } catch (e) {
+        debugPrint('Error seguro en DvrRecordingService: $e');
+      }
     }
-    try {
-      await DvrRecordingService.initialize();
-    } catch (e) {
-      debugPrint('Error seguro en DvrRecordingService: $e');
-    }
+
     runApp(const AmeycarTVApp());
   }, (error, stack) {
     debugPrint('Excepción capturada en arranque: $error');
@@ -357,9 +365,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       AuthService.currentUser?.id ??
       'default_profile';
 
-  /// Compuerta lista para la futura fase de segmentación Gratis vs Premium/VIP
   bool get _hasPremiumFeaturesAccess {
-    // Actualmente habilitado para todas tus cuentas activas; en la fase de planes se conectará a user.isVip
     return true;
   }
 
@@ -375,11 +381,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WakelockPlus.enable();
-    _syncAutoPipState(true);
+    
+    if (!kIsWeb) {
+      WakelockPlus.enable();
+      _syncAutoPipState(true);
+      DvrRecordingService.initialize();
+    }
 
     EpgService.ensureInitialized();
-    DvrRecordingService.initialize();
     _startClockTimer();
     _startAccountHardwareGuard();
     _listenToAlarmNotificationTaps();
@@ -388,9 +397,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _loadSavedChannels();
     _ensureUserHasReferralCode();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      NotificationService.requestPermissionsSafely();
-    });
+    if (!kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        NotificationService.requestPermissionsSafely();
+      });
+    }
   }
 
   // ===========================================================================
@@ -1586,7 +1597,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 16),
 
-              // Renovación movida aquí al Engranaje como pediste (limpia la barra superior)
+              // Renovación movida aquí al Engranaje (limpia la barra superior)
               _buildSettingsTile(
                 icon: Icons.confirmation_number_outlined,
                 color: const Color(0xFF00E676),
@@ -2908,6 +2919,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             const SingleActivator(LogicalKeyboardKey.pageUp): _previousChannel,
             const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _seekRelativeSeconds(-15),
             const SingleActivator(LogicalKeyboardKey.arrowRight): () => _seekRelativeSeconds(15),
+            const SingleActivator(LogicalKeyboardKey.space): () {
+              if (_videoPlayerController != null) {
+                setState(() {
+                  if (_videoPlayerController!.value.isPlaying) {
+                    _videoPlayerController!.pause();
+                    _isBehindLive = true;
+                  } else {
+                    _videoPlayerController!.play();
+                  }
+                });
+              }
+            },
+            const SingleActivator(LogicalKeyboardKey.keyF): () {
+              setState(() => _isFullScreenMode = !_isFullScreenMode);
+            },
             const SingleActivator(LogicalKeyboardKey.select): () {
               setState(() => _isFullScreenMode = !_isFullScreenMode);
             },
