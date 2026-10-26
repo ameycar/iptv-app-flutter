@@ -1,0 +1,49 @@
+name: Despliegue Web en Netlify
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Permite disparar la compilación manualmente desde GitHub
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Instalar dependencias
+        working-directory: mi_iptv_app
+        run: flutter pub get
+
+      - name: Compilar Flutter Web
+        working-directory: mi_iptv_app
+        run: flutter build web --release
+
+      - name: Desplegar en Netlify
+        uses: nwtgck/actions-netlify@v3.0
+        with:
+          publish-dir: './mi_iptv_app/build/web'
+          production-branch: main
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          deploy-message: "Despliegue automático Ameycar TV Web"
+          enable-pull-request-comment: false
+          enable-commit-comment: false
+          overwrites-pull-request-comment: false
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
