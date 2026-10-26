@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/epg_service.dart';
+import '../services/dvr_recording_service.dart';
 
 class ZappingChannelOverlay extends StatefulWidget {
   final dynamic channel;
@@ -7,11 +8,18 @@ class ZappingChannelOverlay extends StatefulWidget {
   final int totalChannels;
   final bool isPlaying;
   final bool isFullScreen;
+  final bool isBehindLive;
+  final bool isPlayingDvrRecording;
+  final String? dvrRecordingTitle;
   final VoidCallback onPlayPause;
   final VoidCallback onNext;
   final VoidCallback onPrevious;
   final VoidCallback? onOpenEpg;
   final VoidCallback? onToggleFullScreen;
+  final VoidCallback? onRewind15s;
+  final VoidCallback? onForward15s;
+  final VoidCallback? onJumpToLive;
+  final VoidCallback? onToggleRecord;
 
   const ZappingChannelOverlay({
     super.key,
@@ -20,11 +28,18 @@ class ZappingChannelOverlay extends StatefulWidget {
     this.totalChannels = 0,
     required this.isPlaying,
     this.isFullScreen = false,
+    this.isBehindLive = false,
+    this.isPlayingDvrRecording = false,
+    this.dvrRecordingTitle,
     required this.onPlayPause,
     required this.onNext,
     required this.onPrevious,
     this.onOpenEpg,
     this.onToggleFullScreen,
+    this.onRewind15s,
+    this.onForward15s,
+    this.onJumpToLive,
+    this.onToggleRecord,
   });
 
   @override
@@ -97,8 +112,6 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     final logoUrl = _getLogoUrl();
     final resolution = _getResolution();
 
-    // ESCUCHA REACTIVA EN VIVO: Se reconstruye automáticamente cuando EpgService
-    // finaliza la consulta en internet (a los 2-3 segundos de sintonizar el canal)
     return ValueListenableBuilder<int>(
       valueListenable: EpgService.epgUpdateNotifier,
       builder: (context, _, __) {
@@ -110,7 +123,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
           alignment: Alignment.bottomCenter,
           child: Container(
             margin: const EdgeInsets.all(8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: const Color(0xFF090D16).withValues(alpha: 0.92),
               borderRadius: BorderRadius.circular(14),
@@ -130,7 +143,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Fila 1: Número CH, Logo, Nombre del Canal, Badge EN VIVO / Sincronizando, Play/Pause y Pantalla Completa
+                // Fila 1: Número CH, Logo, Nombre del Canal, Badge EN VIVO / DVR, Play/Pause y Pantalla Completa
                 Row(
                   children: [
                     Container(
@@ -144,7 +157,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                         ),
                       ),
                       child: Text(
-                        'CH $channelNumber',
+                        widget.isPlayingDvrRecording ? 'DVR' : 'CH $channelNumber',
                         style: const TextStyle(
                           color: Color(0xFF00E5FF),
                           fontWeight: FontWeight.w900,
@@ -205,64 +218,59 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                               ),
                             ),
                           ),
-                          if (currentProg.sourceLayer == 'internet_live_epg' ||
-                              currentProg.sourceLayer == 'tvmaze_api') ...[
-                            const SizedBox(width: 5),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF00E5FF).withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: const Color(0xFF00E5FF), width: 0.6),
-                              ),
-                              child: const Text(
-                                'EPG OFICIAL',
-                                style: TextStyle(
-                                  color: Color(0xFF00E5FF),
-                                  fontSize: 7.5,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
                       ),
                     ),
                     AnimatedBuilder(
                       animation: _pulseController,
                       builder: (context, child) {
-                        return Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: (isSyncing ? const Color(0xFFFFB703) : const Color(0xFFFF1744)).withValues(
-                              alpha: 0.2 + (_pulseController.value * 0.25),
-                            ),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: (isSyncing ? const Color(0xFFFFB703) : const Color(0xFFFF1744)).withValues(
-                                alpha: 0.6 + (_pulseController.value * 0.4),
+                        final Color badgeColor = widget.isPlayingDvrRecording
+                            ? const Color(0xFF9D4EDD)
+                            : widget.isBehindLive
+                                ? const Color(0xFFFFB703)
+                                : (isSyncing
+                                    ? const Color(0xFFFFB703)
+                                    : const Color(0xFFFF1744));
+
+                        final String badgeLabel = widget.isPlayingDvrRecording
+                            ? 'GRABACIÓN'
+                            : widget.isBehindLive
+                                ? 'DIFERIDO'
+                                : (isSyncing ? 'SINCRONIZANDO...' : 'EN VIVO');
+
+                        return GestureDetector(
+                          onTap: (widget.isBehindLive || widget.isPlayingDvrRecording)
+                              ? widget.onJumpToLive
+                              : null,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: badgeColor.withValues(
+                                alpha: 0.2 + (_pulseController.value * 0.25),
                               ),
-                              width: 1,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.circle,
-                                color: isSyncing ? const Color(0xFFFFB703) : const Color(0xFFFF1744),
-                                size: 6,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                isSyncing ? 'SINCRONIZANDO...' : 'EN VIVO',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 8.5,
-                                  fontWeight: FontWeight.w900,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: badgeColor.withValues(
+                                  alpha: 0.6 + (_pulseController.value * 0.4),
                                 ),
+                                width: 1,
                               ),
-                            ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.circle, color: badgeColor, size: 6),
+                                const SizedBox(width: 3),
+                                Text(
+                                  badgeLabel,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         );
                       },
@@ -304,16 +312,22 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                     ],
                   ],
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 5),
 
-                // Fila 2: Programa Actual Sincronizado y Horario
+                // Fila 2: Programa Actual (o título de grabación DVR) y Horario
                 Row(
                   children: [
-                    const Icon(Icons.play_arrow, color: Color(0xFF00E5FF), size: 14),
+                    Icon(
+                      widget.isPlayingDvrRecording ? Icons.fiber_smart_record : Icons.play_arrow,
+                      color: const Color(0xFF00E5FF),
+                      size: 14,
+                    ),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
-                        currentProg.title,
+                        widget.isPlayingDvrRecording
+                            ? (widget.dvrRecordingTitle ?? currentProg.title)
+                            : currentProg.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -325,7 +339,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      currentProg.timeFormatted,
+                      widget.isPlayingDvrRecording ? 'DESDE INICIO' : currentProg.timeFormatted,
                       style: const TextStyle(
                         color: Colors.white54,
                         fontSize: 10.5,
@@ -334,9 +348,9 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                     ),
                   ],
                 ),
-                const SizedBox(height: 5),
+                const SizedBox(height: 4),
 
-                // Barra de Progreso del Programa en Tiempo Real
+                // Barra de Progreso
                 ClipRRect(
                   borderRadius: BorderRadius.circular(3),
                   child: LinearProgressIndicator(
@@ -350,112 +364,139 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                 ),
                 const SizedBox(height: 6),
 
-                // Fila 3: Siguiente Programa + Botón EPG + Botones CH- / CH+
-                Row(
-                  children: [
-                    Expanded(
-                      child: Row(
-                        children: [
-                          const Text(
-                            'A continuación: ',
-                            style: TextStyle(
-                              color: Color(0xFF00E5FF),
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Expanded(
-                            child: Text(
-                              nextProg.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white60,
-                                fontSize: 10,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (widget.onOpenEpg != null) ...[
-                          InkWell(
-                            onTap: widget.onOpenEpg,
-                            borderRadius: BorderRadius.circular(6),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF7B2CBF).withValues(alpha: 0.35),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: const Color(0xFFC77DFF).withValues(alpha: 0.6),
-                                ),
-                              ),
-                              child: const Row(
-                                children: [
-                                  Icon(Icons.calendar_month, color: Color(0xFFFFB703), size: 12),
-                                  SizedBox(width: 3),
-                                  Text(
-                                    'EPG',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 9.5,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 5),
-                        ],
-                        InkWell(
-                          onTap: widget.onPrevious,
-                          borderRadius: BorderRadius.circular(6),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.white10,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Row(
-                              children: [
-                                Icon(Icons.skip_previous, color: Colors.white70, size: 13),
-                                Text(' CH-', style: TextStyle(color: Colors.white70, fontSize: 9.5)),
-                              ],
-                            ),
-                          ),
+                // Fila 3: Controles Timeshift (-15s / +15s / IR A VIVO) + REC + EPG + CH- / CH+
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      if (widget.onRewind15s != null) ...[
+                        _buildCompactControlChip(
+                          icon: Icons.replay_10,
+                          label: '-15s',
+                          borderColor: Colors.white24,
+                          bgColor: Colors.white10,
+                          onTap: widget.onRewind15s!,
                         ),
                         const SizedBox(width: 5),
-                        InkWell(
-                          onTap: widget.onNext,
-                          borderRadius: BorderRadius.circular(6),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.white10,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Row(
-                              children: [
-                                Text('CH+ ', style: TextStyle(color: Colors.white70, fontSize: 9.5)),
-                                Icon(Icons.skip_next, color: Colors.white70, size: 13),
-                              ],
-                            ),
-                          ),
-                        ),
                       ],
-                    ),
-                  ],
+                      if (widget.onForward15s != null) ...[
+                        _buildCompactControlChip(
+                          icon: Icons.forward_10,
+                          label: '+15s',
+                          borderColor: Colors.white24,
+                          bgColor: Colors.white10,
+                          onTap: widget.onForward15s!,
+                        ),
+                        const SizedBox(width: 5),
+                      ],
+                      if ((widget.isBehindLive || widget.isPlayingDvrRecording) &&
+                          widget.onJumpToLive != null) ...[
+                        _buildCompactControlChip(
+                          icon: Icons.bolt,
+                          label: 'IR A VIVO',
+                          borderColor: const Color(0xFF00E5FF),
+                          bgColor: const Color(0xFF00E5FF).withValues(alpha: 0.22),
+                          iconColor: const Color(0xFF00E5FF),
+                          onTap: widget.onJumpToLive!,
+                        ),
+                        const SizedBox(width: 5),
+                      ],
+                      if (widget.onToggleRecord != null && !widget.isPlayingDvrRecording) ...[
+                        ValueListenableBuilder<bool>(
+                          valueListenable: DvrRecordingService.isRecordingNotifier,
+                          builder: (context, isRec, _) {
+                            return _buildCompactControlChip(
+                              icon: isRec ? Icons.stop_circle : Icons.fiber_manual_record,
+                              label: isRec ? 'STOP' : 'REC',
+                              borderColor: const Color(0xFFFF1744),
+                              bgColor: isRec
+                                  ? const Color(0xFFFF1744).withValues(alpha: 0.40)
+                                  : const Color(0xFFFF1744).withValues(alpha: 0.16),
+                              iconColor: const Color(0xFFFF1744),
+                              onTap: widget.onToggleRecord!,
+                            );
+                          },
+                        ),
+                        const SizedBox(width: 5),
+                      ],
+                      if (widget.onOpenEpg != null) ...[
+                        _buildCompactControlChip(
+                          icon: Icons.calendar_month,
+                          label: 'EPG',
+                          borderColor: const Color(0xFFC77DFF).withValues(alpha: 0.6),
+                          bgColor: const Color(0xFF7B2CBF).withValues(alpha: 0.35),
+                          iconColor: const Color(0xFFFFB703),
+                          onTap: widget.onOpenEpg!,
+                        ),
+                        const SizedBox(width: 5),
+                      ],
+                      _buildCompactControlChip(
+                        icon: Icons.skip_previous,
+                        label: 'CH-',
+                        borderColor: Colors.white12,
+                        bgColor: Colors.white10,
+                        onTap: widget.onPrevious,
+                      ),
+                      const SizedBox(width: 5),
+                      _buildCompactControlChip(
+                        icon: Icons.skip_next,
+                        label: 'CH+',
+                        borderColor: Colors.white12,
+                        bgColor: Colors.white10,
+                        onTap: widget.onNext,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Sig: ${nextProg.title}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white60, fontSize: 9.5),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildCompactControlChip({
+    required IconData icon,
+    required String label,
+    required Color borderColor,
+    required Color bgColor,
+    required VoidCallback onTap,
+    Color iconColor = Colors.white70,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: borderColor),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: iconColor, size: 12.5),
+            const SizedBox(width: 3),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9.5,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

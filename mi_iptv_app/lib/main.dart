@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -19,6 +20,7 @@ import 'models/user_model.dart';
 import 'services/m3u_sanitizer_service.dart';
 import 'services/epg_service.dart';
 import 'services/auth_service.dart';
+import 'services/dvr_recording_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/admin_panel_screen.dart';
 import 'screens/family_panel_screen.dart';
@@ -28,7 +30,7 @@ import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
 import 'widgets/live_chat_overlay.dart';
 
-// SERVICIO NATIVO PARA ALARMAS CON AUTO-SINTONIZACIÓN EXACTA DE CANAL
+// SERVICIO NATIVO PARA ALARMAS CON AUTO-SINTONIZACIÓN Y SOPORTE DVR
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
@@ -102,6 +104,8 @@ class NotificationService {
     required DateTime scheduledDate,
     required String channelName,
     required String streamUrl,
+    String alarmId = '',
+    bool autoRecord = false,
   }) async {
     try {
       final difference = scheduledDate.difference(DateTime.now());
@@ -126,6 +130,8 @@ class NotificationService {
       final String encodedPayload = jsonEncode({
         'name': channelName,
         'url': streamUrl,
+        'alarmId': alarmId,
+        'autoRecord': autoRecord,
       });
 
       await _notificationsPlugin.zonedSchedule(
@@ -165,6 +171,11 @@ void main() async {
       await NotificationService.initialize();
     } catch (e) {
       debugPrint('Error seguro en NotificationService: $e');
+    }
+    try {
+      await DvrRecordingService.initialize();
+    } catch (e) {
+      debugPrint('Error seguro en DvrRecordingService: $e');
     }
     runApp(const AmeycarTVApp());
   }, (error, stack) {
@@ -302,6 +313,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _showOsd = true;
   double _currentVolume = 1.0;
 
+  // Estados de Timeshift (Retroceso en vivo) y Reproducción DVR
+  bool _isBehindLive = false;
+  bool _isPlayingDvrRecording = false;
+  String? _activeDvrTitle;
+
   bool _isInPipMode = false;
   bool _showLiveChat = false;
   String _selectedLanguage = 'Español (Latinoamérica)';
@@ -353,6 +369,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _syncAutoPipState(true);
 
     EpgService.ensureInitialized();
+    DvrRecordingService.initialize();
     _startClockTimer();
     _startAccountHardwareGuard();
     _listenToAlarmNotificationTaps();
@@ -363,6 +380,380 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       NotificationService.requestPermissionsSafely();
     });
+  }
+
+  // ===========================================================================
+  // FUNCIONES TIMESHIFT (RETROCEDER / ADELANTAR EN VIVO) Y GRABACIÓN DVR
+  // ===========================================================================
+
+  Future<void> _seekRelativeSeconds(int deltaSeconds) async {
+    final ctrl = _videoPlayerController;
+    if (ctrl == null || !ctrl.value.isInitialized) return;
+    _triggerOsdTimer();
+
+    try {
+      final currentPos = ctrl.value.position;
+      final duration = ctrl.value.duration;
+      Duration target = currentPos + Duration(seconds: deltaSeconds);
+      if (target < Duration.zero) target = Duration.zero;
+      if (duration > Duration.zero && target > duration) {
+        target = duration;
+      }
+
+      await ctrl.seekTo(target);
+      if (!ctrl.value.isPlaying) {
+        await ctrl.play();
+      }
+
+      if (mounted) {
+        setState(() {
+          if (deltaSeconds < 0) {
+            _isBehindLive = true;
+          } else if (duration > Duration.zero &&
+              (duration - target).inSeconds <= 3 &&
+              !_isPlayingDvrRecording) {
+            _isBehindLive = false;
+          }
+        });
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              deltaSeconds < 0
+                  ? '⏪ Retrocediendo ${deltaSeconds.abs()}s en el búfer...'
+                  : '⏩ Adelantando +${deltaSeconds}s...',
+            ),
+            duration: const Duration(milliseconds: 1100),
+            backgroundColor: const Color(0xFF1E293B),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Aviso Timeshift seek: $e');
+    }
+  }
+
+  void _jumpBackToLiveStream() {
+    final activeCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+        ? _channels[_selectedChannelIndex]
+        : null;
+    if (activeCh == null) return;
+
+    setState(() {
+      _isBehindLive = false;
+      _isPlayingDvrRecording = false;
+      _activeDvrTitle = null;
+    });
+    _initializeVideo(activeCh.streamUrl);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('⚡ Volviendo a la señal EN VIVO de ${activeCh.name}'),
+        duration: const Duration(seconds: 2),
+        backgroundColor: const Color(0xFF00C853),
+      ),
+    );
+  }
+
+  Future<void> _toggleManualDvrRecording(ChannelModel? activeChannel) async {
+    if (activeChannel == null) return;
+
+    if (DvrRecordingService.isRecordingNotifier.value) {
+      final savedItem = await DvrRecordingService.stopRecording();
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              savedItem != null
+                  ? '✅ Grabación guardada: "${savedItem.programTitle}" (${savedItem.sizeMb.toStringAsFixed(1)} MB)'
+                  : '⏹ Grabación detenida (duración muy corta para guardar).',
+            ),
+            backgroundColor: const Color(0xFF7B2CBF),
+            action: savedItem != null
+                ? SnackBarAction(
+                    label: 'VER AHORA',
+                    textColor: const Color(0xFF00E5FF),
+                    onPressed: () => _playDvrRecordingFile(savedItem),
+                  )
+                : null,
+          ),
+        );
+      }
+    } else {
+      final currentProg =
+          EpgService.getCurrentProgram(activeChannel.name, activeChannel.groupCategory);
+      final started = await DvrRecordingService.startRecording(
+        channelName: activeChannel.name,
+        programTitle: currentProg.title,
+        streamUrl: activeChannel.streamUrl,
+        maxMinutes: 60,
+      );
+
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              started
+                  ? '🔴 Grabando "${currentProg.title}" en segundo plano...'
+                  : 'No se pudo iniciar la grabación de esta señal.',
+            ),
+            backgroundColor: started ? const Color(0xFFFF1744) : Colors.redAccent,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _playDvrRecordingFile(DvrRecordingItem item) async {
+    final file = File(item.filePath);
+    if (!file.existsSync()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El archivo de grabación ya no existe en el dispositivo.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    final currentToken = ++_zappingToken;
+    setState(() {
+      _selectedSection = 'En Vivo';
+      _isVideoLoading = true;
+      _hasVideoError = false;
+      _isPlayingDvrRecording = true;
+      _isBehindLive = true;
+      _activeDvrTitle = '🔴 DVR: ${item.programTitle}';
+      _showOsd = true;
+    });
+
+    final oldCtrl = _videoPlayerController;
+    _videoPlayerController = null;
+    _disposeControllerInBackground(oldCtrl);
+
+    try {
+      final fileCtrl = VideoPlayerController.file(
+        file,
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      );
+      await fileCtrl.initialize();
+
+      if (!mounted || currentToken != _zappingToken) {
+        _disposeControllerInBackground(fileCtrl);
+        return;
+      }
+
+      _videoPlayerController = fileCtrl;
+      await _videoPlayerController!.setVolume(_currentVolume);
+      await _videoPlayerController!.play();
+
+      setState(() {
+        _isVideoLoading = false;
+        _hasVideoError = false;
+      });
+      _triggerOsdTimer();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('▶️ Reproduciendo desde el inicio: ${item.programTitle}'),
+          backgroundColor: const Color(0xFF7B2CBF),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error abriendo archivo DVR local: $e');
+      if (mounted) {
+        setState(() {
+          _isVideoLoading = false;
+          _hasVideoError = true;
+          _isPlayingDvrRecording = false;
+        });
+      }
+    }
+  }
+
+  void _openDvrRecordingsVaultModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) {
+          final recs = DvrRecordingService.recordings;
+          final isRecActive = DvrRecordingService.isRecordingNotifier.value;
+
+          return Container(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.82),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+            decoration: BoxDecoration(
+              color: const Color(0xFF070A10).withOpacity(0.98),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              border: Border.all(color: const Color(0xFFFF1744).withOpacity(0.5), width: 1.5),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0x33FF1744),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.fiber_smart_record, color: Color(0xFFFF1744), size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Mis Grabaciones DVR',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            Text(
+                              '${recs.length} programa${recs.length == 1 ? '' : 's'} guardado${recs.length == 1 ? '' : 's'} en memoria',
+                              style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white54),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+                if (isRecActive) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0x33FF1744),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFFF1744)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.fiber_manual_record, color: Color(0xFFFF1744), size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ValueListenableBuilder<int>(
+                            valueListenable: DvrRecordingService.recordingElapsedSeconds,
+                            builder: (_, secs, __) => Text(
+                              'Grabando ahora: ${DvrRecordingService.activeRecordingChannel.value} (${DvrRecordingService.formatElapsed(secs)})',
+                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () async {
+                            await DvrRecordingService.stopRecording();
+                            setModalState(() {});
+                            if (mounted) setState(() {});
+                          },
+                          child: const Text('GUARDAR Y PARAR', style: TextStyle(color: Color(0xFFFFD600), fontSize: 11, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const Divider(color: Colors.white12, height: 22),
+                if (recs.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 30),
+                    child: Center(
+                      child: Column(
+                        children: [
+                          Icon(Icons.video_library_outlined, color: Colors.white24, size: 48),
+                          SizedBox(height: 12),
+                          Text(
+                            'Aún no tienes grabaciones guardadas',
+                            style: TextStyle(color: Colors.white70, fontSize: 14),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Usa el botón 🔴 REC en vivo o programa "Alarma + Auto-Grabar" en la Guía EPG.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white38, fontSize: 11.5),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: recs.length,
+                      itemBuilder: (context, index) {
+                        final item = recs[index];
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF131B2E),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          child: Row(
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.play_circle_fill, color: Color(0xFF00E5FF), size: 32),
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  _playDvrRecordingFile(item);
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item.programTitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
+                                    Text(
+                                      '${item.channelName} • Duración: ${item.formattedDuration} • ${item.sizeMb.toStringAsFixed(1)} MB',
+                                      style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                                onPressed: () async {
+                                  await DvrRecordingService.deleteRecording(item.id);
+                                  setModalState(() {});
+                                  if (mounted) setState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   void _loadFavorites() async {
@@ -411,31 +802,56 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
-  void _tuneChannelFromAlarmPayload(String rawPayload) {
+  void _tuneChannelFromAlarmPayload(String rawPayload) async {
     if (!mounted || _channels.isEmpty || rawPayload.trim().isEmpty) return;
 
     String targetName = rawPayload.trim();
     String targetUrl = '';
+    String alarmId = '';
+    bool autoRecord = false;
 
     try {
       final decoded = jsonDecode(rawPayload);
       if (decoded is Map) {
         targetName = (decoded['name'] ?? '').toString().trim();
         targetUrl = (decoded['url'] ?? '').toString().trim();
+        alarmId = (decoded['alarmId'] ?? '').toString().trim();
+        autoRecord = decoded['autoRecord'] == true;
       }
     } catch (_) {}
+
+    // Si estaba grabando actualmente este mismo programa porque el usuario llegó unos minutos tarde,
+    // guardamos lo que lleva grabado hasta ahora y le ofrecemos verlo desde el minuto 00:00!
+    if (DvrRecordingService.isRecordingNotifier.value &&
+        (DvrRecordingService.activeAlarmId == alarmId ||
+            DvrRecordingService.activeRecordingChannel.value.toLowerCase() ==
+                targetName.toLowerCase())) {
+      final capturedSoFar = await DvrRecordingService.stopRecording();
+      if (capturedSoFar != null && mounted) {
+        _playDvrRecordingFile(capturedSoFar);
+        return;
+      }
+    }
+
+    // Revisamos si ya se completó una grabación reciente de esta alarma
+    final existingRec = DvrRecordingService.findRecordingByChannelOrAlarm(
+      alarmId: alarmId,
+      channelName: targetName,
+    );
+    if (existingRec != null && autoRecord) {
+      _playDvrRecordingFile(existingRec);
+      return;
+    }
 
     int foundIndex = -1;
 
     if (targetUrl.isNotEmpty) {
       foundIndex = _channels.indexWhere((c) => c.streamUrl.trim() == targetUrl);
     }
-
     if (foundIndex == -1 && targetName.isNotEmpty) {
       final lowerExact = targetName.toLowerCase();
       foundIndex = _channels.indexWhere((c) => c.name.trim().toLowerCase() == lowerExact);
     }
-
     if (foundIndex == -1 && targetName.isNotEmpty) {
       final lowerPart = targetName.toLowerCase();
       foundIndex = _channels.indexWhere((c) => c.name.toLowerCase().contains(lowerPart));
@@ -445,7 +861,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final targetChannel = _channels[foundIndex];
       setState(() {
         _selectedSection = 'En Vivo';
-        _selectedCategory = 'Favoritos (⭐)';
+        _selectedCategory = 'Todos';
         _isSearching = false;
         _searchQuery = '';
         _searchController.clear();
@@ -453,13 +869,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       _changeChannel(targetChannel);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('⏰ Sintonizando tu recordatorio: ${targetChannel.name}'),
-          backgroundColor: const Color(0xFF00C853),
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      // Si el teléfono despertó por la alarma y tenía Auto-REC activo pero la app estaba cerrada antes,
+      // iniciamos la grabación inmediatamente al abrirse
+      if (autoRecord && !DvrRecordingService.isRecordingNotifier.value) {
+        final prog = EpgService.getCurrentProgram(targetChannel.name, targetChannel.groupCategory);
+        unawaited(
+          DvrRecordingService.startRecording(
+            channelName: targetChannel.name,
+            programTitle: prog.title,
+            streamUrl: targetChannel.streamUrl,
+            alarmId: alarmId,
+          ),
+        );
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('⏰ Sintonizando tu recordatorio: ${targetChannel.name}'),
+            backgroundColor: const Color(0xFF00C853),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
 
@@ -623,6 +1055,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _channels = M3USanitizerService.getCuratedChannels();
       }
 
+      if (_favoriteChannelUrls.isEmpty && _selectedCategory == 'Favoritos (⭐)') {
+        _selectedCategory = 'Todos';
+      }
+
       final pendingAlarmPayload = NotificationService.consumePendingPayload();
       if (pendingAlarmPayload != null && _channels.isNotEmpty) {
         if (mounted) setState(() {});
@@ -682,6 +1118,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() {
         _isVideoLoading = false;
         _hasVideoError = false;
+        _isBehindLive = false;
+        _isPlayingDvrRecording = false;
+        _activeDvrTitle = null;
       });
 
       _disposeControllerInBackground(oldController);
@@ -700,6 +1139,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       _isVideoLoading = true;
       _hasVideoError = false;
+      _isBehindLive = false;
+      _isPlayingDvrRecording = false;
+      _activeDvrTitle = null;
     });
 
     final oldController = _videoPlayerController;
@@ -866,6 +1308,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _selectedChannelIndex = realIndex;
       _showOsd = true;
       _hasVideoError = false;
+      _isBehindLive = false;
+      _isPlayingDvrRecording = false;
+      _activeDvrTitle = null;
       if (!isReadyInPool) {
         _isVideoLoading = true;
       }
@@ -885,7 +1330,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!_showOsd) {
       setState(() => _showOsd = true);
     }
-    _osdHideTimer = Timer(const Duration(seconds: 4), () {
+    _osdHideTimer = Timer(const Duration(seconds: 5), () {
       if (mounted) {
         setState(() => _showOsd = false);
       }
@@ -1040,6 +1485,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const SizedBox(height: 16),
 
               _buildSettingsTile(
+                icon: Icons.fiber_smart_record,
+                color: const Color(0xFFFF1744),
+                title: 'Mis Grabaciones DVR (${DvrRecordingService.recordings.length})',
+                subtitle: 'Ver programas grabados desde el inicio o liberar espacio',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openDvrRecordingsVaultModal();
+                },
+              ),
+              _buildSettingsTile(
                 icon: Icons.card_giftcard,
                 color: const Color(0xFFFFD600),
                 title: 'Círculo AMEYCAR (Gana +15 Días Gratis)',
@@ -1073,7 +1528,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 icon: Icons.alarm_on,
                 color: const Color(0xFFFFB703),
                 title: 'Mis Alarmas Programadas (${_activeAlarms.length})',
-                subtitle: 'Ver o cancelar recordatorios activos',
+                subtitle: 'Ver o cancelar recordatorios y auto-grabaciones',
                 onTap: () {
                   Navigator.pop(ctx);
                   _openActiveAlarmsManagerModal();
@@ -1126,6 +1581,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           onLogout: widget.onLogout,
                           onProfileSelected: () {
                             Navigator.pop(context);
+                            _loadFavorites();
                             _loadSavedChannels();
                           },
                         ),
@@ -1527,7 +1983,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'Recordatorios Activos',
+                              'Recordatorios y Auto-Grabaciones',
                               style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
                             ),
                             Text(
@@ -1577,6 +2033,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ? parts[2]
                             : (alarmId.split('-').length > 2 ? alarmId.split('-')[2] : '');
                         final savedUrl = parts.length > 3 ? parts[3] : '';
+                        final hasAutoRec = DvrRecordingService.isAlarmSetToAutoRecord(alarmId);
 
                         return Container(
                           margin: const EdgeInsets.only(bottom: 10),
@@ -1584,7 +2041,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           decoration: BoxDecoration(
                             color: const Color(0xFF131B2E),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0x33FFB703)),
+                            border: Border.all(
+                              color: hasAutoRec
+                                  ? const Color(0x66FF1744)
+                                  : const Color(0x33FFB703),
+                            ),
                           ),
                           child: InkWell(
                             onTap: () {
@@ -1592,11 +2053,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               _tuneChannelFromAlarmPayload(jsonEncode({
                                 'name': channelName,
                                 'url': savedUrl,
+                                'alarmId': alarmId,
+                                'autoRecord': hasAutoRec,
                               }));
                             },
                             child: Row(
                               children: [
-                                const Icon(Icons.alarm, color: Color(0xFFFFB703), size: 20),
+                                Icon(
+                                  hasAutoRec ? Icons.fiber_smart_record : Icons.alarm,
+                                  color: hasAutoRec ? const Color(0xFFFF1744) : const Color(0xFFFFB703),
+                                  size: 20,
+                                ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
@@ -1607,7 +2074,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                                       ),
                                       Text(
-                                        '$channelName ${programTime.isNotEmpty ? "• $programTime" : ""}',
+                                        '$channelName ${programTime.isNotEmpty ? "• $programTime" : ""}${hasAutoRec ? " • 🔴 AUTO-REC" : ""}',
                                         style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11),
                                       ),
                                     ],
@@ -1618,6 +2085,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   onPressed: () async {
                                     final int notificationId = alarmId.hashCode.abs() % 2147483647;
                                     await NotificationService.cancelAlarm(notificationId);
+                                    await DvrRecordingService.cancelScheduledAutoRecording(alarmId);
                                     setState(() => _activeAlarms.remove(alarmId));
                                     setModalState(() {});
                                     final prefs = await SharedPreferences.getInstance();
@@ -1635,6 +2103,56 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Future<String?> _askAlarmModeChoice(String programTitle) async {
+    return showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF101726),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Programar: $programTitle',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 15.5, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Elige cómo deseas que actúe Ameycar TV cuando inicie el programa:',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              ListTile(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                tileColor: const Color(0xFF1E293B),
+                leading: const Icon(Icons.alarm_on, color: Color(0xFFFFB703)),
+                title: const Text('🔔 Solo Alarma y Auto-Sintonía', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                subtitle: const Text('Te avisa con sonido y abre el canal al tocar.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                onTap: () => Navigator.pop(ctx, 'alarm_only'),
+              ),
+              const SizedBox(height: 10),
+              ListTile(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                tileColor: const Color(0x33FF1744),
+                leading: const Icon(Icons.fiber_smart_record, color: Color(0xFFFF1744)),
+                title: const Text('🔴 Alarma + Auto-Grabar (DVR)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                subtitle: const Text('Empieza a grabar a la hora exacta por si te conectas unos minutos tarde.', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                onTap: () => Navigator.pop(ctx, 'alarm_and_record'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1678,7 +2196,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15.5),
                               ),
                               Text(
-                                'Guía EPG en Tiempo Real • 🕒 $_currentTime',
+                                'Guía EPG + Auto-DVR • 🕒 $_currentTime',
                                 style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
                               ),
                             ],
@@ -1697,9 +2215,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Toca el reloj para programar auto-sintonía:',
-                    style: TextStyle(color: Colors.white60, fontSize: 11.5),
+                  const Expanded(
+                    child: Text(
+                      'Toca el reloj para Alarma o Auto-Grabación:',
+                      style: TextStyle(color: Colors.white60, fontSize: 11.5),
+                    ),
+                  ),
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _openDvrRecordingsVaultModal();
+                    },
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0x33FF1744),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFF1744), width: 0.8),
+                      ),
+                      child: Text(
+                        '🔴 DVR (${DvrRecordingService.recordings.length})',
+                        style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
+                      ),
+                    ),
                   ),
                   InkWell(
                     onTap: () {
@@ -1707,15 +2246,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       _openActiveAlarmsManagerModal();
                     },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                       decoration: BoxDecoration(
                         color: const Color(0x22FFB703),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: const Color(0xFFFFB703), width: 0.8),
                       ),
                       child: Text(
-                        '⏰ ${_activeAlarms.length} activas',
-                        style: const TextStyle(color: Color(0xFFFFB703), fontSize: 11, fontWeight: FontWeight.bold),
+                        '⏰ ${_activeAlarms.length}',
+                        style: const TextStyle(color: Color(0xFFFFB703), fontSize: 10.5, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
@@ -1732,6 +2271,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     final alarmId =
                         '${channel.name}||${prog.title}||${prog.timeFormatted}||${channel.streamUrl}';
                     final hasAlarm = _activeAlarms.contains(alarmId);
+                    final hasAutoRec = DvrRecordingService.isAlarmSetToAutoRecord(alarmId);
 
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
@@ -1739,16 +2279,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       decoration: BoxDecoration(
                         color: isNow
                             ? const Color(0x337B2CBF)
-                            : hasAlarm
-                                ? const Color(0x22FFB703)
-                                : const Color(0xFF131B2E),
+                            : hasAutoRec
+                                ? const Color(0x28FF1744)
+                                : hasAlarm
+                                    ? const Color(0x22FFB703)
+                                    : const Color(0xFF131B2E),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
                           color: isNow
                               ? const Color(0xFF9D4EDD)
-                              : hasAlarm
-                                  ? const Color(0xFFFFB703)
-                                  : Colors.white10,
+                              : hasAutoRec
+                                  ? const Color(0xFFFF1744)
+                                  : hasAlarm
+                                      ? const Color(0xFFFFB703)
+                                      : Colors.white10,
                         ),
                       ),
                       child: Row(
@@ -1770,55 +2314,106 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(prog.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                                Text(prog.timeFormatted, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11)),
+                                Text(
+                                  '${prog.timeFormatted}${hasAutoRec ? " • 🔴 Auto-Grabación Activa" : ""}',
+                                  style: TextStyle(
+                                    color: hasAutoRec ? const Color(0xFFFF8A80) : const Color(0xFF94A3B8),
+                                    fontSize: 11,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
-                          IconButton(
-                            icon: Icon(
-                              isNow ? Icons.play_circle : (hasAlarm ? Icons.alarm_on : Icons.alarm_add),
-                              color: isNow ? const Color(0xFF00E5FF) : (hasAlarm ? const Color(0xFFFFB703) : Colors.white38),
-                            ),
-                            onPressed: () async {
-                              if (isNow) {
+                          if (isNow)
+                            IconButton(
+                              tooltip: 'Grabar ahora mismo',
+                              icon: ValueListenableBuilder<bool>(
+                                valueListenable: DvrRecordingService.isRecordingNotifier,
+                                builder: (_, recNow, __) => Icon(
+                                  recNow ? Icons.stop_circle : Icons.fiber_manual_record,
+                                  color: const Color(0xFFFF1744),
+                                ),
+                              ),
+                              onPressed: () {
                                 Navigator.pop(ctx);
                                 _changeChannel(channel);
-                                return;
-                              }
-                              final prefs = await SharedPreferences.getInstance();
-                              final startTimeStr = prog.timeFormatted.split(' - ')[0];
-                              final targetTime = _parseProgramStartTime(startTimeStr);
-                              final int notificationId = alarmId.hashCode.abs() % 2147483647;
+                                _toggleManualDvrRecording(channel);
+                              },
+                            )
+                          else
+                            IconButton(
+                              icon: Icon(
+                                hasAutoRec
+                                    ? Icons.fiber_smart_record
+                                    : (hasAlarm ? Icons.alarm_on : Icons.alarm_add),
+                                color: hasAutoRec
+                                    ? const Color(0xFFFF1744)
+                                    : (hasAlarm ? const Color(0xFFFFB703) : Colors.white38),
+                              ),
+                              onPressed: () async {
+                                final prefs = await SharedPreferences.getInstance();
+                                final startTimeStr = prog.timeFormatted.split(' - ')[0];
+                                final targetTime = prog.startTime ?? _parseProgramStartTime(startTimeStr);
+                                final int notificationId = alarmId.hashCode.abs() % 2147483647;
 
-                              if (hasAlarm) {
-                                await NotificationService.cancelAlarm(notificationId);
-                                setState(() => _activeAlarms.remove(alarmId));
-                              } else {
-                                if (targetTime != null) {
-                                  await NotificationService.scheduleAlarm(
-                                    id: notificationId,
-                                    title: '⏰ ¡Comienza ${prog.title}!',
-                                    body: 'Toca aquí para sintonizar ${channel.name} al instante.',
-                                    scheduledDate: targetTime,
-                                    channelName: channel.name,
-                                    streamUrl: channel.streamUrl,
-                                  );
+                                if (hasAlarm) {
+                                  await NotificationService.cancelAlarm(notificationId);
+                                  await DvrRecordingService.cancelScheduledAutoRecording(alarmId);
+                                  setState(() => _activeAlarms.remove(alarmId));
+                                } else {
+                                  final choice = await _askAlarmModeChoice(prog.title);
+                                  if (choice == null) return;
+                                  final wantAutoRec = choice == 'alarm_and_record';
+
+                                  if (targetTime != null) {
+                                    await NotificationService.scheduleAlarm(
+                                      id: notificationId,
+                                      title: wantAutoRec
+                                          ? '🔴 ¡Grabando ${prog.title}!'
+                                          : '⏰ ¡Comienza ${prog.title}!',
+                                      body: wantAutoRec
+                                          ? 'Toca para verlo desde el minuto cero o ir en vivo en ${channel.name}.'
+                                          : 'Toca aquí para sintonizar ${channel.name} al instante.',
+                                      scheduledDate: targetTime,
+                                      channelName: channel.name,
+                                      streamUrl: channel.streamUrl,
+                                      alarmId: alarmId,
+                                      autoRecord: wantAutoRec,
+                                    );
+
+                                    if (wantAutoRec) {
+                                      await DvrRecordingService.scheduleAutoRecording(
+                                        alarmId: alarmId,
+                                        channelName: channel.name,
+                                        programTitle: prog.title,
+                                        streamUrl: channel.streamUrl,
+                                        startTime: targetTime,
+                                        maxMinutes: 60,
+                                      );
+                                    }
+                                  }
+
+                                  setState(() => _activeAlarms.add(alarmId));
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          wantAutoRec
+                                              ? '🔴 Alarma + Auto-Grabación lista para "${prog.title}"'
+                                              : '⏰ Alarma lista: "${prog.title}" en ${channel.name}',
+                                        ),
+                                        backgroundColor: wantAutoRec
+                                            ? const Color(0xFFFF1744)
+                                            : const Color(0xFF7B2CBF),
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                  }
                                 }
-                                setState(() => _activeAlarms.add(alarmId));
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('⏰ Alarma lista: "${prog.title}" en ${channel.name}'),
-                                      backgroundColor: const Color(0xFF7B2CBF),
-                                      duration: const Duration(seconds: 2),
-                                    ),
-                                  );
-                                }
-                              }
-                              setModalState(() {});
-                              await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
-                            },
-                          ),
+                                setModalState(() {});
+                                await prefs.setStringList('saved_active_alarms', _activeAlarms.toList());
+                              },
+                            ),
                         ],
                       ),
                     );
@@ -2104,6 +2699,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           setState(() {
             _channels = parsed;
             _selectedChannelIndex = 0;
+            _selectedCategory = _favoriteChannelUrls.isNotEmpty ? 'Favoritos (⭐)' : 'Todos';
             _searchQuery = '';
             _isSearching = false;
           });
@@ -2187,6 +2783,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             const SingleActivator(LogicalKeyboardKey.channelUp): _previousChannel,
             const SingleActivator(LogicalKeyboardKey.pageDown): _nextChannel,
             const SingleActivator(LogicalKeyboardKey.pageUp): _previousChannel,
+            const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _seekRelativeSeconds(-15),
+            const SingleActivator(LogicalKeyboardKey.arrowRight): () => _seekRelativeSeconds(15),
             const SingleActivator(LogicalKeyboardKey.select): () {
               setState(() => _isFullScreenMode = !_isFullScreenMode);
             },
@@ -2298,6 +2896,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
               _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
               _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
+              _buildSideMenuItem(Icons.fiber_smart_record, 'Grabaciones DVR (${DvrRecordingService.recordings.length})', _openDvrRecordingsVaultModal),
               _buildSideMenuItem(Icons.alarm_on, 'Alarmas (${_activeAlarms.length})', _openActiveAlarmsManagerModal),
               _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
               _buildSideMenuItem(Icons.forum_outlined, 'Chat / Emojis Vivo', () => setState(() => _showLiveChat = !_showLiveChat)),
@@ -2471,6 +3070,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                       onLogout: widget.onLogout,
                                       onProfileSelected: () {
                                         Navigator.pop(context);
+                                        _loadFavorites();
                                         _loadSavedChannels();
                                       },
                                     ),
@@ -2550,6 +3150,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           ),
                         ),
                         const SizedBox(width: 6),
+
+                        ValueListenableBuilder<int>(
+                          valueListenable: DvrRecordingService.recordingsCountNotifier,
+                          builder: (_, recCount, __) => _buildTopBarActionItem(
+                            icon: Icons.fiber_smart_record,
+                            color: const Color(0xFFFF1744),
+                            badgeCount: recCount,
+                            tooltip: 'Mis Grabaciones DVR',
+                            onPressed: _openDvrRecordingsVaultModal,
+                          ),
+                        ),
 
                         _buildTopBarActionItem(
                           icon: Icons.picture_in_picture_alt_rounded,
@@ -3198,6 +3809,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildActiveRecordingTopBadge() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: DvrRecordingService.isRecordingNotifier,
+      builder: (context, isRec, _) {
+        if (!isRec) return const SizedBox.shrink();
+        return Positioned(
+          top: 8,
+          left: 8,
+          child: GestureDetector(
+            onTap: _openDvrRecordingsVaultModal,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xDD880E4F),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFFF1744)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.fiber_manual_record, color: Color(0xFFFF1744), size: 12),
+                  const SizedBox(width: 4),
+                  ValueListenableBuilder<int>(
+                    valueListenable: DvrRecordingService.recordingElapsedSeconds,
+                    builder: (_, secs, __) => Text(
+                      'REC ${DvrRecordingService.formatElapsed(secs)}',
+                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildVideoPlayerSection(ChannelModel? activeChannel) {
     final isReady = !_isVideoLoading &&
         !_hasVideoError &&
@@ -3225,7 +3874,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               duration: const Duration(milliseconds: 140),
               child: isReady
                   ? Center(
-                      key: ValueKey<String>(activeChannel?.streamUrl ?? 'video'),
+                      key: ValueKey<String>(
+                        _isPlayingDvrRecording
+                            ? (_activeDvrTitle ?? 'dvr')
+                            : (activeChannel?.streamUrl ?? 'video'),
+                      ),
                       child: AspectRatio(
                         aspectRatio: _videoPlayerController!.value.aspectRatio,
                         child: VideoPlayer(_videoPlayerController!),
@@ -3255,6 +3908,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       : _buildSmoothTuningTransition(activeChannel),
             ),
 
+            _buildActiveRecordingTopBadge(),
+
             if (_showLiveChat && activeChannel != null)
               Positioned.fill(
                 child: LiveChatOverlay(
@@ -3269,17 +3924,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 channelIndex: _selectedChannelIndex,
                 totalChannels: _channels.length,
                 isPlaying: _videoPlayerController != null && _videoPlayerController!.value.isPlaying,
+                isBehindLive: _isBehindLive,
+                isPlayingDvrRecording: _isPlayingDvrRecording,
+                dvrRecordingTitle: _activeDvrTitle,
                 onPlayPause: () {
                   if (_videoPlayerController != null) {
                     setState(() {
-                      _videoPlayerController!.value.isPlaying
-                          ? _videoPlayerController!.pause()
-                          : _videoPlayerController!.play();
+                      if (_videoPlayerController!.value.isPlaying) {
+                        _videoPlayerController!.pause();
+                        _isBehindLive = true;
+                      } else {
+                        _videoPlayerController!.play();
+                      }
                     });
                   }
                 },
                 onNext: _nextChannel,
                 onPrevious: _previousChannel,
+                onRewind15s: () => _seekRelativeSeconds(-15),
+                onForward15s: () => _seekRelativeSeconds(15),
+                onJumpToLive: _jumpBackToLiveStream,
+                onToggleRecord: () => _toggleManualDvrRecording(activeChannel),
                 onOpenEpg: () => _openEpgScheduleModal(activeChannel),
                 onToggleFullScreen: () => setState(() => _isFullScreenMode = true),
               ),
@@ -3570,7 +4235,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               duration: const Duration(milliseconds: 140),
               child: isReady
                   ? Center(
-                      key: ValueKey<String>(activeChannel?.streamUrl ?? 'immersive_video'),
+                      key: ValueKey<String>(
+                        _isPlayingDvrRecording
+                            ? (_activeDvrTitle ?? 'immersive_dvr')
+                            : (activeChannel?.streamUrl ?? 'immersive_video'),
+                      ),
                       child: AspectRatio(
                         aspectRatio: _videoPlayerController!.value.aspectRatio,
                         child: VideoPlayer(_videoPlayerController!),
@@ -3578,6 +4247,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     )
                   : _buildSmoothTuningTransition(activeChannel),
             ),
+
+            _buildActiveRecordingTopBadge(),
 
             if (_showLiveChat && activeChannel != null)
               Positioned.fill(
@@ -3596,18 +4267,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   channel: activeChannel,
                   channelIndex: _selectedChannelIndex,
                   totalChannels: _channels.length,
+                  isFullScreen: true,
                   isPlaying: _videoPlayerController != null && _videoPlayerController!.value.isPlaying,
+                  isBehindLive: _isBehindLive,
+                  isPlayingDvrRecording: _isPlayingDvrRecording,
+                  dvrRecordingTitle: _activeDvrTitle,
                   onPlayPause: () {
                     if (_videoPlayerController != null) {
                       setState(() {
-                        _videoPlayerController!.value.isPlaying
-                            ? _videoPlayerController!.pause()
-                            : _videoPlayerController!.play();
+                        if (_videoPlayerController!.value.isPlaying) {
+                          _videoPlayerController!.pause();
+                          _isBehindLive = true;
+                        } else {
+                          _videoPlayerController!.play();
+                        }
                       });
                     }
                   },
                   onNext: _nextChannel,
                   onPrevious: _previousChannel,
+                  onRewind15s: () => _seekRelativeSeconds(-15),
+                  onForward15s: () => _seekRelativeSeconds(15),
+                  onJumpToLive: _jumpBackToLiveStream,
+                  onToggleRecord: () => _toggleManualDvrRecording(activeChannel),
                   onOpenEpg: () => _openEpgScheduleModal(activeChannel),
                   onToggleFullScreen: () => setState(() => _isFullScreenMode = false),
                 ),
@@ -3619,6 +4301,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 right: 24,
                 child: Row(
                   children: [
+                    _buildMiniPlayerPillButton(
+                      icon: Icons.fiber_smart_record,
+                      label: 'Grabaciones',
+                      color: Colors.black54,
+                      textColor: const Color(0xFFFF1744),
+                      onTap: _openDvrRecordingsVaultModal,
+                    ),
+                    const SizedBox(width: 8),
                     _buildMiniPlayerPillButton(
                       icon: Icons.forum,
                       label: _showLiveChat ? 'Ocultar Chat' : 'Chat Vivo 🔥',
