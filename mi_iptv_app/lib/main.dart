@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -324,14 +325,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   double _currentVolume = 1.0;
   double _volumeBeforeMute = 1.0;
 
-  // Estados de Timeshift (Retroceso en vivo) y Reproducción DVR
   bool _isBehindLive = false;
   bool _isPlayingDvrRecording = false;
   String? _activeDvrTitle;
 
   bool _isInPipMode = false;
   bool _showLiveChat = false;
-  bool _isPremiumToolsExpanded = false; // Despliega u oculta el cajón PRO en barra superior
+  bool _isPremiumToolsExpanded = false;
   String _selectedLanguage = 'Español (Latinoamérica)';
   int _customAvatarIdx = 0;
 
@@ -377,11 +377,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return !user.isPartOfFamily || famId.trim().isEmpty;
   }
 
+  void _openMasterExecutiveAdmin() {
+    if (!AuthService.isAdmin) return;
+    _videoPlayerController?.pause();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MasterAdminDashboardScreen(
+          onLogout: widget.onLogout,
+          onOpenLegacyAdmin: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
+            );
+          },
+        ),
+      ),
+    ).then((_) {
+      if (AuthService.currentUser == null) {
+        widget.onLogout?.call();
+      } else if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    
+
     if (!kIsWeb) {
       WakelockPlus.enable();
       _syncAutoPipState(true);
@@ -403,10 +428,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
     }
   }
-
-  // ===========================================================================
-  // RECEPTOR EN TIEMPO REAL PARA CUANDO EL CELULAR CONTROLA LA TV / PC
-  // ===========================================================================
 
   void _startListeningRemoteTvCommands() {
     RemoteControlService.listenToCommands(
@@ -500,10 +521,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // ===========================================================================
-  // FUNCIONES TIMESHIFT (RETROCEDER / ADELANTAR EN VIVO) Y GRABACIÓN DVR
-  // ===========================================================================
-
   Future<void> _seekRelativeSeconds(int deltaSeconds) async {
     final ctrl = _videoPlayerController;
     if (ctrl == null || !ctrl.value.isInitialized) return;
@@ -577,7 +594,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _toggleManualDvrRecording(ChannelModel? activeChannel) async {
-    if (activeChannel == null) return;
+    if (activeChannel == null || kIsWeb) return;
 
     if (DvrRecordingService.isRecordingNotifier.value) {
       final savedItem = await DvrRecordingService.stopRecording();
@@ -629,6 +646,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _playDvrRecordingFile(DvrRecordingItem item) async {
+    if (kIsWeb) return;
     final file = File(item.filePath);
     if (!file.existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -938,7 +956,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     } catch (_) {}
 
-    if (DvrRecordingService.isRecordingNotifier.value &&
+    if (!kIsWeb &&
+        DvrRecordingService.isRecordingNotifier.value &&
         (DvrRecordingService.activeAlarmId == alarmId ||
             DvrRecordingService.activeRecordingChannel.value.toLowerCase() ==
                 targetName.toLowerCase())) {
@@ -949,13 +968,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     }
 
-    final existingRec = DvrRecordingService.findRecordingByChannelOrAlarm(
-      alarmId: alarmId,
-      channelName: targetName,
-    );
-    if (existingRec != null && autoRecord) {
-      _playDvrRecordingFile(existingRec);
-      return;
+    if (!kIsWeb) {
+      final existingRec = DvrRecordingService.findRecordingByChannelOrAlarm(
+        alarmId: alarmId,
+        channelName: targetName,
+      );
+      if (existingRec != null && autoRecord) {
+        _playDvrRecordingFile(existingRec);
+        return;
+      }
     }
 
     int foundIndex = -1;
@@ -984,7 +1005,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       _changeChannel(targetChannel);
 
-      if (autoRecord && !DvrRecordingService.isRecordingNotifier.value) {
+      if (!kIsWeb && autoRecord && !DvrRecordingService.isRecordingNotifier.value) {
         final prog = EpgService.getCurrentProgram(targetChannel.name, targetChannel.groupCategory);
         unawaited(
           DvrRecordingService.startRecording(
@@ -1009,6 +1030,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _syncAutoPipState(bool enabled) async {
+    if (kIsWeb) return;
     try {
       await _pipChannel.invokeMethod('setAutoPip', {'enabled': enabled});
     } catch (_) {}
@@ -1017,6 +1039,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
+    if (kIsWeb) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final size = MediaQuery.of(context).size;
@@ -1050,6 +1073,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _enterNativePiP() async {
+    if (kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('En PC puedes usar clic derecho sobre el video > "Pantalla en pantalla" del navegador.'),
+          backgroundColor: Color(0xFF7B2CBF),
+        ),
+      );
+      return;
+    }
     try {
       final bool? entered = await _pipChannel.invokeMethod<bool>('enterPip');
       if (entered == true && mounted) {
@@ -1265,7 +1297,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final targetUri = _parseStreamUri(url);
       final controller = VideoPlayerController.networkUrl(
         targetUri,
-        httpHeaders: _fastStreamHeaders,
+        httpHeaders: kIsWeb ? const {} : _fastStreamHeaders,
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
       );
 
@@ -1300,7 +1332,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _warmUpAdjacentChannels() {
-    if (!mounted) return;
+    if (!mounted || kIsWeb) return;
     final list = _filteredChannels;
     if (list.length <= 1) return;
 
@@ -1597,7 +1629,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 16),
 
-              // Renovación movida aquí al Engranaje (limpia la barra superior)
+              if (AuthService.isAdmin)
+                _buildSettingsTile(
+                  icon: Icons.admin_panel_settings_rounded,
+                  color: const Color(0xFFFFD600),
+                  title: 'Suite Ejecutiva & Soporte (Master Admin)',
+                  subtitle: 'Métricas en tiempo real, filtros, acciones por lote y WhatsApp',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _openMasterExecutiveAdmin();
+                  },
+                ),
+
               _buildSettingsTile(
                 icon: Icons.confirmation_number_outlined,
                 color: const Color(0xFF00E676),
@@ -2167,7 +2210,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ? parts[2]
                             : (alarmId.split('-').length > 2 ? alarmId.split('-')[2] : '');
                         final savedUrl = parts.length > 3 ? parts[3] : '';
-                        final hasAutoRec = DvrRecordingService.isAlarmSetToAutoRecord(alarmId);
+                        final hasAutoRec = !kIsWeb && DvrRecordingService.isAlarmSetToAutoRecord(alarmId);
 
                         return Container(
                           margin: const EdgeInsets.only(bottom: 10),
@@ -2218,8 +2261,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                                   onPressed: () async {
                                     final int notificationId = alarmId.hashCode.abs() % 2147483647;
-                                    await NotificationService.cancelAlarm(notificationId);
-                                    await DvrRecordingService.cancelScheduledAutoRecording(alarmId);
+                                    if (!kIsWeb) {
+                                      await NotificationService.cancelAlarm(notificationId);
+                                      await DvrRecordingService.cancelScheduledAutoRecording(alarmId);
+                                    }
                                     setState(() => _activeAlarms.remove(alarmId));
                                     setModalState(() {});
                                     final prefs = await SharedPreferences.getInstance();
@@ -2275,15 +2320,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 subtitle: const Text('Te avisa con sonido y abre el canal al tocar.', style: TextStyle(color: Colors.white54, fontSize: 11)),
                 onTap: () => Navigator.pop(ctx, 'alarm_only'),
               ),
-              const SizedBox(height: 10),
-              ListTile(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                tileColor: const Color(0x33FF1744),
-                leading: const Icon(Icons.fiber_smart_record, color: Color(0xFFFF1744)),
-                title: const Text('🔴 Alarma + Auto-Grabar (DVR)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                subtitle: const Text('Empieza a grabar a la hora exacta por si te conectas unos minutos tarde.', style: TextStyle(color: Colors.white70, fontSize: 11)),
-                onTap: () => Navigator.pop(ctx, 'alarm_and_record'),
-              ),
+              if (!kIsWeb) ...[
+                const SizedBox(height: 10),
+                ListTile(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  tileColor: const Color(0x33FF1744),
+                  leading: const Icon(Icons.fiber_smart_record, color: Color(0xFFFF1744)),
+                  title: const Text('🔴 Alarma + Auto-Grabar (DVR)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  subtitle: const Text('Empieza a grabar a la hora exacta por si te conectas unos minutos tarde.', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                  onTap: () => Navigator.pop(ctx, 'alarm_and_record'),
+                ),
+              ],
             ],
           ),
         ),
@@ -2355,25 +2402,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       style: TextStyle(color: Colors.white60, fontSize: 11.5),
                     ),
                   ),
-                  InkWell(
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      _openDvrRecordingsVaultModal();
-                    },
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 6),
-                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0x33FF1744),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFFF1744), width: 0.8),
-                      ),
-                      child: Text(
-                        '🔴 DVR (${DvrRecordingService.recordings.length})',
-                        style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
+                  if (!kIsWeb)
+                    InkWell(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _openDvrRecordingsVaultModal();
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.only(right: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0x33FF1744),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFFF1744), width: 0.8),
+                        ),
+                        child: Text(
+                          '🔴 DVR (${DvrRecordingService.recordings.length})',
+                          style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
+                        ),
                       ),
                     ),
-                  ),
                   InkWell(
                     onTap: () {
                       Navigator.pop(ctx);
@@ -2405,7 +2453,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     final alarmId =
                         '${channel.name}||${prog.title}||${prog.timeFormatted}||${channel.streamUrl}';
                     final hasAlarm = _activeAlarms.contains(alarmId);
-                    final hasAutoRec = DvrRecordingService.isAlarmSetToAutoRecord(alarmId);
+                    final hasAutoRec = !kIsWeb && DvrRecordingService.isAlarmSetToAutoRecord(alarmId);
 
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
@@ -2458,7 +2506,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               ],
                             ),
                           ),
-                          if (isNow)
+                          if (isNow && !kIsWeb)
                             IconButton(
                               tooltip: 'Grabar ahora mismo',
                               icon: ValueListenableBuilder<bool>(
@@ -2474,7 +2522,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 _toggleManualDvrRecording(channel);
                               },
                             )
-                          else
+                          else if (!isNow)
                             IconButton(
                               icon: Icon(
                                 hasAutoRec
@@ -2491,15 +2539,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 final int notificationId = alarmId.hashCode.abs() % 2147483647;
 
                                 if (hasAlarm) {
-                                  await NotificationService.cancelAlarm(notificationId);
-                                  await DvrRecordingService.cancelScheduledAutoRecording(alarmId);
+                                  if (!kIsWeb) {
+                                    await NotificationService.cancelAlarm(notificationId);
+                                    await DvrRecordingService.cancelScheduledAutoRecording(alarmId);
+                                  }
                                   setState(() => _activeAlarms.remove(alarmId));
                                 } else {
                                   final choice = await _askAlarmModeChoice(prog.title);
                                   if (choice == null) return;
                                   final wantAutoRec = choice == 'alarm_and_record';
 
-                                  if (targetTime != null) {
+                                  if (targetTime != null && !kIsWeb) {
                                     await NotificationService.scheduleAlarm(
                                       id: notificationId,
                                       title: wantAutoRec
@@ -3002,7 +3052,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // LAYOUT HORIZONTAL CORREGIDO: Proporciones amplias para que el nombre del canal jamás se aplaste
   Widget _buildLandscapeLayout() {
     final activeChannel = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
         ? _channels[_selectedChannelIndex]
@@ -3044,11 +3093,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
+                if (AuthService.isAdmin) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFD600),
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      icon: const Icon(Icons.admin_panel_settings, size: 16),
+                      label: const Text(
+                        'Suite Admin VIP',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+                      ),
+                      onPressed: _openMasterExecutiveAdmin,
+                    ),
+                  ),
+                  const Divider(color: Colors.white12),
+                ],
                 _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
                 _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
                 _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
                 _buildSideMenuItem(Icons.settings_remote, 'Mando TV & Cast', _openRemoteControlModalScreen),
-                _buildSideMenuItem(Icons.fiber_smart_record, 'Grabaciones DVR (${DvrRecordingService.recordings.length})', _openDvrRecordingsVaultModal),
+                if (!kIsWeb)
+                  _buildSideMenuItem(Icons.fiber_smart_record, 'Grabaciones DVR (${DvrRecordingService.recordings.length})', _openDvrRecordingsVaultModal),
                 _buildSideMenuItem(Icons.alarm_on, 'Alarmas (${_activeAlarms.length})', _openActiveAlarmsManagerModal),
                 _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
                 _buildSideMenuItem(Icons.forum_outlined, 'Chat / Emojis Vivo', () => setState(() => _showLiveChat = !_showLiveChat)),
@@ -3058,13 +3128,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 _buildSideMenuItem(Icons.card_giftcard, 'Gana +15 Días', _showReferralClubModal),
                 _buildSideMenuItem(Icons.headset_mic, 'Soporte / CEO', _openSupportMenu),
                 _buildSideMenuItem(Icons.settings, 'Configuración', _showSettingsMenu),
-                if (AuthService.isAdmin)
-                  _buildSideMenuItem(Icons.admin_panel_settings, 'Panel Admin VIP', () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
-                    );
-                  }),
               ],
             ),
           ),
@@ -3160,7 +3223,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // BARRA SUPERIOR DEPURADA: Uso diario directo + Botón Desplegable ✨ PRO (Sin Renovar/DVR/Soporte repetidos)
   Widget _buildTopGlassBar([ChannelModel? activeChannel]) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -3213,23 +3275,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             borderRadius: BorderRadius.circular(14),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(14),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
-                                ).then((_) {
-                                  if (AuthService.currentUser == null) widget.onLogout?.call();
-                                });
-                              },
+                              onTap: _openMasterExecutiveAdmin,
                               child: const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
+                                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(Icons.shield, color: Colors.black, size: 13),
+                                    Icon(Icons.shield_rounded, color: Colors.black, size: 13),
                                     SizedBox(width: 3),
                                     Text(
-                                      'ADMIN',
+                                      'SUITE ADMIN',
                                       style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.w900),
                                     ),
                                   ],
@@ -3311,7 +3366,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           const SizedBox(width: 5),
                         ],
 
-                        // === HERRAMIENTAS ESENCIALES DE USO DIARIO ===
                         _buildTopBarActionItem(
                           icon: Icons.search,
                           color: const Color(0xFFC77DFF),
@@ -3341,7 +3395,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           onPressed: _openRemoteControlModalScreen,
                         ),
 
-                        // === PÍLDORA DESPLEGABLE DE FUNCIONES PREMIUM (PRO) ===
                         const SizedBox(width: 3),
                         Material(
                           color: _isPremiumToolsExpanded
@@ -3861,7 +3914,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Hardware ID Celular: $hwId',
+                      'Hardware ID Equipo: $hwId',
                       style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace'),
                     ),
                   ],
@@ -4019,6 +4072,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildActiveRecordingTopBadge() {
+    if (kIsWeb) return const SizedBox.shrink();
     return ValueListenableBuilder<bool>(
       valueListenable: DvrRecordingService.isRecordingNotifier,
       builder: (context, isRec, _) {
@@ -4332,7 +4386,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // LISTA DE CANALES CON DISEÑO ANTI-APLASTAMIENTO EN VERTICAL Y HORIZONTAL
   Widget _buildChannelListView({bool compactLandscape = false}) {
     final list = _filteredChannels;
 
@@ -4555,14 +4608,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       textColor: const Color(0xFF00E5FF),
                       onTap: _openRemoteControlModalScreen,
                     ),
-                    const SizedBox(width: 8),
-                    _buildMiniPlayerPillButton(
-                      icon: Icons.fiber_smart_record,
-                      label: 'Grabaciones',
-                      color: Colors.black54,
-                      textColor: const Color(0xFFFF1744),
-                      onTap: _openDvrRecordingsVaultModal,
-                    ),
+                    if (!kIsWeb) ...[
+                      const SizedBox(width: 8),
+                      _buildMiniPlayerPillButton(
+                        icon: Icons.fiber_smart_record,
+                        label: 'Grabaciones',
+                        color: Colors.black54,
+                        textColor: const Color(0xFFFF1744),
+                        onTap: _openDvrRecordingsVaultModal,
+                      ),
+                    ],
                     const SizedBox(width: 8),
                     _buildMiniPlayerPillButton(
                       icon: Icons.forum,
@@ -4616,7 +4671,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     RemoteControlService.dispose();
     _syncAutoPipState(false);
-    WakelockPlus.disable();
+    if (!kIsWeb) {
+      WakelockPlus.disable();
+    }
     _accountGuardSub?.cancel();
     _alarmTapSub?.cancel();
     _clockTimer?.cancel();
@@ -4628,5 +4685,1547 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _prebufferedPool.clear();
     _searchController.dispose();
     super.dispose();
+  }
+}
+
+// =============================================================================
+// SUITE EJECUTIVA & SOPORTE INTEGRADA (SOLO ACCESIBLE POR USUARIO ADMIN)
+// =============================================================================
+
+class MasterAdminDashboardScreen extends StatefulWidget {
+  final VoidCallback? onLogout;
+  final VoidCallback? onOpenLegacyAdmin;
+
+  const MasterAdminDashboardScreen({
+    super.key,
+    this.onLogout,
+    this.onOpenLegacyAdmin,
+  });
+
+  @override
+  State<MasterAdminDashboardScreen> createState() =>
+      _MasterAdminDashboardScreenState();
+}
+
+class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen> {
+  static const int _pageSize = 50;
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> _loadedUsers = [];
+  DocumentSnapshot? _lastDocument;
+  bool _isLoadingUsers = false;
+  bool _hasMoreUsers = true;
+
+  bool _isLoadingMetrics = true;
+  int _totalUsersCount = 0;
+  int _activeUsersCount = 0;
+  int _expiringSoonCount = 0;
+  int _suspendedCount = 0;
+  int _pinsGeneratedCount = 0;
+  int _pinsRedeemedCount = 0;
+
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+  String _planFilter = 'Todos';
+  String _deviceFilter = 'Todos';
+  String _statusFilter = 'Todos';
+  String _sortMode = 'Próximos a vencer';
+
+  final Set<String> _selectedUserIds = {};
+  final TextEditingController _bulkDaysCtrl = TextEditingController(text: '15');
+  bool _isExecutingBatch = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AuthService.isAdmin) {
+      _refreshAllData();
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    _bulkDaysCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refreshAllData() async {
+    await Future.wait([
+      _loadGlobalMetrics(),
+      _loadUsersPage(reset: true),
+    ]);
+  }
+
+  Future<void> _loadGlobalMetrics() async {
+    if (!mounted) return;
+    setState(() => _isLoadingMetrics = true);
+
+    try {
+      final db = FirebaseFirestore.instance;
+      final usersCol = db.collection('users');
+      final now = DateTime.now();
+      final nowIso = now.toIso8601String();
+      final threeDaysIso = now.add(const Duration(days: 3)).toIso8601String();
+
+      final totalSnap = await usersCol.count().get();
+      final activeFlagSnap =
+          await usersCol.where('isActive', isEqualTo: true).count().get();
+
+      int expSoon = 0;
+      try {
+        final soonSnap = await usersCol
+            .where('expirationDate', isGreaterThanOrEqualTo: nowIso)
+            .where('expirationDate', isLessThanOrEqualTo: threeDaysIso)
+            .count()
+            .get();
+        expSoon = soonSnap.count ?? 0;
+      } catch (_) {}
+
+      int pinsTotal = 0;
+      int pinsUsed = 0;
+      try {
+        final pinsCol = db.collection('activation_pins');
+        final pTotalSnap = await pinsCol.count().get();
+        final pUsedSnap =
+            await pinsCol.where('isUsed', isEqualTo: true).count().get();
+        pinsTotal = pTotalSnap.count ?? 0;
+        pinsUsed = pUsedSnap.count ?? 0;
+      } catch (_) {}
+
+      if (mounted) {
+        final total = totalSnap.count ?? 0;
+        final active = activeFlagSnap.count ?? 0;
+        setState(() {
+          _totalUsersCount = total;
+          _activeUsersCount = active;
+          _expiringSoonCount = expSoon;
+          _suspendedCount = max(0, total - active);
+          _pinsGeneratedCount = pinsTotal;
+          _pinsRedeemedCount = pinsUsed;
+          _isLoadingMetrics = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Aviso cargando métricas globales: $e');
+      if (mounted) setState(() => _isLoadingMetrics = false);
+    }
+  }
+
+  Future<void> _loadUsersPage({bool reset = false}) async {
+    if (_isLoadingUsers) return;
+    if (!reset && !_hasMoreUsers) return;
+
+    setState(() {
+      _isLoadingUsers = true;
+      if (reset) {
+        _loadedUsers.clear();
+        _lastDocument = null;
+        _hasMoreUsers = true;
+        _selectedUserIds.clear();
+      }
+    });
+
+    try {
+      Query<Map<String, dynamic>> query =
+          FirebaseFirestore.instance.collection('users');
+
+      if (_statusFilter == 'Activos') {
+        query = query.where('isActive', isEqualTo: true);
+      }
+
+      if (_searchQuery.isNotEmpty) {
+        query = query.limit(150);
+      } else {
+        query = query.limit(_pageSize);
+      }
+
+      if (_lastDocument != null && !reset) {
+        query = query.startAfterDocument(_lastDocument!);
+      }
+
+      final snap = await query.get();
+
+      if (mounted) {
+        setState(() {
+          _loadedUsers.addAll(snap.docs);
+          if (snap.docs.isNotEmpty) {
+            _lastDocument = snap.docs.last;
+          }
+          if (snap.docs.length < _pageSize) {
+            _hasMoreUsers = false;
+          }
+          _isLoadingUsers = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error cargando página de usuarios: $e');
+      if (mounted) setState(() => _isLoadingUsers = false);
+    }
+  }
+
+  String _detectDeviceCategory(Map<String, dynamic> data) {
+    final explicitPlatform = (data['platform'] ?? data['deviceType'] ?? '')
+        .toString()
+        .toLowerCase();
+    final hwId = (data['registeredHardwareId'] ?? '').toString().toUpperCase();
+
+    if (hwId.trim().isEmpty) return 'Sin Vincular';
+    if (explicitPlatform.contains('web') ||
+        hwId.contains('WEB') ||
+        hwId.startsWith('AMEYCAR-TV-')) {
+      return 'Web / PC';
+    }
+    if (explicitPlatform.contains('tv') ||
+        hwId.contains('TV') ||
+        hwId.contains('BRAVIA') ||
+        hwId.contains('FIRE')) {
+      return 'Smart TV';
+    }
+    return 'Android / Celular';
+  }
+
+  String _detectPlanLabel(Map<String, dynamic> data) {
+    if (data['isVip'] == true ||
+        (data['planType'] ?? '').toString().toUpperCase() == 'VIP') {
+      return 'VIP';
+    }
+    if (data['isPartOfFamily'] == true ||
+        data['isFamilyAdmin'] == true ||
+        (data['planType'] ?? '').toString().toLowerCase().contains('famil')) {
+      return 'Familiar';
+    }
+    return (data['planType'] ?? 'Individual').toString();
+  }
+
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> get _filteredAndSortedDocs {
+    final now = DateTime.now();
+    final q = _searchQuery.toLowerCase().trim();
+
+    final list = _loadedUsers.where((doc) {
+      final data = doc.data();
+      final username = (data['username'] ?? '').toString().toLowerCase();
+      final email = (data['email'] ?? '').toString().toLowerCase();
+      final phone = (data['phone'] ?? '').toString().toLowerCase();
+      final hwId =
+          (data['registeredHardwareId'] ?? '').toString().toLowerCase();
+
+      if (q.isNotEmpty &&
+          !username.contains(q) &&
+          !email.contains(q) &&
+          !phone.contains(q) &&
+          !hwId.contains(q)) {
+        return false;
+      }
+
+      if (_planFilter != 'Todos') {
+        final plan = _detectPlanLabel(data);
+        if (plan.toLowerCase() != _planFilter.toLowerCase()) return false;
+      }
+
+      if (_deviceFilter != 'Todos') {
+        final dev = _detectDeviceCategory(data);
+        if (dev != _deviceFilter) return false;
+      }
+
+      final bool isActiveFlag = data['isActive'] == true;
+      final DateTime? expDate = data['expirationDate'] != null
+          ? DateTime.tryParse(data['expirationDate'].toString())
+          : null;
+      final bool isDateExpired = expDate != null && expDate.isBefore(now);
+      final int daysLeft =
+          expDate != null ? expDate.difference(now).inDays : 999;
+
+      if (_statusFilter == 'Activos') {
+        if (!isActiveFlag || isDateExpired) return false;
+      } else if (_statusFilter == 'Por Vencer (<=3d)') {
+        if (!isActiveFlag || isDateExpired || daysLeft > 3) return false;
+      } else if (_statusFilter == 'Vencidos / Suspendidos') {
+        if (isActiveFlag && !isDateExpired) return false;
+      }
+
+      return true;
+    }).toList();
+
+    list.sort((a, b) {
+      final da = a.data();
+      final db = b.data();
+      if (_sortMode == 'Nombre (A-Z)') {
+        return (da['username'] ?? '')
+            .toString()
+            .toLowerCase()
+            .compareTo((db['username'] ?? '').toString().toLowerCase());
+      }
+      final expA = DateTime.tryParse((da['expirationDate'] ?? '').toString()) ??
+          DateTime(2099);
+      final expB = DateTime.tryParse((db['expirationDate'] ?? '').toString()) ??
+          DateTime(2099);
+      return expA.compareTo(expB);
+    });
+
+    return list;
+  }
+
+  Future<void> _executeBulkAddDays(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> visibleDocs) async {
+    if (_selectedUserIds.isEmpty) {
+      _showToast('Selecciona primero uno o varios clientes en la lista.',
+          isWarning: true);
+      return;
+    }
+
+    final int days = int.tryParse(_bulkDaysCtrl.text.trim()) ?? 15;
+    if (days <= 0) {
+      _showToast('Ingresa una cantidad válida de días.', isWarning: true);
+      return;
+    }
+
+    final confirmed = await _confirmActionDialog(
+      title: 'Regalar / Sumar +$days Días en Lote',
+      message:
+          'Estás por sumar +$days días y reactivar a ${_selectedUserIds.length} cuenta(s) seleccionada(s). ¿Deseas aplicar el cambio ahora?',
+      confirmLabel: 'Sí, Aplicar +$days Días',
+      accentColor: const Color(0xFF10B981),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _isExecutingBatch = true);
+    try {
+      final db = FirebaseFirestore.instance;
+      final now = DateTime.now();
+
+      final targetDocs =
+          _loadedUsers.where((d) => _selectedUserIds.contains(d.id)).toList();
+
+      for (var i = 0; i < targetDocs.length; i += 450) {
+        final batch = db.batch();
+        final chunk = targetDocs.skip(i).take(450);
+
+        for (final doc in chunk) {
+          final data = doc.data();
+          DateTime baseDate = now;
+          if (data['expirationDate'] != null) {
+            final parsed = DateTime.tryParse(data['expirationDate'].toString());
+            if (parsed != null && parsed.isAfter(now)) {
+              baseDate = parsed;
+            }
+          }
+          final updatedExp = baseDate.add(Duration(days: days));
+          batch.update(doc.reference, {
+            'expirationDate': updatedExp.toIso8601String(),
+            'isActive': true,
+          });
+        }
+        await batch.commit();
+      }
+
+      final count = _selectedUserIds.length;
+      await _refreshAllData();
+      _showToast('¡Listo! Se sumaron +$days días a $count cliente(s).');
+    } catch (e) {
+      _showToast('Error aplicando lote: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isExecutingBatch = false);
+    }
+  }
+
+  Future<void> _executeBulkResetHwId() async {
+    if (_selectedUserIds.isEmpty) {
+      _showToast('Selecciona al menos un cliente para liberar su equipo.',
+          isWarning: true);
+      return;
+    }
+
+    final confirmed = await _confirmActionDialog(
+      title: 'Liberar Dispositivo (Reset Hardware ID)',
+      message:
+          'Se desvinculará el equipo actual de ${_selectedUserIds.length} cliente(s) para que puedan ingresar desde su nueva TV, celular o PC.',
+      confirmLabel: 'Liberar Equipos',
+      accentColor: const Color(0xFF00E5FF),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _isExecutingBatch = true);
+    try {
+      final db = FirebaseFirestore.instance;
+      final ids = _selectedUserIds.toList();
+
+      for (var i = 0; i < ids.length; i += 450) {
+        final batch = db.batch();
+        final chunk = ids.skip(i).take(450);
+        for (final id in chunk) {
+          batch.update(db.collection('users').doc(id), {
+            'registeredHardwareId': '',
+          });
+        }
+        await batch.commit();
+      }
+
+      final totalReset = ids.length;
+      await _loadUsersPage(reset: true);
+      _showToast('¡Equipos liberados para $totalReset cliente(s)!');
+    } catch (e) {
+      _showToast('Error liberando Hardware ID: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isExecutingBatch = false);
+    }
+  }
+
+  Future<void> _executeBulkToggleSuspend(bool activate) async {
+    if (_selectedUserIds.isEmpty) {
+      _showToast('Selecciona al menos un cliente.', isWarning: true);
+      return;
+    }
+
+    final confirmed = await _confirmActionDialog(
+      title: activate ? 'Reactivar Cuentas' : 'Pausar / Suspender Cuentas',
+      message: activate
+          ? '¿Reactivar el acceso de ${_selectedUserIds.length} cliente(s)?'
+          : '¿Suspender temporalmente el acceso de ${_selectedUserIds.length} cliente(s)?',
+      confirmLabel: activate ? 'Reactivar Ahora' : 'Suspender Ahora',
+      accentColor: activate ? const Color(0xFF10B981) : const Color(0xFFF43F5E),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _isExecutingBatch = true);
+    try {
+      final db = FirebaseFirestore.instance;
+      final ids = _selectedUserIds.toList();
+      for (var i = 0; i < ids.length; i += 450) {
+        final batch = db.batch();
+        for (final id in ids.skip(i).take(450)) {
+          batch.update(db.collection('users').doc(id), {'isActive': activate});
+        }
+        await batch.commit();
+      }
+      await _refreshAllData();
+      _showToast(activate
+          ? 'Cuentas reactivadas correctamente.'
+          : 'Cuentas suspendidas correctamente.');
+    } catch (e) {
+      _showToast('Error actualizando estado: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isExecutingBatch = false);
+    }
+  }
+
+  void _openQuickWhatsAppModal(Map<String, dynamic> userData) {
+    final username = (userData['username'] ?? 'Cliente').toString();
+    final rawPhone = (userData['phone'] ?? '').toString();
+    final phoneCtrl = TextEditingController(text: rawPhone);
+
+    final expStr = userData['expirationDate']?.toString();
+    String formattedExp = 'pronto';
+    if (expStr != null) {
+      final d = DateTime.tryParse(expStr);
+      if (d != null) {
+        formattedExp =
+            '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+      }
+    }
+
+    final templates = [
+      {
+        'title': '⏰ Recordatorio amable de vencimiento + Promo',
+        'body':
+            '¡Hola $username! ✨ Te saludamos del equipo de soporte de *Ameycar TV VIP* 📺. Vimos que tu suscripción vence el *$formattedExp* y hoy tenemos una promoción especial de renovación inmediata sin cortes. ¿Deseas que te enviemos tu PIN?'
+      },
+      {
+        'title': '🎁 Regalo de días de cortesía / Fidelidad',
+        'body':
+            '¡Hola $username! 🎉 Gracias por ser parte de *Ameycar TV VIP*. Acabamos de acreditar días de regalo en tu cuenta para que sigas disfrutando del mejor cine, series y deportes en vivo 🍿⚽.'
+      },
+      {
+        'title': '📱 Confirmación de liberación de equipo (Reset HW)',
+        'body':
+            '¡Hola $username! ✅ Ya liberamos el registro de equipo de tu cuenta *Ameycar TV VIP*. Ya puedes iniciar sesión normalmente en tu nuevo dispositivo.'
+      },
+      {
+        'title': '💬 Atención personalizada de Soporte',
+        'body':
+            '¡Hola $username! Te escribimos de soporte oficial de *Ameycar TV VIP* 👋. ¿Cómo va tu señal hoy? Estamos atentos por si necesitas ayuda.'
+      },
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF111827),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            22, 20, 22, MediaQuery.of(ctx).viewInsets.bottom + 26),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF25D366).withOpacity(0.16),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.chat_bubble_rounded,
+                      color: Color(0xFF25D366), size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Consola WhatsApp • $username',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold),
+                      ),
+                      const Text(
+                        'Elige una plantilla lista con 1 clic:',
+                        style: TextStyle(color: Colors.white60, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  icon: const Icon(Icons.close, color: Colors.white54),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: phoneCtrl,
+              keyboardType: TextInputType.phone,
+              style: const TextStyle(color: Colors.white, fontSize: 13.5),
+              decoration: InputDecoration(
+                labelText: 'Número de WhatsApp (con código de país, ej: 51999...)',
+                labelStyle:
+                    const TextStyle(color: Colors.white60, fontSize: 12),
+                prefixIcon:
+                    const Icon(Icons.phone_iphone, color: Color(0xFF25D366)),
+                filled: true,
+                fillColor: const Color(0xFF1F2937),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            ...templates.map((tpl) => Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1F2937),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white10),
+                  ),
+                  child: ListTile(
+                    title: Text(
+                      tpl['title']!,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      tpl['body']!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          const TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
+                    trailing: const Icon(Icons.send_rounded,
+                        color: Color(0xFF25D366), size: 20),
+                    onTap: () async {
+                      final digits =
+                          phoneCtrl.text.replaceAll(RegExp(r'[^0-9]'), '');
+                      if (digits.isEmpty) {
+                        _showToast(
+                            'Escribe el número de WhatsApp del cliente arriba.',
+                            isWarning: true);
+                        return;
+                      }
+                      Navigator.pop(ctx);
+                      final encoded = Uri.encodeComponent(tpl['body']!);
+                      final uri =
+                          Uri.parse('https://wa.me/$digits?text=$encoded');
+                      await launchUrl(uri,
+                          mode: LaunchMode.externalApplication);
+                    },
+                  ),
+                )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool?> _confirmActionDialog({
+    required String title,
+    required String message,
+    required String confirmLabel,
+    required Color accentColor,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF111827),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: accentColor.withOpacity(0.5), width: 1.2),
+        ),
+        title: Text(title,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold)),
+        content: Text(message,
+            style: const TextStyle(color: Colors.white70, fontSize: 13)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child:
+                const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: accentColor,
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(confirmLabel,
+                style: const TextStyle(fontWeight: FontWeight.w900)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showToast(String msg, {bool isWarning = false, bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w600)),
+        backgroundColor: isError
+            ? const Color(0xFFF43F5E)
+            : isWarning
+                ? const Color(0xFFF59E0B)
+                : const Color(0xFF10B981),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!AuthService.isAdmin) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0B0F19),
+        body: Center(
+          child: Container(
+            padding: const EdgeInsets.all(28),
+            constraints: const BoxConstraints(maxWidth: 400),
+            decoration: BoxDecoration(
+              color: const Color(0xFF111827),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.redAccent.withOpacity(0.5)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.lock_person_rounded,
+                    color: Colors.redAccent, size: 54),
+                const SizedBox(height: 14),
+                const Text(
+                  'Acceso Exclusivo de Administración',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Esta suite ejecutiva está restringida únicamente a cuentas Administradoras autorizadas de Ameycar TV.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white60, fontSize: 13),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('Volver al Reproductor'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final filteredDocs = _filteredAndSortedDocs;
+    final estimatedMonthlyPen = _activeUsersCount * 20;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B0F19),
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: const Color(0xFF111827),
+        titleSpacing: 12,
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF9D4EDD), Color(0xFF00E5FF)],
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.analytics_rounded,
+                  color: Colors.white, size: 20),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Suite Ejecutiva & Soporte • AMEYCAR TV VIP',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.3),
+                  ),
+                  Text(
+                    'Centro de Control de Clientes, Promociones en Lote y Fidelización',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Color(0xFFC77DFF), fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          if (widget.onOpenLegacyAdmin != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFFFD600),
+                  side: BorderSide(
+                      color: const Color(0xFFFFD600).withOpacity(0.6)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                icon: const Icon(Icons.vpn_key_rounded, size: 16),
+                label: const Text('Crear Cuentas / PINes',
+                    style:
+                        TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                onPressed: widget.onOpenLegacyAdmin,
+              ),
+            ),
+          IconButton(
+            tooltip: 'Actualizar métricas y lista',
+            onPressed: _refreshAllData,
+            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF00E5FF)),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: RefreshIndicator(
+        color: const Color(0xFF00E5FF),
+        onRefresh: _refreshAllData,
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final cols = constraints.maxWidth > 1100
+                        ? 5
+                        : constraints.maxWidth > 700
+                            ? 3
+                            : 2;
+                    return GridView.count(
+                      crossAxisCount: cols,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: constraints.maxWidth > 600 ? 2.15 : 1.75,
+                      children: [
+                        _buildElegantKpiCard(
+                          title: 'Clientes Activos',
+                          value: _isLoadingMetrics ? '...' : '$_activeUsersCount',
+                          subtitle: 'De $_totalUsersCount registrados',
+                          icon: Icons.verified_user_rounded,
+                          accent: const Color(0xFF10B981),
+                          onTap: () => setState(() => _statusFilter = 'Activos'),
+                        ),
+                        _buildElegantKpiCard(
+                          title: 'Vencen en <= 3 Días',
+                          value:
+                              _isLoadingMetrics ? '...' : '$_expiringSoonCount',
+                          subtitle: 'Toca para filtrar y avisar',
+                          icon: Icons.notifications_active_rounded,
+                          accent: const Color(0xFFF59E0B),
+                          onTap: () =>
+                              setState(() => _statusFilter = 'Por Vencer (<=3d)'),
+                        ),
+                        _buildElegantKpiCard(
+                          title: 'Suspendidos / Vencidos',
+                          value: _isLoadingMetrics ? '...' : '$_suspendedCount',
+                          subtitle: 'Listos para reconquista',
+                          icon: Icons.person_off_rounded,
+                          accent: const Color(0xFFF43F5E),
+                          onTap: () => setState(
+                              () => _statusFilter = 'Vencidos / Suspendidos'),
+                        ),
+                        _buildElegantKpiCard(
+                          title: 'PINes Canjeados',
+                          value: _isLoadingMetrics
+                              ? '...'
+                              : '$_pinsRedeemedCount / $_pinsGeneratedCount',
+                          subtitle: 'Activaciones automáticas',
+                          icon: Icons.confirmation_number_rounded,
+                          accent: const Color(0xFFC77DFF),
+                        ),
+                        _buildElegantKpiCard(
+                          title: 'Flujo Mensual Est.',
+                          value: _isLoadingMetrics
+                              ? '...'
+                              : 'S/ $estimatedMonthlyPen',
+                          subtitle: 'Base activa estimada',
+                          icon: Icons.trending_up_rounded,
+                          accent: const Color(0xFF00E5FF),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF111827),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: Colors.white.withOpacity(0.08)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _searchCtrl,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 13.5),
+                              decoration: InputDecoration(
+                                hintText:
+                                    'Buscar cliente por nombre, correo, WhatsApp o Hardware ID...',
+                                hintStyle: const TextStyle(
+                                    color: Colors.white38, fontSize: 12.5),
+                                prefixIcon: const Icon(Icons.search_rounded,
+                                    color: Color(0xFFC77DFF)),
+                                suffixIcon: _searchQuery.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(Icons.clear,
+                                            color: Colors.white54, size: 18),
+                                        onPressed: () {
+                                          _searchCtrl.clear();
+                                          setState(() => _searchQuery = '');
+                                          _loadUsersPage(reset: true);
+                                        },
+                                      )
+                                    : null,
+                                filled: true,
+                                fillColor: const Color(0xFF1F2937),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 12),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              onChanged: (val) =>
+                                  setState(() => _searchQuery = val),
+                            ),
+                          ),
+                          if (_planFilter != 'Todos' ||
+                              _deviceFilter != 'Todos' ||
+                              _statusFilter != 'Todos') ...[
+                            const SizedBox(width: 10),
+                            TextButton.icon(
+                              onPressed: () {
+                                setState(() {
+                                  _planFilter = 'Todos';
+                                  _deviceFilter = 'Todos';
+                                  _statusFilter = 'Todos';
+                                });
+                              },
+                              icon: const Icon(Icons.filter_alt_off_rounded,
+                                  color: Color(0xFFFFD600), size: 18),
+                              label: const Text('Limpiar filtros',
+                                  style: TextStyle(color: Color(0xFFFFD600))),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          _buildFilterDropdown(
+                            label: 'Plan',
+                            icon: Icons.workspace_premium_rounded,
+                            value: _planFilter,
+                            options: const [
+                              'Todos',
+                              'Individual',
+                              'Familiar',
+                              'VIP'
+                            ],
+                            onChanged: (v) => setState(() => _planFilter = v!),
+                          ),
+                          _buildFilterDropdown(
+                            label: 'Dispositivo',
+                            icon: Icons.devices_rounded,
+                            value: _deviceFilter,
+                            options: const [
+                              'Todos',
+                              'Android / Celular',
+                              'Smart TV',
+                              'Web / PC',
+                              'Sin Vincular'
+                            ],
+                            onChanged: (v) =>
+                                setState(() => _deviceFilter = v!),
+                          ),
+                          _buildFilterDropdown(
+                            label: 'Estado / Vencimiento',
+                            icon: Icons.event_available_rounded,
+                            value: _statusFilter,
+                            options: const [
+                              'Todos',
+                              'Activos',
+                              'Por Vencer (<=3d)',
+                              'Vencidos / Suspendidos'
+                            ],
+                            onChanged: (v) =>
+                                setState(() => _statusFilter = v!),
+                          ),
+                          _buildFilterDropdown(
+                            label: 'Ordenar por',
+                            icon: Icons.sort_rounded,
+                            value: _sortMode,
+                            options: const [
+                              'Próximos a vencer',
+                              'Nombre (A-Z)'
+                            ],
+                            onChanged: (v) => setState(() => _sortMode = v!),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: _selectedUserIds.isNotEmpty
+                          ? [const Color(0xFF1E1B4B), const Color(0xFF111827)]
+                          : [const Color(0xFF111827), const Color(0xFF111827)],
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: _selectedUserIds.isNotEmpty
+                          ? const Color(0xFFC77DFF).withOpacity(0.7)
+                          : Colors.white10,
+                      width: _selectedUserIds.isNotEmpty ? 1.5 : 1.0,
+                    ),
+                  ),
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Checkbox(
+                            value: filteredDocs.isNotEmpty &&
+                                filteredDocs.every(
+                                    (d) => _selectedUserIds.contains(d.id)),
+                            activeColor: const Color(0xFFC77DFF),
+                            checkColor: Colors.black,
+                            onChanged: (checked) {
+                              setState(() {
+                                if (checked == true) {
+                                  for (final doc in filteredDocs) {
+                                    _selectedUserIds.add(doc.id);
+                                  }
+                                } else {
+                                  _selectedUserIds.clear();
+                                }
+                              });
+                            },
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _selectedUserIds.isEmpty
+                                ? 'Selecciona clientes para acciones masivas (${filteredDocs.length} en vista)'
+                                : '${_selectedUserIds.length} cliente(s) seleccionado(s) para lote',
+                            style: TextStyle(
+                              color: _selectedUserIds.isEmpty
+                                  ? Colors.white70
+                                  : const Color(0xFFC77DFF),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_isExecutingBatch)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 16),
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2.5, color: Color(0xFF00E5FF)),
+                          ),
+                        )
+                      else
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Container(
+                              width: 74,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1F2937),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.white24),
+                              ),
+                              child: TextField(
+                                controller: _bulkDaysCtrl,
+                                keyboardType: TextInputType.number,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13),
+                                decoration: const InputDecoration(
+                                  suffixText: 'd',
+                                  suffixStyle: TextStyle(
+                                      color: Colors.white54, fontSize: 11),
+                                  border: InputBorder.none,
+                                  contentPadding:
+                                      EdgeInsets.symmetric(vertical: 10),
+                                ),
+                              ),
+                            ),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF10B981),
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 11),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.card_giftcard_rounded,
+                                  size: 17),
+                              label: const Text('Sumar Días',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 12)),
+                              onPressed: () =>
+                                  _executeBulkAddDays(filteredDocs),
+                            ),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF00E5FF),
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 11),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.phonelink_erase_rounded,
+                                  size: 17),
+                              label: const Text('Resetear HW ID',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 12)),
+                              onPressed: _executeBulkResetHwId,
+                            ),
+                            OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFFF43F5E),
+                                side: const BorderSide(
+                                    color: Color(0xFFF43F5E), width: 1),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 11),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.pause_circle_outline,
+                                  size: 17),
+                              label: const Text('Suspender',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12)),
+                              onPressed: () => _executeBulkToggleSuspend(false),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (_isLoadingUsers && _loadedUsers.isEmpty)
+              const SliverFillRemaining(
+                child: Center(
+                    child: CircularProgressIndicator(color: Color(0xFFC77DFF))),
+              )
+            else if (filteredDocs.isEmpty)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(32.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.person_search_rounded,
+                            color: Colors.white24, size: 56),
+                        SizedBox(height: 12),
+                        Text(
+                          'No se encontraron clientes con estos criterios',
+                          style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Prueba limpiando los filtros o cargando el siguiente bloque.',
+                          style: TextStyle(color: Colors.white38, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+            else
+              SliverPadding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final doc = filteredDocs[index];
+                      final data = doc.data();
+                      return _buildClientRowCard(doc.id, data);
+                    },
+                    childCount: filteredDocs.length,
+                  ),
+                ),
+              ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 40),
+                child: Center(
+                  child: _hasMoreUsers
+                      ? OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF00E5FF),
+                            side: const BorderSide(color: Color(0xFF00E5FF)),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 24, vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
+                          icon: _isLoadingUsers
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Color(0xFF00E5FF)),
+                                )
+                              : const Icon(Icons.expand_more_rounded),
+                          label: Text(_isLoadingUsers
+                              ? 'Cargando más clientes...'
+                              : 'Cargar siguiente lote de clientes (+$_pageSize)'),
+                          onPressed: _isLoadingUsers
+                              ? null
+                              : () => _loadUsersPage(reset: false),
+                        )
+                      : Text(
+                          'Mostrando el total cargado (${_loadedUsers.length} cuentas en memoria)',
+                          style: const TextStyle(
+                              color: Colors.white38, fontSize: 12),
+                        ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildElegantKpiCard({
+    required String title,
+    required String value,
+    required String subtitle,
+    required IconData icon,
+    required Color accent,
+    VoidCallback? onTap,
+  }) {
+    return Material(
+      color: const Color(0xFF111827),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: accent.withOpacity(0.28), width: 1.2),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: accent, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: accent,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          const TextStyle(color: Colors.white54, fontSize: 10),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterDropdown({
+    required String label,
+    required IconData icon,
+    required String value,
+    required List<String> options,
+    required ValueChanged<String?> onChanged,
+  }) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 190, maxWidth: 250),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F2937),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          dropdownColor: const Color(0xFF1F2937),
+          icon: const Icon(Icons.keyboard_arrow_down_rounded,
+              color: Color(0xFFC77DFF)),
+          style: const TextStyle(color: Colors.white, fontSize: 12.5),
+          items: options.map((opt) {
+            return DropdownMenuItem<String>(
+              value: opt,
+              child: Row(
+                children: [
+                  Icon(icon, size: 15, color: const Color(0xFF00E5FF)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '$label: $opt',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildClientRowCard(String userId, Map<String, dynamic> data) {
+    final now = DateTime.now();
+    final isSelected = _selectedUserIds.contains(userId);
+    final username = (data['username'] ?? 'Sin Nombre').toString();
+    final phone = (data['phone'] ?? '').toString();
+    final plan = _detectPlanLabel(data);
+    final deviceCategory = _detectDeviceCategory(data);
+    final hwId = (data['registeredHardwareId'] ?? '').toString();
+    final bool isActiveFlag = data['isActive'] == true;
+
+    DateTime? expDate;
+    if (data['expirationDate'] != null) {
+      expDate = DateTime.tryParse(data['expirationDate'].toString());
+    }
+    final int daysRemaining =
+        expDate != null ? expDate.difference(now).inDays : 0;
+    final bool isExpired =
+        !isActiveFlag || (expDate != null && expDate.isBefore(now));
+    final bool isExpiringSoon = !isExpired && daysRemaining <= 3;
+
+    final String expText = expDate != null
+        ? '${expDate.day.toString().padLeft(2, '0')}/${expDate.month.toString().padLeft(2, '0')}/${expDate.year}'
+        : 'Sin fecha';
+
+    Color statusColor = const Color(0xFF10B981);
+    String statusLabel = 'ACTIVO (${max(0, daysRemaining)}d)';
+    if (isExpired) {
+      statusColor = const Color(0xFFF43F5E);
+      statusLabel = 'VENCIDO / PAUSADO';
+    } else if (isExpiringSoon) {
+      statusColor = const Color(0xFFF59E0B);
+      statusLabel = 'POR VENCER (${max(0, daysRemaining)}d)';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: isSelected ? const Color(0xFF1E293B) : const Color(0xFF111827),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isSelected
+              ? const Color(0xFFC77DFF)
+              : isExpiringSoon
+                  ? const Color(0xFFF59E0B).withOpacity(0.5)
+                  : Colors.white.withOpacity(0.07),
+          width: isSelected ? 1.6 : 1.0,
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {
+          setState(() {
+            if (isSelected) {
+              _selectedUserIds.remove(userId);
+            } else {
+              _selectedUserIds.add(userId);
+            }
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Checkbox(
+                value: isSelected,
+                activeColor: const Color(0xFFC77DFF),
+                checkColor: Colors.black,
+                onChanged: (v) {
+                  setState(() {
+                    if (v == true) {
+                      _selectedUserIds.add(userId);
+                    } else {
+                      _selectedUserIds.remove(userId);
+                    }
+                  });
+                },
+              ),
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: statusColor.withOpacity(0.15),
+                child: Text(
+                  username.isNotEmpty ? username[0].toUpperCase() : 'U',
+                  style: TextStyle(
+                      color: statusColor, fontWeight: FontWeight.w900),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          username,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        _buildMiniBadge(statusLabel, statusColor),
+                        _buildMiniBadge(plan, const Color(0xFFC77DFF)),
+                        _buildMiniBadge(
+                            deviceCategory, const Color(0xFF00E5FF)),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      'Vence: $expText  •  ${phone.isNotEmpty ? "WhatsApp: $phone  •  " : ""}${hwId.isNotEmpty ? "Equipo vinculado ✓" : "Equipo libre"}',
+                      style:
+                          const TextStyle(color: Colors.white60, fontSize: 11.5),
+                    ),
+                  ],
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Sumar +30 días rápido',
+                    icon: const Icon(Icons.add_circle_outline_rounded,
+                        color: Color(0xFF10B981)),
+                    onPressed: () async {
+                      final base = (expDate != null && expDate.isAfter(now))
+                          ? expDate
+                          : now;
+                      await FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(userId)
+                          .update({
+                        'expirationDate':
+                            base.add(const Duration(days: 30)).toIso8601String(),
+                        'isActive': true,
+                      });
+                      await _refreshAllData();
+                      _showToast('¡+30 días acreditados a $username!');
+                    },
+                  ),
+                  if (hwId.isNotEmpty)
+                    IconButton(
+                      tooltip: 'Liberar equipo de este cliente',
+                      icon: const Icon(Icons.phonelink_erase_rounded,
+                          color: Color(0xFF00E5FF)),
+                      onPressed: () async {
+                        await FirebaseFirestore.instance
+                            .collection('users')
+                            .doc(userId)
+                            .update({'registeredHardwareId': ''});
+                        await _loadUsersPage(reset: true);
+                        _showToast('Equipo liberado para $username');
+                      },
+                    ),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF25D366),
+                      foregroundColor: Colors.black,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ),
+                    icon: const Icon(Icons.chat_rounded, size: 16),
+                    label: const Text('Soporte',
+                        style: TextStyle(
+                            fontSize: 11.5, fontWeight: FontWeight.w900)),
+                    onPressed: () => _openQuickWhatsAppModal(data),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniBadge(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.4), width: 0.8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
   }
 }
