@@ -1,37 +1,28 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="AMEYCAR TV VIP - Televisión en Vivo, Cine y Deportes sin anuncios.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="mi_iptv_app">
+  <meta name="apple-mobile-web-app-title" content="AMEYCAR TV">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>mi_iptv_app</title>
+  <title>AMEYCAR TV VIP</title>
   <link rel="manifest" href="manifest.json">
   
+  <!-- Tailwind CSS para la portada comercial opcional -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800;900&display=swap" rel="stylesheet">
+
   <!-- Firebase Web SDKs (Compatibles con Flutter Web) -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -50,6 +41,7 @@
     // Inicialización nativa web antes de que Flutter monte los widgets
     firebase.initializeApp(firebaseConfig);
   </script>
+  
   <style>
     /* Ocultar superposiciones y controles nativos en Smart TVs (Tizen/WebOS) */
     video::-webkit-media-controls { display: none !important; }
@@ -57,17 +49,91 @@
     video::-webkit-media-controls-panel { display: none !important; }
     video::-webkit-media-controls-overlay-play-button { display: none !important; }
     * { -webkit-tap-highlight-color: transparent; }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #070A10; color: #F8FAFC; }
+    .glow-effect { box-shadow: 0 0 40px -10px rgba(124, 44, 191, 0.4); }
   </style>
 </head>
-<body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
+<body class="antialiased">
 
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
-  <script src="flutter_bootstrap.js" async></script>
+  <!-- PORTADA COMERCIAL / LANDING PAGE INTEGRADA -->
+  <div id="commercial-landing" class="min-h-screen flex flex-col justify-between">
+    <!-- NAVBAR -->
+    <nav class="backdrop-blur-md bg-[#070A10]/90 border-b border-purple-900/30 px-6 py-4">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <span class="text-xl font-black tracking-wider bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">AMEYCAR TV</span>
+                <span class="bg-red-600 text-white text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest">VIP</span>
+            </div>
+            <div class="flex items-center gap-4">
+                <button onclick="launchApp()" class="bg-cyan-400 text-black font-extrabold px-4 py-2 rounded-xl shadow-lg hover:bg-cyan-300 transition text-sm">
+                    🚀 Ingresar a la App
+                </button>
+                <a href="https://wa.me/51905823660?text=¡Hola!%20Deseo%20adquirir%20una%20cuenta%20VIP%20de%20Ameycar%20TV." target="_blank" 
+                   class="hidden sm:inline-block bg-purple-600 text-white font-bold px-4 py-2 rounded-xl hover:bg-purple-500 transition text-sm">
+                    💬 WhatsApp
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- HERO SECTION -->
+    <header class="py-12 px-6 text-center max-w-4xl mx-auto">
+        <span class="inline-block bg-purple-950/80 border border-purple-500/40 text-purple-300 px-4 py-1 rounded-full text-xs font-bold tracking-widest uppercase mb-4 glow-effect">
+            ⚡ Streaming Inteligente sin Anuncios
+        </span>
+        <h1 class="text-3xl md:text-5xl font-black tracking-tight leading-tight mb-4">
+            Televisión en Vivo, Cine y Deportes <br>
+            <span class="bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">con Asistente de Voz IA y Cero Cortes</span>
+        </h1>
+        <p class="text-slate-400 text-sm md:text-base max-w-xl mx-auto mb-8">
+            Disfruta de zapping ultrarrápido, retroceso en vivo (Timeshift), chat social, control remoto desde el celular y listas ilimitadas.
+        </p>
+        <button onclick="launchApp()" class="bg-gradient-to-r from-cyan-400 to-purple-600 text-black font-black px-8 py-4 rounded-2xl shadow-xl hover:opacity-90 transition text-base tracking-wide">
+            ▶ ABRIR APLICACIÓN WEB AHORA
+        </button>
+    </header>
+
+    <!-- FOOTER -->
+    <footer class="py-6 px-6 text-center text-slate-500 text-xs border-t border-purple-950/30">
+        <p>© 2026 AMEYCAR TV VIP. Todos los derechos reservados.</p>
+    </footer>
+  </div>
+
+  <!-- CONTENEDOR DONDE FLUTTER MONTA LA APP AL HACER CLIC EN INGRESAR -->
+  <div id="flutter-app-container" style="display: none; width: 100vw; height: 100vh; position: fixed; top: 0; left: 0; background: #070A10; z-index: 9999;"></div>
+
+  <script>
+    function launchApp() {
+      // Oculta la portada comercial y muestra la app de Flutter Web
+      document.getElementById('commercial-landing').style.display = 'none';
+      document.getElementById('flutter-app-container').style.display = 'block';
+
+      // Carga dinámica del script de arranque de Flutter dentro del contenedor dedicado
+      if (!window._flutterLoaded) {
+        window._flutterLoaded = true;
+        const targetContainer = document.getElementById('flutter-app-container');
+        
+        // Inicializador oficial de Flutter Web
+        window._flutter = {
+          loader: {
+            // Reorienta la app al contenedor personalizado
+            didCreateEngineInitializer: function(engineInitializer) {
+              engineInitializer.initializeEngine({
+                hostElement: targetContainer
+              }).then(function(appRunner) {
+                appRunner.run();
+              });
+            }
+          }
+        };
+
+        const scriptTag = document.createElement('script');
+        scriptTag.src = 'flutter_bootstrap.js';
+        scriptTag.async = true;
+        document.body.appendChild(scriptTag);
+      }
+    }
+  </script>
+
 </body>
 </html>
