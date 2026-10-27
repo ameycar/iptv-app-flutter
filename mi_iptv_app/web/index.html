@@ -1,11 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="es" class="scroll-smooth">
 <head>
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="AMEYCAR TV VIP - Televisión en Vivo, Cine y Deportes sin anuncios.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="AMEYCAR TV VIP - Reproductor Multimedia Inteligente con Asistente de Voz IA, Timeshift, DVR y Cero Anuncios.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -16,14 +17,14 @@
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>AMEYCAR TV VIP</title>
+  <title>AMEYCAR TV VIP • Reproductor Inteligente Sin Anuncios</title>
   <link rel="manifest" href="manifest.json">
   
-  <!-- Tailwind CSS para la portada comercial opcional -->
+  <!-- Tailwind CSS & Tipografía Moderna -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
-  <!-- Firebase Web SDKs (Compatibles con Flutter Web) -->
+  <!-- Firebase Web SDKs (Compatibles con Flutter Web - INTACTO) -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
@@ -49,74 +50,629 @@
     video::-webkit-media-controls-panel { display: none !important; }
     video::-webkit-media-controls-overlay-play-button { display: none !important; }
     * { -webkit-tap-highlight-color: transparent; }
-    body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #070A10; color: #F8FAFC; }
-    .glow-effect { box-shadow: 0 0 40px -10px rgba(124, 44, 191, 0.4); }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: #070A10;
+      color: #FFFFFF;
+      overflow-x: hidden;
+    }
+
+    /* Degradado multicolor icónico para Logo y Acentos */
+    .logo-multicolor {
+      background: linear-gradient(90deg, #D946EF 0%, #9D4EDD 30%, #3B82F6 65%, #00E5FF 100%);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: gradientFlow 5s linear infinite;
+    }
+
+    @keyframes gradientFlow {
+      0% { background-position: 0% center; }
+      100% { background-position: 200% center; }
+    }
+
+    /* Animaciones de tarjetas estilo BTO al pasar el mouse */
+    .bto-card {
+      transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.45s ease, border-color 0.35s ease;
+    }
+    .bto-card:hover {
+      transform: translateY(-10px) scale(1.015);
+      box-shadow: 0 25px 50px -12px rgba(0, 229, 255, 0.25), 0 0 35px -8px rgba(157, 78, 221, 0.4);
+    }
+    .bto-card .card-visual {
+      transition: transform 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .bto-card:hover .card-visual {
+      transform: scale(1.08) rotate(-1.5deg);
+    }
+
+    /* Animación de mockups interactivos */
+    .mockup-hover {
+      transition: transform 0.5s ease, box-shadow 0.5s ease;
+    }
+    .mockup-hover:hover {
+      transform: perspective(1000px) rotateY(-4deg) rotateX(2deg) scale(1.03);
+      box-shadow: 0 25px 60px -15px rgba(0, 229, 255, 0.35);
+    }
+
+    @keyframes pulseMic {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.55); }
+      50% { box-shadow: 0 0 0 18px rgba(0, 229, 255, 0); }
+    }
+    .mic-pulse { animation: pulseMic 2.2s infinite; }
+
+    @keyframes floatEmoji {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-8px); }
+    }
+    .float-anim { animation: floatEmoji 3s ease-in-out infinite; }
+
+    .glow-purple { box-shadow: 0 0 45px -10px rgba(157, 78, 221, 0.45); }
+    .glow-cyan { box-shadow: 0 0 40px -10px rgba(0, 229, 255, 0.4); }
   </style>
 </head>
-<body class="antialiased">
+<body class="antialiased selection:bg-cyan-400 selection:text-black">
 
-  <!-- PORTADA COMERCIAL / LANDING PAGE INTEGRADA -->
-  <div id="commercial-landing" class="min-h-screen flex flex-col justify-between">
-    <!-- NAVBAR -->
-    <nav class="backdrop-blur-md bg-[#070A10]/90 border-b border-purple-900/30 px-6 py-4">
-        <div class="max-w-7xl mx-auto flex justify-between items-center">
-            <div class="flex items-center space-x-2">
-                <span class="text-xl font-black tracking-wider bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">AMEYCAR TV</span>
-                <span class="bg-red-600 text-white text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest">VIP</span>
+  <!-- ===================================================================== -->
+  <!-- PORTADA COMERCIAL / LANDING PAGE COMPLETA ESTILO BTO ADAPTADA         -->
+  <!-- ===================================================================== -->
+  <div id="commercial-landing" class="min-h-screen flex flex-col justify-between relative">
+
+    <!-- LUCES AMBIENTALES DE FONDO -->
+    <div class="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+      <div class="absolute -top-40 left-1/4 w-[500px] h-[500px] bg-purple-700/20 rounded-full blur-[130px]"></div>
+      <div class="absolute top-1/3 -right-32 w-[450px] h-[450px] bg-blue-600/15 rounded-full blur-[130px]"></div>
+      <div class="absolute -bottom-40 left-10 w-[420px] h-[420px] bg-cyan-500/15 rounded-full blur-[130px]"></div>
+    </div>
+
+    <!-- BARRA DE NAVEGACIÓN SUPERIOR CON PESTAÑAS FUNCIONALES -->
+    <nav class="sticky top-0 z-50 backdrop-blur-xl bg-[#070A10]/90 border-b border-purple-500/20 px-4 sm:px-8 py-3.5">
+      <div class="max-w-7xl mx-auto flex justify-between items-center">
+        <!-- Logo Multicolor Degradado -->
+        <a href="#inicio" class="flex items-center space-x-2.5 group">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-600 via-blue-500 to-cyan-400 p-[2px] shadow-lg group-hover:scale-105 transition">
+            <div class="w-full h-full bg-[#070A10] rounded-[10px] flex items-center justify-center">
+              <span class="text-cyan-400 font-black text-base">▶</span>
             </div>
-            <div class="flex items-center gap-4">
-                <button onclick="launchApp()" class="bg-cyan-400 text-black font-extrabold px-4 py-2 rounded-xl shadow-lg hover:bg-cyan-300 transition text-sm">
-                    🚀 Ingresar a la App
-                </button>
-                <a href="https://wa.me/51905823660?text=¡Hola!%20Deseo%20adquirir%20una%20cuenta%20VIP%20de%20Ameycar%20TV." target="_blank" 
-                   class="hidden sm:inline-block bg-purple-600 text-white font-bold px-4 py-2 rounded-xl hover:bg-purple-500 transition text-sm">
-                    💬 WhatsApp
-                </a>
-            </div>
+          </div>
+          <div class="flex items-center space-x-1.5">
+            <span class="text-xl sm:text-2xl font-black tracking-tight logo-multicolor">AMEYCAR TV</span>
+            <span class="bg-gradient-to-r from-purple-600 to-blue-500 text-white text-[9px] px-2 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow">VIP</span>
+          </div>
+        </a>
+
+        <!-- Pestañas Superiores Escritorio -->
+        <div class="hidden lg:flex items-center space-x-7 text-sm font-semibold text-white/90">
+          <a href="#superpoderes" class="hover:text-cyan-400 transition">Superpoderes</a>
+          <a href="#carrusel-pro" class="hover:text-cyan-400 transition">Tour Interactivo</a>
+          <a href="#guia-uso" class="hover:text-cyan-400 transition">Guía 3 Pasos</a>
+          <a href="#planes" class="hover:text-cyan-400 transition">Planes VIP</a>
+          <a href="#pagos" class="hover:text-cyan-400 transition">Métodos de Pago</a>
+          <a href="#certificado-legal" class="text-cyan-300 hover:text-cyan-200 transition flex items-center gap-1">
+            <span>🛡️</span> Legal
+          </a>
         </div>
+
+        <!-- Botones de Acción Rápida -->
+        <div class="flex items-center gap-2.5">
+          <button onclick="launchApp()" class="bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 text-white font-extrabold px-4 py-2.5 rounded-xl shadow-lg hover:opacity-95 hover:scale-[1.03] transition text-xs sm:text-sm">
+            🚀 Ingresar a la App
+          </button>
+          <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20adquirir%20una%20licencia%20VIP%20del%20reproductor%20Ameycar%20TV." target="_blank" rel="noopener"
+             class="hidden sm:inline-flex items-center gap-1.5 bg-[#121B2E] border border-cyan-400/40 text-white font-bold px-4 py-2.5 rounded-xl hover:bg-cyan-400 hover:text-black transition text-xs sm:text-sm">
+            <span>💬</span> Contacto
+          </a>
+          <!-- Botón Menú Móvil -->
+          <button onclick="toggleMobileMenu()" aria-label="Menú" class="lg:hidden p-2 rounded-xl bg-white/5 border border-white/10 text-white">
+            ☰
+          </button>
+        </div>
+      </div>
+
+      <!-- Menú Desplegable Móvil -->
+      <div id="mobile-menu" class="hidden lg:hidden mt-3 pt-3 border-t border-white/10 flex flex-col space-y-2.5 text-sm font-semibold text-white px-2 pb-2">
+        <a href="#superpoderes" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">⚡ Superpoderes de la App</a>
+        <a href="#carrusel-pro" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">🎯 Tour Interactivo en Vivo</a>
+        <a href="#guia-uso" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">📲 Guía Intuitiva de Instalación</a>
+        <a href="#planes" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">💎 Planes y Licencias VIP</a>
+        <a href="#pagos" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">💳 Métodos de Pago</a>
+        <a href="#certificado-legal" onclick="toggleMobileMenu()" class="py-1.5 text-cyan-400">🛡️ Certificado Legal</a>
+      </div>
     </nav>
 
-    <!-- HERO SECTION -->
-    <header class="py-12 px-6 text-center max-w-4xl mx-auto">
-        <span class="inline-block bg-purple-950/80 border border-purple-500/40 text-purple-300 px-4 py-1 rounded-full text-xs font-bold tracking-widest uppercase mb-4 glow-effect">
-            ⚡ Streaming Inteligente sin Anuncios
-        </span>
-        <h1 class="text-3xl md:text-5xl font-black tracking-tight leading-tight mb-4">
-            Televisión en Vivo, Cine y Deportes <br>
-            <span class="bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">con Asistente de Voz IA y Cero Cortes</span>
-        </h1>
-        <p class="text-slate-400 text-sm md:text-base max-w-xl mx-auto mb-8">
-            Disfruta de zapping ultrarrápido, retroceso en vivo (Timeshift), chat social, control remoto desde el celular y listas ilimitadas.
-        </p>
-        <button onclick="launchApp()" class="bg-gradient-to-r from-cyan-400 to-purple-600 text-black font-black px-8 py-4 rounded-2xl shadow-xl hover:opacity-90 transition text-base tracking-wide">
-            ▶ ABRIR APLICACIÓN WEB AHORA
+    <!-- =================================================================== -->
+    <!-- HERO SECTION + 4 TARJETAS ANIMADAS ESTILO "BTO DIGITAL"             -->
+    <!-- =================================================================== -->
+    <header id="inicio" class="pt-14 pb-20 px-4 sm:px-8 max-w-7xl mx-auto w-full text-center">
+      <div class="inline-flex items-center gap-2 bg-purple-950/70 border border-purple-500/40 text-white px-4 py-1.5 rounded-full text-xs font-bold tracking-wider uppercase mb-6 glow-purple">
+        <span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+        Reproductor Multimedia Inteligente • Cero Publicidad
+      </div>
+
+      <h1 class="text-4xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.08] text-white mb-5">
+        Reproducción que funciona. <span class="logo-multicolor">Punto.</span>
+      </h1>
+
+      <p class="text-white/80 text-base sm:text-xl max-w-3xl mx-auto mb-8 font-medium leading-relaxed">
+        Deja atrás los reproductores lentos, obsoletos y llenos de anuncios invasivos. Disfruta de tus listas personales con <strong class="text-cyan-300">Asistente de Voz IA</strong>, <strong class="text-purple-300">Retroceso en Vivo</strong>, <strong class="text-blue-300">Grabación DVR</strong> y sincronización instantánea con tu Smart TV.
+      </p>
+
+      <div class="flex flex-col sm:flex-row justify-center items-center gap-4 mb-16">
+        <button onclick="launchApp()" class="w-full sm:w-auto bg-gradient-to-r from-purple-600 via-blue-500 to-cyan-400 text-white font-black px-8 py-4 rounded-2xl glow-cyan hover:scale-105 transition text-base tracking-wide shadow-xl">
+          ▶ ABRIR REPRODUCTOR WEB AHORA
         </button>
+        <a href="#planes" class="w-full sm:w-auto bg-white text-[#070A10] font-black px-8 py-4 rounded-2xl hover:bg-cyan-300 transition text-base shadow-xl">
+          💎 Adquirir Licencia VIP
+        </a>
+      </div>
+
+      <!-- PORTAFOLIO DE 4 TARJETAS INTERACTIVAS (INSPIRADO EN BTO DIGITAL) -->
+      <div id="superpoderes" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 text-left pt-4">
+        
+        <!-- Tarjeta 1: 0% Anuncios & Zapping -->
+        <div onclick="jumpToSlide(0)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#4C1D95] via-[#1E1B4B] to-[#0B1020] border border-purple-400/30 p-6 flex flex-col justify-between min-h-[340px] relative overflow-hidden">
+          <!-- Arte UI animado al pasar el mouse -->
+          <div class="card-visual bg-[#070A10]/80 border border-purple-400/30 rounded-2xl p-4 mb-5 shadow-inner">
+            <div class="flex justify-between items-center mb-3">
+              <span class="text-[10px] font-black text-purple-300 tracking-wider">ZAPPING TURBO</span>
+              <span class="bg-emerald-500/20 text-emerald-300 text-[9px] font-bold px-2 py-0.5 rounded-full">0% ADS</span>
+            </div>
+            <div class="space-y-2">
+              <div class="h-7 rounded-lg bg-purple-600/30 border border-purple-400/40 flex items-center px-2.5 justify-between">
+                <span class="text-[11px] font-bold text-white">⚡ CH 01 • Señal 4K</span>
+                <span class="text-[10px] text-cyan-300">0.2s</span>
+              </div>
+              <div class="h-7 rounded-lg bg-white/5 flex items-center px-2.5 justify-between">
+                <span class="text-[11px] text-white/75">🎬 CH 02 • Cine Sala</span>
+                <span class="text-[10px] text-yellow-400">★</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <h3 class="text-xl font-black text-white leading-snug mb-2">100% Libre de Anuncios y Zapping Veloz</h3>
+            <p class="text-white/75 text-xs leading-relaxed mb-4">Cero videos publicitarios ni banners molestos. Cambio instantáneo con motor de pre-carga inteligente.</p>
+            <div class="flex justify-end">
+              <span class="bg-white text-black font-extrabold text-[11px] px-4 py-1.5 rounded-full hover:bg-cyan-400 transition">Ver más →</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tarjeta 2: Asistente de Voz con IA -->
+        <div onclick="jumpToSlide(1)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#0369A1] via-[#0F294A] to-[#0B1020] border border-cyan-400/35 p-6 flex flex-col justify-between min-h-[340px] relative overflow-hidden">
+          <div class="card-visual bg-[#070A10]/80 border border-cyan-400/30 rounded-2xl p-4 mb-5 flex flex-col items-center justify-center h-[116px]">
+            <div class="w-12 h-12 rounded-full bg-gradient-to-tr from-blue-500 to-cyan-400 flex items-center justify-center text-black text-xl font-black mic-pulse mb-2">
+              🎙️
+            </div>
+            <span class="text-[11px] font-bold text-cyan-300">"Pon categoría deportes..."</span>
+          </div>
+          <div>
+            <h3 class="text-xl font-black text-white leading-snug mb-2">Asistente por Voz con Inteligencia Artificial</h3>
+            <p class="text-white/75 text-xs leading-relaxed mb-4">Olvídate de teclear con el control remoto. Habla y nuestra IA filtrará o sintonizará tu contenido al instante.</p>
+            <div class="flex justify-end">
+              <span class="bg-white text-black font-extrabold text-[11px] px-4 py-1.5 rounded-full hover:bg-cyan-400 transition">Ver más →</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tarjeta 3: Timeshift & DVR -->
+        <div onclick="jumpToSlide(2)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#6D28D9] via-[#2E1065] to-[#0B1020] border border-fuchsia-400/30 p-6 flex flex-col justify-between min-h-[340px] relative overflow-hidden">
+          <div class="card-visual bg-[#070A10]/80 border border-fuchsia-400/30 rounded-2xl p-4 mb-5">
+            <div class="flex justify-between items-center mb-2">
+              <span class="bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">● REC DVR</span>
+              <span class="text-[10px] text-cyan-300 font-bold">Guía EPG</span>
+            </div>
+            <div class="w-full bg-white/10 h-1.5 rounded-full overflow-hidden mb-3">
+              <div class="bg-gradient-to-r from-fuchsia-500 to-cyan-400 w-3/4 h-full"></div>
+            </div>
+            <div class="flex justify-between text-[10px] font-extrabold text-white">
+              <span class="bg-white/10 px-2 py-1 rounded">⏪ -15s Vivo</span>
+              <span class="bg-cyan-500/20 text-cyan-300 px-2 py-1 rounded">⏰ Alarma</span>
+            </div>
+          </div>
+          <div>
+            <h3 class="text-xl font-black text-white leading-snug mb-2">Retroceso en Vivo, Alarmas y DVR</h3>
+            <p class="text-white/75 text-xs leading-relaxed mb-4">Repite al instante esa jugada épica que quieres mostrar a tu familia o deja programada la grabación automática.</p>
+            <div class="flex justify-end">
+              <span class="bg-white text-black font-extrabold text-[11px] px-4 py-1.5 rounded-full hover:bg-cyan-400 transition">Ver más →</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tarjeta 4: Control TV, PiP y Social Chat -->
+        <div onclick="jumpToSlide(3)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#1D4ED8] via-[#172554] to-[#0B1020] border border-blue-400/35 p-6 flex flex-col justify-between min-h-[340px] relative overflow-hidden">
+          <div class="card-visual bg-[#070A10]/80 border border-blue-400/30 rounded-2xl p-4 mb-5 relative h-[116px] flex flex-col justify-between">
+            <div class="flex justify-between items-center">
+              <span class="text-[10px] font-bold text-blue-300">📱 Mando TV Sync</span>
+              <span class="text-[10px] bg-cyan-400/20 text-cyan-300 px-2 py-0.5 rounded font-bold">PiP 2do Plano</span>
+            </div>
+            <div class="flex items-center justify-between bg-white/5 rounded-xl px-3 py-2">
+              <span class="text-[11px] text-white font-semibold">💬 Social Vivo</span>
+              <span class="text-sm float-anim">🔥 ⚽ 👏 🤩</span>
+            </div>
+          </div>
+          <div>
+            <h3 class="text-xl font-black text-white leading-snug mb-2">Mando TV, Modo Burbuja PiP & Chat</h3>
+            <p class="text-white/75 text-xs leading-relaxed mb-4">Usa tu celular como control remoto del Smart TV, chatea con reacciones en vivo y mira en ventana flotante.</p>
+            <div class="flex justify-end">
+              <span class="bg-white text-black font-extrabold text-[11px] px-4 py-1.5 rounded-full hover:bg-cyan-400 transition">Ver más →</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
     </header>
 
-    <!-- FOOTER -->
-    <footer class="py-6 px-6 text-center text-slate-500 text-xs border-t border-purple-950/30">
-        <p>© 2026 AMEYCAR TV VIP. Todos los derechos reservados.</p>
-    </footer>
+    <!-- =================================================================== -->
+    <!-- CARRUSEL INTERACTIVO PRO (ESTILO "BMW MOMENTUM" DE BTO DIGITAL)     -->
+    <!-- =================================================================== -->
+    <section id="carrusel-pro" class="py-20 px-4 sm:px-8 border-t border-white/10 bg-[#090D18]/80">
+      <div class="max-w-6xl mx-auto">
+        <div class="text-center max-w-3xl mx-auto mb-10">
+          <span class="text-cyan-400 text-xs font-extrabold uppercase tracking-widest">Ingeniería & Experiencia Visual</span>
+          <h2 class="text-3xl sm:text-5xl font-black text-white mt-2 mb-3">Explora Cada Superpoder en Detalle</h2>
+          <p class="text-white/75 text-sm sm:text-base">Usa las flechas del carrusel para descubrir por qué miles de usuarios están migrando a nuestra tecnología.</p>
+        </div>
+
+        <!-- Caja Principal del Carrusel -->
+        <div class="bg-[#050811] border border-purple-500/30 rounded-[32px] p-6 sm:p-10 glow-purple relative overflow-hidden">
+          
+          <!-- Cabecera del Carrusel con Flechas Circulares -->
+          <div class="bg-[#0D1425] border border-white/10 rounded-2xl px-4 sm:px-8 py-4 flex items-center justify-between mb-10">
+            <button onclick="prevSlide()" aria-label="Anterior" class="w-11 h-11 rounded-full border border-white/25 hover:border-cyan-400 hover:bg-cyan-400 hover:text-black text-white flex items-center justify-center font-bold text-lg transition">
+              ←
+            </button>
+            <h3 id="carousel-top-title" class="text-lg sm:text-3xl font-black text-white text-center px-3 tracking-tight">
+              Cero Anuncios & Zapping Instantáneo
+            </h3>
+            <button onclick="nextSlide()" aria-label="Siguiente" class="w-11 h-11 rounded-full border border-white/25 hover:border-cyan-400 hover:bg-cyan-400 hover:text-black text-white flex items-center justify-center font-bold text-lg transition">
+              →
+            </button>
+          </div>
+
+          <!-- Cuerpo Dinámico de 2 Columnas -->
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
+            <!-- Texto Comercial -->
+            <div class="lg:col-span-6 space-y-5 text-left">
+              <div id="carousel-badges" class="flex flex-wrap gap-2"></div>
+              <p id="carousel-subtitle" class="text-cyan-300 text-xs sm:text-sm font-bold uppercase tracking-wider"></p>
+              <blockquote id="carousel-quote" class="text-2xl sm:text-3xl font-black text-white leading-tight"></blockquote>
+              <p id="carousel-desc" class="text-white/80 text-sm sm:text-base leading-relaxed"></p>
+              <ul id="carousel-bullets" class="space-y-2 text-sm text-white/90 font-medium pt-1"></ul>
+              <div class="pt-3 flex flex-wrap gap-3">
+                <a href="#planes" class="bg-gradient-to-r from-purple-600 to-cyan-400 text-black font-black px-6 py-3 rounded-xl text-sm hover:opacity-95 transition">
+                  🔥 Quiero esta tecnología
+                </a>
+                <button onclick="launchApp()" class="bg-white/10 hover:bg-white/20 border border-white/15 text-white font-bold px-5 py-3 rounded-xl text-sm transition">
+                  Probar en Web →
+                </button>
+              </div>
+            </div>
+
+            <!-- Mockup Visual Interactivo con Animación Hover (Sin marcas registradas) -->
+            <div class="lg:col-span-6 flex justify-center">
+              <div id="carousel-visual-box" class="mockup-hover w-full max-w-md bg-gradient-to-br from-[#131C33] to-[#080C17] border border-cyan-400/35 rounded-3xl p-6 shadow-2xl">
+                <!-- Se rellena dinámicamente por JS -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Indicadores inferiores (Dots) -->
+          <div class="flex justify-center items-center gap-2.5 mt-10" id="carousel-dots"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- COMPARATIVA DIRECTA: APPS OBSOLETAS VS AMEYCAR TV VIP               -->
+    <!-- =================================================================== -->
+    <section class="py-16 px-4 sm:px-8 max-w-6xl mx-auto w-full">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-[#111522]/70 border border-red-500/20 rounded-3xl p-8">
+          <span class="text-red-400 text-xs font-extrabold uppercase tracking-widest">El Pasado</span>
+          <h3 class="text-2xl font-black text-white mt-1 mb-5">Apps Tradicionales Obsoletas</h3>
+          <ul class="space-y-3 text-sm text-white/70">
+            <li>❌ Videos de publicidad intrusiva en pleno entretenimiento.</li>
+            <li>❌ Búsqueda manual tediosa letra por letra en la TV.</li>
+            <li>❌ Si cambias de televisor debes volver a configurar tus listas.</li>
+            <li>❌ Sin retroceso en vivo ni grabación programada.</li>
+            <li>❌ Sin soporte humano ni actualizaciones constantes.</li>
+          </ul>
+        </div>
+
+        <div class="bg-gradient-to-br from-[#1B1438] via-[#0F1B36] to-[#091829] border-2 border-cyan-400/50 rounded-3xl p-8 glow-cyan">
+          <span class="text-cyan-400 text-xs font-extrabold uppercase tracking-widest">El Nuevo Estándar</span>
+          <h3 class="text-2xl font-black text-white mt-1 mb-5">Ecosistema AMEYCAR TV VIP</h3>
+          <ul class="space-y-3 text-sm text-white font-semibold">
+            <li>✅ <span class="text-cyan-300">100% Limpia:</span> Cero anuncios, cero banners, fluidez absoluta.</li>
+            <li>✅ <span class="text-purple-300">Voz con IA + Mando Móvil:</span> Controla tu TV hablando desde el celular.</li>
+            <li>✅ <span class="text-blue-300">Nube Inteligente:</span> Hasta 5 listas M3U sincronizadas en tiempo real.</li>
+            <li>✅ <span class="text-cyan-300">Timeshift + DVR + Burbuja PiP:</span> Repite jugadas, graba y haz multitarea.</li>
+            <li>✅ <span class="text-yellow-300">Círculo Ameycar (+15 días gratis)</span> y soporte directo de los desarrolladores.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- GUÍA INTUITIVA INTERACTIVA EN 3 PASOS POR DISPOSITIVO               -->
+    <!-- =================================================================== -->
+    <section id="guia-uso" class="py-20 px-4 sm:px-8 bg-[#0A0F1E]/70 border-t border-white/10">
+      <div class="max-w-5xl mx-auto text-center">
+        <span class="text-purple-400 text-xs font-extrabold uppercase tracking-widest">Configuración en Menos de 2 Minutos</span>
+        <h2 class="text-3xl sm:text-5xl font-black text-white mt-2 mb-4">Guía Intuitiva de Inicio Rápido</h2>
+        <p class="text-white/75 text-sm sm:text-base mb-8">Selecciona tu dispositivo para ver cómo activar tu reproductor en 3 simples pasos:</p>
+
+        <!-- Pestañas de Dispositivos -->
+        <div class="flex flex-wrap justify-center gap-2.5 mb-10">
+          <button onclick="selectGuide('tv')" id="tab-tv" class="guide-tab bg-gradient-to-r from-purple-600 to-cyan-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition">
+            📺 Smart TV (Samsung / LG / Android)
+          </button>
+          <button onclick="selectGuide('mobile')" id="tab-mobile" class="guide-tab bg-[#131C31] text-white/80 hover:text-white border border-white/10 font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition">
+            📱 Celular / Tablet Android
+          </button>
+          <button onclick="selectGuide('fire')" id="tab-fire" class="guide-tab bg-[#131C31] text-white/80 hover:text-white border border-white/10 font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition">
+            🔥 Fire TV Stick / TV Box
+          </button>
+          <button onclick="selectGuide('pc')" id="tab-pc" class="guide-tab bg-[#131C31] text-white/80 hover:text-white border border-white/10 font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition">
+            💻 PC / Laptop Web
+          </button>
+        </div>
+
+        <!-- Contenido Dinámico de los 3 Pasos -->
+        <div id="guide-steps" class="grid grid-cols-1 md:grid-cols-3 gap-6 text-left"></div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- PLANES DE LICENCIA DE SOFTWARE VIP                                  -->
+    <!-- =================================================================== -->
+    <section id="planes" class="py-24 px-4 sm:px-8 max-w-6xl mx-auto w-full">
+      <div class="text-center max-w-3xl mx-auto mb-14">
+        <span class="text-cyan-400 text-xs font-extrabold uppercase tracking-widest">Activación Automática 24/7 con PIN</span>
+        <h2 class="text-3xl sm:text-5xl font-black text-white mt-2 mb-4">Licencias de Acceso AMEYCAR TV VIP</h2>
+        <p class="text-white/75 text-sm sm:text-base">Elige la licencia de uso del reproductor ideal para ti o tu familia. Incluye acceso total a funciones IA, nube y soporte directo.</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
+        <!-- Plan Individual -->
+        <div class="bto-card bg-[#0E1526] border border-white/15 p-8 rounded-3xl flex flex-col justify-between">
+          <div>
+            <span class="text-cyan-400 text-xs font-bold uppercase">Uso Personal</span>
+            <h3 class="text-2xl font-black text-white mt-1 mb-1">Licencia Individual</h3>
+            <p class="text-white/60 text-xs mb-6">1 dispositivo vinculado con protección Hardware ID</p>
+            <div class="text-4xl font-black text-white mb-6">S/ 20 <span class="text-sm font-normal text-white/60">/ 30 días</span></div>
+            <ul class="space-y-3 text-sm text-white/90 mb-8">
+              <li>✓ App 100% libre de anuncios</li>
+              <li>✓ Asistente por Voz con IA y Guía EPG</li>
+              <li>✓ Retroceso en Vivo, Alarmas y DVR</li>
+              <li>✓ Gestor de hasta 5 listas M3U propias</li>
+              <li>✓ Soporte directo con desarrolladores</li>
+            </ul>
+          </div>
+          <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20adquirir%20la%20Licencia%20Individual%20(S/%2020)%20del%20reproductor%20Ameycar%20TV%20VIP." target="_blank" rel="noopener"
+             class="block text-center bg-white/10 hover:bg-cyan-400 hover:text-black border border-cyan-400/40 text-white font-extrabold py-3.5 rounded-xl transition text-sm">
+            Solicitar PIN Individual →
+          </a>
+        </div>
+
+        <!-- Plan Familiar VIP (Destacado) -->
+        <div class="bto-card bg-gradient-to-b from-[#2A1458] via-[#131B36] to-[#0B1020] border-2 border-cyan-400 p-8 rounded-3xl flex flex-col justify-between relative glow-purple">
+          <span class="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-purple-500 via-blue-500 to-cyan-400 text-white text-[10px] font-black px-4 py-1 rounded-full uppercase tracking-widest shadow-lg whitespace-nowrap">
+            ⭐ Más Elegido por Familias
+          </span>
+          <div>
+            <span class="text-purple-300 text-xs font-bold uppercase">Multidispositivo Hogar</span>
+            <h3 class="text-2xl font-black text-white mt-1 mb-1">Licencia Familiar VIP</h3>
+            <p class="text-cyan-300 text-xs mb-6">Hasta 5 perfiles independientes + Panel Familiar</p>
+            <div class="text-5xl font-black text-white mb-6">S/ 35 <span class="text-sm font-normal text-white/60">/ 30 días</span></div>
+            <ul class="space-y-3 text-sm text-white mb-8 font-medium">
+              <li>✓ <strong>Hasta 5 pantallas / perfiles propios</strong></li>
+              <li>✓ Celular como Mando Remoto de Smart TV</li>
+              <li>✓ Sincronización en la nube en tiempo real</li>
+              <li>✓ Chat Social en vivo + Modo Burbuja PiP</li>
+              <li>✓ Círculo Ameycar: Gana +15 días por referido</li>
+            </ul>
+          </div>
+          <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20adquirir%20la%20Licencia%20Familiar%20VIP%20(S/%2035)%20del%20reproductor%20Ameycar%20TV." target="_blank" rel="noopener"
+             class="block text-center bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 text-white font-black py-4 rounded-xl hover:opacity-95 transition text-sm shadow-xl">
+            💬 ACTIVAR PLAN FAMILIAR AHORA
+          </a>
+        </div>
+
+        <!-- Pase Trimestral -->
+        <div class="bto-card bg-[#0E1526] border border-white/15 p-8 rounded-3xl flex flex-col justify-between">
+          <div>
+            <span class="text-blue-400 text-xs font-bold uppercase">Máximo Ahorro</span>
+            <h3 class="text-2xl font-black text-white mt-1 mb-1">Pase Trimestral VIP</h3>
+            <p class="text-white/60 text-xs mb-6">90 días continuos sin preocupaciones</p>
+            <div class="text-4xl font-black text-white mb-6">S/ 90 <span class="text-sm font-normal text-white/60">/ 3 meses</span></div>
+            <ul class="space-y-3 text-sm text-white/90 mb-8">
+              <li>✓ Todas las funciones PRO desbloqueadas</li>
+              <li>✓ Prioridad VIP con soporte de ingeniería</li>
+              <li>✓ Actualizaciones anticipadas en TV y Móvil</li>
+              <li>✓ Recompensas acumulables por referidos</li>
+              <li>✓ Activación inmediata con código PIN</li>
+            </ul>
+          </div>
+          <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20adquirir%20el%20Pase%20Trimestral%20VIP%20(S/%2090)%20de%20Ameycar%20TV." target="_blank" rel="noopener"
+             class="block text-center bg-white/10 hover:bg-purple-500 hover:text-white border border-purple-400/40 text-white font-extrabold py-3.5 rounded-xl transition text-sm">
+            Solicitar Pase Trimestral →
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- MÉTODOS DE PAGO NACIONALES E INTERNACIONALES (CERO COMISIONES)      -->
+    <!-- =================================================================== -->
+    <section id="pagos" class="py-20 px-4 sm:px-8 bg-[#0A0F1E]/80 border-t border-white/10">
+      <div class="max-w-6xl mx-auto text-center">
+        <span class="text-cyan-400 text-xs font-extrabold uppercase tracking-widest">Pagos Seguros y Entrega de PIN al Instante</span>
+        <h2 class="text-3xl sm:text-4xl font-black text-white mt-2 mb-3">Métodos de Pago Oficiales</h2>
+        <p class="text-white/75 text-sm max-w-2xl mx-auto mb-12">Haz clic en tu medio de pago preferido para solicitar los datos verificados por WhatsApp o canjea tu PIN directamente en la plataforma.</p>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 text-left">
+          <!-- Yape -->
+          <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20pagar%20mi%20licencia%20de%20Ameycar%20TV%20VIP%20por%20YAPE." target="_blank" rel="noopener"
+             class="bto-card bg-[#11182B] border border-purple-500/40 p-5 rounded-2xl flex flex-col justify-between">
+            <div class="w-10 h-10 rounded-xl bg-purple-600/25 text-purple-300 flex items-center justify-center font-black text-lg mb-3">📱</div>
+            <div>
+              <h4 class="font-black text-white text-base">Yape Perú</h4>
+              <p class="text-white/65 text-xs mt-1">Cero comisiones • Activación inmediata</p>
+              <span class="inline-block mt-3 text-cyan-400 text-xs font-bold">Pagar con Yape →</span>
+            </div>
+          </a>
+
+          <!-- BCP -->
+          <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20pagar%20mi%20licencia%20de%20Ameycar%20TV%20VIP%20por%20Transferencia%20BCP." target="_blank" rel="noopener"
+             class="bto-card bg-[#11182B] border border-blue-500/40 p-5 rounded-2xl flex flex-col justify-between">
+            <div class="w-10 h-10 rounded-xl bg-blue-600/25 text-blue-300 flex items-center justify-center font-black text-lg mb-3">🏦</div>
+            <div>
+              <h4 class="font-black text-white text-base">Banco BCP</h4>
+              <p class="text-white/65 text-xs mt-1">Transferencia directa en Soles</p>
+              <span class="inline-block mt-3 text-cyan-400 text-xs font-bold">Solicitar Cuenta →</span>
+            </div>
+          </a>
+
+          <!-- Binance Pay -->
+          <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20pagar%20mi%20licencia%20de%20Ameycar%20TV%20VIP%20con%20Binance%20Pay%20(USDT)." target="_blank" rel="noopener"
+             class="bto-card bg-[#11182B] border border-yellow-500/40 p-5 rounded-2xl flex flex-col justify-between">
+            <div class="w-10 h-10 rounded-xl bg-yellow-500/20 text-yellow-300 flex items-center justify-center font-black text-lg mb-3">🪙</div>
+            <div>
+              <h4 class="font-black text-white text-base">Binance Pay</h4>
+              <p class="text-white/65 text-xs mt-1">USDT Internacional instantáneo</p>
+              <span class="inline-block mt-3 text-cyan-400 text-xs font-bold">Pagar con USDT →</span>
+            </div>
+          </a>
+
+          <!-- PayPal -->
+          <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20pagar%20mi%20licencia%20de%20Ameycar%20TV%20VIP%20v%C3%ADa%20PayPal." target="_blank" rel="noopener"
+             class="bto-card bg-[#11182B] border border-cyan-500/40 p-5 rounded-2xl flex flex-col justify-between">
+            <div class="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-black text-lg mb-3">🌎</div>
+            <div>
+              <h4 class="font-black text-white text-base">PayPal Global</h4>
+              <p class="text-white/65 text-xs mt-1">Para clientes en todo el mundo</p>
+              <span class="inline-block mt-3 text-cyan-400 text-xs font-bold">Pagar con PayPal →</span>
+            </div>
+          </a>
+
+          <!-- Canjear PIN -->
+          <button onclick="launchApp()" class="bto-card bg-gradient-to-b from-purple-900/60 to-[#11182B] border border-cyan-400 p-5 rounded-2xl flex flex-col justify-between text-left">
+            <div class="w-10 h-10 rounded-xl bg-cyan-400 text-black flex items-center justify-center font-black text-lg mb-3">🔑</div>
+            <div>
+              <h4 class="font-black text-white text-base">¿Ya tienes PIN?</h4>
+              <p class="text-white/75 text-xs mt-1">Canjéalo 24/7 sin esperas dentro de la App</p>
+              <span class="inline-block mt-3 text-cyan-300 text-xs font-extrabold">Canjear Ahora →</span>
+            </div>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- CERTIFICADO LEGAL Y DECLARACIÓN DE NEUTRALIDAD TECNOLÓGICA          -->
+    <!-- =================================================================== -->
+    <section id="certificado-legal" class="py-14 px-4 sm:px-8 border-t border-purple-900/40 bg-[#05070C]">
+      <div class="max-w-6xl mx-auto">
+        <div class="bg-[#0B1120] border border-cyan-500/25 rounded-3xl p-6 sm:p-8 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+          <div class="flex items-start gap-4">
+            <div class="w-14 h-14 shrink-0 rounded-2xl bg-gradient-to-br from-cyan-400/20 to-purple-600/20 border border-cyan-400/40 flex items-center justify-center text-2xl">
+              🛡️
+            </div>
+            <div>
+              <div class="flex flex-wrap items-center gap-2 mb-1.5">
+                <span class="bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                  ✓ Certificado de Cumplimiento & Neutralidad Tecnológica
+                </span>
+                <span class="text-white/50 text-[11px] font-mono">REG-SW-AMEYCAR-2026</span>
+              </div>
+              <h3 class="text-base sm:text-lg font-extrabold text-white mb-1">
+                Software Reproductor Multimedia Independiente (Sin Contenido Pre-cargado)
+              </h3>
+              <p class="text-white/65 text-[11.5px] leading-relaxed">
+                <strong>AVISO LEGAL IMPORTANTE:</strong> AMEYCAR TV VIP es única y exclusivamente una herramienta tecnológica de reproducción multimedia vacía (<em>Media Player</em>) y gestión en la nube. <strong>AMEYCAR TV NO incluye, NO aloja, NO almacena, NO retransmite, NO comercializa ni distribuye listas M3U, canales de televisión, películas ni señales audiovisuales de ningún proveedor.</strong> Tampoco mantiene vínculo ni afiliación con proveedores externos de listas IPTV. El usuario final es el único responsable de ingresar y gestionar sus propias fuentes o listas de reproducción adquiridas de forma legítima y conforme a las leyes de derechos de autor vigentes en su jurisdicción. Todas las imágenes mostradas en este portal son recreaciones ilustrativas de interfaz.
+              </p>
+            </div>
+          </div>
+          <button onclick="openLegalModal()" class="shrink-0 bg-white/10 hover:bg-cyan-400 hover:text-black border border-white/20 text-white font-bold text-xs px-5 py-3 rounded-xl transition whitespace-nowrap">
+            📜 Ver Certificado Legal Completo
+          </button>
+        </div>
+
+        <!-- FOOTER FINAL -->
+        <div class="mt-10 pt-6 border-t border-white/10 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-white/50">
+          <div class="flex items-center gap-2">
+            <span class="font-black logo-multicolor text-sm">AMEYCAR TV VIP</span>
+            <span>• © 2026 Todos los derechos de software reservados.</span>
+          </div>
+          <div class="flex flex-wrap justify-center gap-5">
+            <button onclick="openLegalModal()" class="hover:text-cyan-400 transition">Términos de Licencia</button>
+            <button onclick="openLegalModal()" class="hover:text-cyan-400 transition">Política DMCA</button>
+            <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Tengo%20una%20consulta%20sobre%20el%20reproductor%20Ameycar%20TV." target="_blank" rel="noopener" class="hover:text-cyan-400 transition">Soporte Desarrolladores</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </div>
 
-  <!-- CONTENEDOR DONDE FLUTTER MONTA LA APP AL HACER CLIC EN INGRESAR -->
+  <!-- MODAL DE CERTIFICADO LEGAL Y CUMPLIMIENTO DMCA -->
+  <div id="legal-modal" class="hidden fixed inset-0 z-[9000] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-[#0D1324] border border-cyan-400/40 rounded-3xl max-w-2xl w-full p-6 sm:p-8 text-left shadow-2xl max-h-[88vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4 border-b border-white/10 pb-4">
+        <div class="flex items-center gap-2.5">
+          <span class="text-2xl">⚖️</span>
+          <div>
+            <h4 class="text-lg font-black text-white">Certificado Legal de Software y Política DMCA</h4>
+            <p class="text-[11px] text-cyan-400 font-semibold">Licencia de Uso de Aplicación Reproductora • AMEYCAR TV VIP</p>
+          </div>
+        </div>
+        <button onclick="closeLegalModal()" class="text-white/60 hover:text-white text-xl font-bold px-2">✕</button>
+      </div>
+      <div class="space-y-3 text-xs text-white/80 leading-relaxed">
+        <p><strong>1. Naturaleza Exclusiva de Reproductor Multimedia:</strong> AMEYCAR TV VIP desarrolla y licencia únicamente software de interfaz gráfica de reproducción de video, herramientas de organización local/nube, asistente de comandos por voz y sincronización de control remoto entre dispositivos del propio usuario.</p>
+        <p><strong>2. Ausencia Total de Contenido y Proveedores:</strong> Nuestra aplicación se entrega completamente vacía de señales comerciales. No trabajamos con proveedores de listas, no recomendamos proveedores terceros, ni vendemos suscripciones a canales de televisión o catálogos cinematográficos.</p>
+        <p><strong>3. Responsabilidad del Usuario:</strong> Las suscripciones o PINes adquiridos en esta plataforma corresponden estrictamente al mantenimiento de la infraestructura Firebase en la nube y uso de las funciones avanzadas del reproductor. Cada usuario debe aportar sus propios enlaces M3U/XMLTV de dominio público o de uso legalmente autorizado.</p>
+        <p><strong>4. Protección de Propiedad Intelectual (DMCA):</strong> Respetamos rigurosamente las normativas internacionales de propiedad intelectual y derechos de autor. Ningún servidor de AMEYCAR TV transmite ni almacena flujos de video de terceros.</p>
+      </div>
+      <div class="mt-6 pt-4 border-t border-white/10 flex justify-end">
+        <button onclick="closeLegalModal()" class="bg-cyan-400 text-black font-black text-xs px-6 py-2.5 rounded-xl hover:bg-cyan-300 transition">
+          Entendido y Aceptar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTÓN FLOTANTE DE WHATSAPP PARA CONVERSIÓN INMEDIATA -->
+  <a id="floating-wa" href="https://wa.me/51905823660?text=%C2%A1Hola!%20Vi%20la%20web%20oficial%20de%20Ameycar%20TV%20VIP%20y%20quiero%20activar%20mi%20licencia." target="_blank" rel="noopener"
+     class="fixed bottom-5 right-5 z-40 bg-gradient-to-r from-emerald-400 to-cyan-400 text-black font-black text-xs sm:text-sm px-4 py-3 rounded-full shadow-2xl flex items-center gap-2 hover:scale-105 transition">
+    <span class="text-base">💬</span>
+    <span>Atención Directa</span>
+  </a>
+
+  <!-- ===================================================================== -->
+  <!-- CONTENEDOR DONDE FLUTTER MONTA LA APP AL HACER CLIC EN INGRESAR       -->
+  <!-- ===================================================================== -->
   <div id="flutter-app-container" style="display: none; width: 100vw; height: 100vh; position: fixed; top: 0; left: 0; background: #070A10; z-index: 9999;"></div>
 
+  <!-- SCRIPTS INTERACTIVOS DE LA WEB + LANZADOR OFICIAL FLUTTER INTACTO -->
   <script>
+    // 1. Lanzador original de Flutter Web (Conservado intacto y optimizado para bloqueo de scroll)
     function launchApp() {
-      // Oculta la portada comercial y muestra la app de Flutter Web
+      window.scrollTo(0, 0);
+      document.body.style.overflow = 'hidden';
       document.getElementById('commercial-landing').style.display = 'none';
+      const waBtn = document.getElementById('floating-wa');
+      if (waBtn) waBtn.style.display = 'none';
       document.getElementById('flutter-app-container').style.display = 'block';
 
-      // Carga dinámica del script de arranque de Flutter dentro del contenedor dedicado
       if (!window._flutterLoaded) {
         window._flutterLoaded = true;
         const targetContainer = document.getElementById('flutter-app-container');
         
-        // Inicializador oficial de Flutter Web
         window._flutter = {
           loader: {
-            // Reorienta la app al contenedor personalizado
             didCreateEngineInitializer: function(engineInitializer) {
               engineInitializer.initializeEngine({
                 hostElement: targetContainer
@@ -133,6 +689,207 @@
         document.body.appendChild(scriptTag);
       }
     }
+
+    // 2. Menú móvil y Modal Legal
+    function toggleMobileMenu() {
+      document.getElementById('mobile-menu').classList.toggle('hidden');
+    }
+    function openLegalModal() {
+      document.getElementById('legal-modal').classList.remove('hidden');
+    }
+    function closeLegalModal() {
+      document.getElementById('legal-modal').classList.add('hidden');
+    }
+
+    // 3. Datos del Carrusel Interactivo Pro
+    const slides = [
+      {
+        topTitle: "Cero Anuncios & Zapping Instantáneo",
+        badges: ["0% Publicidad", "Motor Pre-Buffer", "Guía EPG Vivo"],
+        subtitle: "Arquitectura limpia sin interrupciones comerciales",
+        quote: "“Entretenimiento puro sin anuncios que arruinen el mejor momento.”",
+        desc: "Mientras las aplicaciones obsoletas interrumpen tu pantalla con videos publicitarios y ventanas engañosas, AMEYCAR TV VIP ofrece un entorno 100% limpio con cambio de señal ultrarrápido y barra de programación EPG en tiempo real.",
+        bullets: [
+          "✓ Pre-carga inteligente de señales adyacentes para zapping veloz.",
+          "✓ Guía de programación interactiva con progreso en vivo.",
+          "✓ Organización automática por categorías y favoritos por perfil."
+        ],
+        visual: `
+          <div class="space-y-3">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+              <span class="font-black text-sm logo-multicolor">AMEYCAR TV • PLAYER</span>
+              <span class="bg-emerald-500/20 text-emerald-300 text-[10px] font-black px-2.5 py-1 rounded-full">SIN ANUNCIOS</span>
+            </div>
+            <div class="rounded-2xl bg-gradient-to-r from-purple-900/60 to-blue-900/60 p-4 border border-purple-400/30">
+              <div class="flex justify-between text-xs font-bold text-cyan-300 mb-1"><span>▶ SEÑAL ACTIVA 1080p</span><span>EPG EN VIVO</span></div>
+              <div class="text-white font-black text-base mb-2">Transmisión Deportiva Estelar</div>
+              <div class="w-full bg-black/50 h-2 rounded-full overflow-hidden"><div class="bg-cyan-400 w-2/3 h-full"></div></div>
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div class="bg-white/5 p-3 rounded-xl border border-white/10 font-bold text-white">⚡ Zapping 0.2s</div>
+              <div class="bg-white/5 p-3 rounded-xl border border-white/10 font-bold text-cyan-300">⭐ Favoritos Nube</div>
+            </div>
+          </div>`
+      },
+      {
+        topTitle: "Asistente por Voz con Inteligencia Artificial",
+        badges: ["IA Integrada", "Ahorro de Tiempo", "Búsqueda Natural"],
+        subtitle: "Sintonización hablada de última generación",
+        quote: "“Habla con naturalidad: nuestra IA encuentra lo que buscas en milisegundos.”",
+        desc: "Olvídate de perder minutos buscando manualmente entre cientos de elementos con el control del televisor. Activa el micrófono inteligente, pide el género o nombre de tu preferencia y deja que el reproductor trabaje por ti.",
+        bullets: [
+          "✓ Reconocimiento rápido por voz y filtrado inteligente por categorías.",
+          "✓ Navegación automática entre En Vivo, Películas y Series.",
+          "✓ Ideal para toda la familia en celulares y pantallas grandes."
+        ],
+        visual: `
+          <div class="text-center py-4 space-y-4">
+            <div class="w-20 h-20 mx-auto rounded-full bg-gradient-to-tr from-purple-600 via-blue-500 to-cyan-400 flex items-center justify-center text-3xl mic-pulse shadow-xl">🎙️</div>
+            <div class="text-cyan-300 text-xs font-extrabold tracking-widest uppercase">Micrófono IA Activo</div>
+            <div class="bg-black/50 border border-cyan-400/30 rounded-2xl p-3.5 text-sm font-bold text-white">“Filtra canales de deportes o documentales...”</div>
+            <div class="flex justify-center gap-2 text-[11px]">
+              <span class="bg-purple-500/20 text-purple-300 px-3 py-1 rounded-full font-bold">⚽ Deportes</span>
+              <span class="bg-blue-500/20 text-blue-300 px-3 py-1 rounded-full font-bold">🎬 Cine</span>
+              <span class="bg-cyan-500/20 text-cyan-300 px-3 py-1 rounded-full font-bold">📰 Noticias</span>
+            </div>
+          </div>`
+      },
+      {
+        topTitle: "Timeshift en Vivo, Grabación DVR & Alarmas",
+        badges: ["Retroceso -15s", "Auto-Grabación DVR", "Recordatorios"],
+        subtitle: "Control absoluto del tiempo en tus transmisiones",
+        quote: "“¿Quieres mostrarle ese golazo a un familiar? Retrocede en vivo al instante.”",
+        desc: "No vuelvas a perderte ningún momento importante. Pausa y retrocede sobre el búfer en vivo cuando quieras, agenda alarmas que auto-sintonizan tu programa o déjalo grabando en segundo plano con nuestro motor DVR.",
+        bullets: [
+          "✓ Botones rápidos -15s / +15s y salto instantáneo de vuelta a EN VIVO.",
+          "✓ Alarma inteligente con opción de Auto-Grabación programada.",
+          "✓ Bóveda privada 'Mis Grabaciones DVR' para reproducir desde el inicio."
+        ],
+        visual: `
+          <div class="space-y-3">
+            <div class="flex justify-between items-center">
+              <span class="bg-red-600 text-white text-[10px] font-black px-3 py-1 rounded-full">● GRABANDO DVR 04:18</span>
+              <span class="text-amber-300 text-xs font-bold">⏰ Alarma Activa</span>
+            </div>
+            <div class="bg-black/60 border border-white/10 rounded-2xl p-4 space-y-3">
+              <div class="text-white font-bold text-sm">Final Torneo Internacional • FHD</div>
+              <div class="flex flex-wrap gap-2">
+                <span class="bg-white/10 text-white text-xs font-bold px-3 py-1.5 rounded-lg">⏪ -15s</span>
+                <span class="bg-white/10 text-white text-xs font-bold px-3 py-1.5 rounded-lg">⏩ +15s</span>
+                <span class="bg-emerald-500/25 border border-emerald-400/40 text-emerald-300 text-xs font-black px-3 py-1.5 rounded-lg">⚡ IR A VIVO</span>
+                <span class="bg-red-500/25 border border-red-400/40 text-red-300 text-xs font-black px-3 py-1.5 rounded-lg">● REC</span>
+              </div>
+            </div>
+          </div>`
+      },
+      {
+        topTitle: "Mando Smart TV, Chat Social & Burbuja PiP",
+        badges: ["Control Remoto Móvil", "Social Ameycar", "Multitarea PiP"],
+        subtitle: "Conectividad total y experiencia interactiva",
+        quote: "“Tu celular se transforma en el mando inteligente de tu Smart TV.”",
+        desc: "Cambia de canal, sube el volumen o envía una señal del teléfono al televisor en tiempo real. Además, comenta con reacciones flotantes en Social Ameycar o minimiza el video en burbuja flotante para usar WhatsApp sin cortar la imagen.",
+        bullets: [
+          "✓ Sincronización instantánea Celular ↔ Smart TV / PC sin infrarrojo.",
+          "✓ Reproducción en burbuja flotante (Picture-in-Picture) en segundo plano.",
+          "✓ Hasta 5 listas M3U en la nube, regalos por referidos y soporte directo."
+        ],
+        visual: `
+          <div class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <div class="bg-purple-950/60 border border-purple-400/30 p-3.5 rounded-2xl">
+                <div class="text-cyan-300 text-xs font-black mb-1">📱 Mando Remoto</div>
+                <div class="text-[11px] text-white/80">CH+ / CH- / Vol / Cast en tiempo real hacia tu TV</div>
+              </div>
+              <div class="bg-blue-950/60 border border-cyan-400/30 p-3.5 rounded-2xl">
+                <div class="text-cyan-300 text-xs font-black mb-1">🪟 Burbuja PiP</div>
+                <div class="text-[11px] text-white/80">Chatea o navega sin cerrar tu transmisión</div>
+              </div>
+            </div>
+            <div class="bg-black/50 border border-white/10 rounded-2xl px-4 py-3 flex justify-between items-center">
+              <span class="text-xs font-bold text-amber-300">💬 Social Ameycar en Vivo</span>
+              <span class="text-lg float-anim">😱 👍 ⚽ 🔥</span>
+            </div>
+          </div>`
+      }
+    ];
+
+    let currentSlide = 0;
+
+    function renderSlide(idx) {
+      const s = slides[idx];
+      document.getElementById('carousel-top-title').textContent = s.topTitle;
+      document.getElementById('carousel-subtitle').textContent = s.subtitle;
+      document.getElementById('carousel-quote').textContent = s.quote;
+      document.getElementById('carousel-desc').textContent = s.desc;
+      document.getElementById('carousel-visual-box').innerHTML = s.visual;
+
+      document.getElementById('carousel-badges').innerHTML = s.badges.map(b =>
+        `<span class="bg-blue-600/30 border border-cyan-400/40 text-cyan-300 text-[11px] font-extrabold px-3 py-1 rounded-full">${b}</span>`
+      ).join('');
+
+      document.getElementById('carousel-bullets').innerHTML = s.bullets.map(item =>
+        `<li>${item}</li>`
+      ).join('');
+
+      document.getElementById('carousel-dots').innerHTML = slides.map((_, i) =>
+        `<button onclick="goToSlide(${i})" aria-label="Slide ${i + 1}" class="h-2.5 rounded-full transition-all ${i === idx ? 'w-9 bg-cyan-400' : 'w-2.5 bg-white/25 hover:bg-white/50'}"></button>`
+      ).join('');
+    }
+
+    function nextSlide() { currentSlide = (currentSlide + 1) % slides.length; renderSlide(currentSlide); }
+    function prevSlide() { currentSlide = (currentSlide - 1 + slides.length) % slides.length; renderSlide(currentSlide); }
+    function goToSlide(i) { currentSlide = i; renderSlide(currentSlide); }
+    function jumpToSlide(i) {
+      goToSlide(i);
+      document.getElementById('carrusel-pro').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // 4. Guía Intuitiva por Pestañas
+    const guides = {
+      tv: [
+        { step: "01", title: "Abre el Navegador o App TV", desc: "Ingresa a esta misma dirección web desde el navegador de tu Smart TV Samsung/LG o instala nuestra APK en Android TV." },
+        { step: "02", title: "Inicia Sesión o Canjea tu PIN", desc: "Toca 'Ingresar a la App', accede con tu cuenta VIP y tus listas guardadas en el celular aparecerán solas en la TV." },
+        { step: "03", title: "Controla Todo desde tu Celular", desc: "Abre el 'Mando TV' desde tu teléfono para cambiar canales o usar búsqueda por voz cómodamente desde tu sofá." }
+      ],
+      mobile: [
+        { step: "01", title: "Solicita nuestra APK Oficial", desc: "Pídenos el instalador ligero libre de anuncios por WhatsApp o entra directo desde tu navegador móvil." },
+        { step: "02", title: "Activa tu Licencia con PIN 24/7", desc: "Ingresa tu código PIN y carga tus enlaces personales M3U en el Gestor Nube (soporta hasta 5 listas)." },
+        { step: "03", title: "Activa el Modo Burbuja (PiP)", desc: "Disfruta de reproducción flotante en segundo plano, grabador DVR y recordatorios con alarma." }
+      ],
+      fire: [
+        { step: "01", title: "Instala en Fire TV / TV Box", desc: "Compatible al 100% con controles remotos D-Pad de Amazon Fire TV Stick, Chromecast y Xiaomi TV Box." },
+        { step: "02", title: "Sincronización Instantánea", desc: "No necesitas escribir enlaces largos con el control: agrégalos en tu celular y se sincronizarán en la nube." },
+        { step: "03", title: "Fluidez en Pantalla Grande", desc: "Navega con las flechas arriba/abajo para un zapping veloz y guía EPG en calidad Full HD / 4K." }
+      ],
+      pc: [
+        { step: "01", title: "Sin Instalaciones Pesadas", desc: "Haz clic en el botón 'Ingresar a la App' aquí arriba desde Chrome, Edge o Brave en Windows o Mac." },
+        { step: "02", title: "Atajos de Teclado Integrados", desc: "Usa las flechas para cambiar canal o retroceder -15s en vivo, Barra Espaciadora para pausar y 'F' para pantalla completa." },
+        { step: "03", title: "Multitarea en Escritorio", desc: "Haz clic derecho sobre el reproductor para activar Pantalla en Pantalla mientras trabajas o estudias." }
+      ]
+    };
+
+    function selectGuide(key) {
+      ['tv', 'mobile', 'fire', 'pc'].forEach(k => {
+        const btn = document.getElementById('tab-' + k);
+        if (k === key) {
+          btn.className = "guide-tab bg-gradient-to-r from-purple-600 to-cyan-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition shadow-lg";
+        } else {
+          btn.className = "guide-tab bg-[#131C31] text-white/80 hover:text-white border border-white/10 font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition";
+        }
+      });
+
+      document.getElementById('guide-steps').innerHTML = guides[key].map(g => `
+        <div class="bto-card bg-[#10182B] border border-purple-500/25 p-7 rounded-3xl">
+          <span class="inline-block text-xs font-black bg-cyan-400/15 text-cyan-300 border border-cyan-400/30 px-3 py-1 rounded-lg mb-4">PASO ${g.step}</span>
+          <h4 class="text-xl font-black text-white mb-2">${g.title}</h4>
+          <p class="text-white/75 text-sm leading-relaxed">${g.desc}</p>
+        </div>
+      `).join('');
+    }
+
+    // Inicializar componentes interactivos al cargar
+    renderSlide(0);
+    selectGuide('tv');
   </script>
 
 </body>
