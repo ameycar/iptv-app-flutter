@@ -1,10 +1,7 @@
 <!DOCTYPE html>
 <html lang="es" class="scroll-smooth">
 <head>
-  <base href="$FLUTTER_BASE_HREF">
-
   <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="AMEYCAR TV VIP - Reproductor Multimedia Inteligente con Asistente de Voz IA, Timeshift, DVR y Cero Anuncios.">
 
@@ -13,95 +10,28 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="AMEYCAR TV">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
   <title>AMEYCAR TV VIP • Reproductor Inteligente Sin Anuncios</title>
-  <link rel="manifest" href="manifest.json">
   
   <!-- Tailwind CSS & Tipografía Moderna -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-
-  <!-- Firebase Web SDKs (Compatibles con Flutter Web) -->
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-
-  <script>
-    const firebaseConfig = {
-      apiKey: "AIzaSyCdezgxIJsdnEXyvZaeazYYpHHbzcHm9Xs",
-      authDomain: "ameycartv.firebaseapp.com",
-      projectId: "ameycartv",
-      storageBucket: "ameycartv.firebasestorage.app",
-      messagingSenderId: "1056187378484",
-      appId: "1:1056187378484:web:18fd0ec0a86c7c9af19361"
-    };
-    firebase.initializeApp(firebaseConfig);
-  </script>
   
   <style>
-    video::-webkit-media-controls { display: none !important; }
-    video::-webkit-media-controls-enclosure { display: none !important; }
-    video::-webkit-media-controls-panel { display: none !important; }
-    video::-webkit-media-controls-overlay-play-button { display: none !important; }
-    * { -webkit-tap-highlight-color: transparent; }
-
-    body {
-      font-family: 'Plus Jakarta Sans', sans-serif;
-      background-color: #070A10;
-      color: #FFFFFF;
-      overflow-x: hidden;
-    }
-
-    .logo-multicolor {
-      background: linear-gradient(90deg, #D946EF 0%, #9D4EDD 30%, #3B82F6 65%, #00E5FF 100%);
-      background-size: 200% auto;
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      animation: gradientFlow 5s linear infinite;
-    }
-
-    @keyframes gradientFlow {
-      0% { background-position: 0% center; }
-      100% { background-position: 200% center; }
-    }
-
-    .bto-card {
-      transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.45s ease, border-color 0.35s ease;
-    }
-    .bto-card:hover {
-      transform: translateY(-10px) scale(1.015);
-      box-shadow: 0 25px 50px -12px rgba(0, 229, 255, 0.25), 0 0 35px -8px rgba(157, 78, 221, 0.4);
-    }
-    .bto-card .card-visual {
-      transition: transform 0.55s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-    .bto-card:hover .card-visual {
-      transform: scale(1.08) rotate(-1.5deg);
-    }
-
-    .mockup-hover {
-      transition: transform 0.5s ease, box-shadow 0.5s ease;
-    }
-    .mockup-hover:hover {
-      transform: perspective(1000px) rotateY(-4deg) rotateX(2deg) scale(1.03);
-      box-shadow: 0 25px 60px -15px rgba(0, 229, 255, 0.35);
-    }
-
-    @keyframes pulseMic {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.55); }
-      50% { box-shadow: 0 0 0 18px rgba(0, 229, 255, 0); }
-    }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #070A10; color: #FFFFFF; overflow-x: hidden; }
+    .logo-multicolor { background: linear-gradient(90deg, #D946EF 0%, #9D4EDD 30%, #3B82F6 65%, #00E5FF 100%); background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: gradientFlow 5s linear infinite; }
+    @keyframes gradientFlow { 0% { background-position: 0% center; } 100% { background-position: 200% center; } }
+    .bto-card { transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.45s ease, border-color 0.35s ease; }
+    .bto-card:hover { transform: translateY(-10px) scale(1.015); box-shadow: 0 25px 50px -12px rgba(0, 229, 255, 0.25), 0 0 35px -8px rgba(157, 78, 221, 0.4); }
+    .bto-card .card-visual { transition: transform 0.55s cubic-bezier(0.16, 1, 0.3, 1); }
+    .bto-card:hover .card-visual { transform: scale(1.08) rotate(-1.5deg); }
+    .mockup-hover { transition: transform 0.5s ease, box-shadow 0.5s ease; }
+    .mockup-hover:hover { transform: perspective(1000px) rotateY(-4deg) rotateX(2deg) scale(1.03); box-shadow: 0 25px 60px -15px rgba(0, 229, 255, 0.35); }
+    @keyframes pulseMic { 0%, 100% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.55); } 50% { box-shadow: 0 0 0 18px rgba(0, 229, 255, 0); } }
     .mic-pulse { animation: pulseMic 2.2s infinite; }
-
-    @keyframes floatEmoji {
-      0%, 100% { transform: translateY(0px); }
-      50% { transform: translateY(-8px); }
-    }
+    @keyframes floatEmoji { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-8px); } }
     .float-anim { animation: floatEmoji 3s ease-in-out infinite; }
-
     .glow-purple { box-shadow: 0 0 45px -10px rgba(157, 78, 221, 0.45); }
     .glow-cyan { box-shadow: 0 0 40px -10px rgba(0, 229, 255, 0.4); }
   </style>
@@ -138,15 +68,15 @@
           <a href="#guia-uso" class="hover:text-cyan-400 transition">Guía 3 Pasos</a>
           <a href="#planes" class="hover:text-cyan-400 transition">Planes VIP</a>
           <a href="#pagos" class="hover:text-cyan-400 transition">Métodos de Pago</a>
-          <a href="#certificado-legal" class="text-cyan-300 hover:text-cyan-200 transition flex items-center gap-1">
+          <button onclick="openLegalModal()" class="text-cyan-300 hover:text-cyan-200 transition flex items-center gap-1">
             <span>🛡️</span> Legal
-          </a>
+          </button>
         </div>
 
         <div class="flex items-center gap-2.5">
-          <button onclick="launchApp()" class="bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 text-white font-extrabold px-4 py-2.5 rounded-xl shadow-lg hover:opacity-95 hover:scale-[1.03] transition text-xs sm:text-sm">
+          <a href="app.html" class="bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 text-white font-extrabold px-4 py-2.5 rounded-xl shadow-lg hover:opacity-95 hover:scale-[1.03] transition text-xs sm:text-sm">
             🚀 Ingresar a la App
-          </button>
+          </a>
           <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20adquirir%20una%20licencia%20VIP%20del%20reproductor%20Ameycar%20TV." target="_blank" rel="noopener"
              class="hidden sm:inline-flex items-center gap-1.5 bg-[#121B2E] border border-cyan-400/40 text-white font-bold px-4 py-2.5 rounded-xl hover:bg-cyan-400 hover:text-black transition text-xs sm:text-sm">
             <span>💬</span> Contacto
@@ -163,7 +93,7 @@
         <a href="#guia-uso" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">📲 Guía Intuitiva de Instalación</a>
         <a href="#planes" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">💎 Planes y Licencias VIP</a>
         <a href="#pagos" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">💳 Métodos de Pago</a>
-        <a href="#certificado-legal" onclick="toggleMobileMenu()" class="py-1.5 text-cyan-400">🛡️ Certificado Legal</a>
+        <button onclick="toggleMobileMenu(); openLegalModal()" class="py-1.5 text-cyan-400 text-left">🛡️ Certificado Legal</button>
       </div>
     </nav>
 
@@ -183,9 +113,9 @@
       </p>
 
       <div class="flex flex-col sm:flex-row justify-center items-center gap-4 mb-16">
-        <button onclick="launchApp()" class="w-full sm:w-auto bg-gradient-to-r from-purple-600 via-blue-500 to-cyan-400 text-white font-black px-8 py-4 rounded-2xl glow-cyan hover:scale-105 transition text-base tracking-wide shadow-xl">
+        <a href="app.html" class="w-full sm:w-auto bg-gradient-to-r from-purple-600 via-blue-500 to-cyan-400 text-white font-black px-8 py-4 rounded-2xl glow-cyan hover:scale-105 transition text-base tracking-wide shadow-xl text-center">
           ▶ ABRIR REPRODUCTOR WEB AHORA
-        </button>
+        </a>
         <a href="#planes" class="w-full sm:w-auto bg-white text-[#070A10] font-black px-8 py-4 rounded-2xl hover:bg-cyan-300 transition text-base shadow-xl">
           💎 Adquirir Licencia VIP
         </a>
@@ -316,9 +246,9 @@
                 <a href="#planes" class="bg-gradient-to-r from-purple-600 to-cyan-400 text-black font-black px-6 py-3 rounded-xl text-sm hover:opacity-95 transition">
                   🔥 Quiero esta tecnología
                 </a>
-                <button onclick="launchApp()" class="bg-white/10 hover:bg-white/20 border border-white/15 text-white font-bold px-5 py-3 rounded-xl text-sm transition">
+                <a href="app.html" class="bg-white/10 hover:bg-white/20 border border-white/15 text-white font-bold px-5 py-3 rounded-xl text-sm transition text-center">
                   Probar en Web →
-                </button>
+                </a>
               </div>
             </div>
 
@@ -509,14 +439,14 @@
             </div>
           </a>
 
-          <button onclick="launchApp()" class="bto-card bg-gradient-to-b from-purple-900/60 to-[#11182B] border border-cyan-400 p-5 rounded-2xl flex flex-col justify-between text-left">
+          <a href="app.html" class="bto-card bg-gradient-to-b from-purple-900/60 to-[#11182B] border border-cyan-400 p-5 rounded-2xl flex flex-col justify-between text-left">
             <div class="w-10 h-10 rounded-xl bg-cyan-400 text-black flex items-center justify-center font-black text-lg mb-3">🔑</div>
             <div>
               <h4 class="font-black text-white text-base">¿Ya tienes PIN?</h4>
               <p class="text-white/75 text-xs mt-1">Canjéalo 24/7 sin esperas dentro de la App</p>
               <span class="inline-block mt-3 text-cyan-300 text-xs font-extrabold">Canjear Ahora →</span>
             </div>
-          </button>
+          </a>
         </div>
       </div>
     </section>
@@ -592,66 +522,18 @@
     </div>
   </div>
 
-  <!-- BOTÓN FLOTANTE DE WHATSAPP REUBICADO -->
+  <!-- BOTÓN FLOTANTE WHATSAPP -->
   <a id="floating-wa" href="https://wa.me/51905823660?text=%C2%A1Hola!%20Vi%20la%20web%20oficial%20de%20Ameycar%20TV%20VIP%20y%20quiero%20activar%20mi%20licencia." target="_blank" rel="noopener"
      class="fixed bottom-16 right-5 z-40 bg-gradient-to-r from-emerald-400 to-cyan-400 text-black font-black text-xs sm:text-sm px-4 py-3 rounded-full shadow-2xl flex items-center gap-2 hover:scale-105 transition">
     <span class="text-base">💬</span>
     <span>Atención Directa</span>
   </a>
 
-  <!-- ===================================================================== -->
-  <!-- CONTENEDOR FLUTTER CORREGIDO CON PANTALLA DE CARGA NATIVA             -->
-  <!-- ===================================================================== -->
-  <div id="flutter-app-container" style="display: none; width: 100vw; height: 100vh; position: fixed; top: 0; left: 0; background: #070A10; z-index: 9999;">
-    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: #fff; font-family: sans-serif;">
-      <div style="font-size: 28px; font-weight: 900; background: linear-gradient(90deg, #D946EF, #00E5FF); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 12px;">AMEYCAR TV VIP</div>
-      <div style="font-size: 14px; color: #94A3B8;">Cargando motor de reproducción inteligente...</div>
-    </div>
-  </div>
-
-  <!-- SCRIPTS DE ARRANQUE OFICIAL DE FLUTTER WEB -->
+  <!-- SCRIPTS LIMPIOS -->
   <script>
-    function launchApp() {
-      window.scrollTo(0, 0);
-      document.body.style.overflow = 'hidden';
-      document.getElementById('commercial-landing').style.display = 'none';
-      const waBtn = document.getElementById('floating-wa');
-      if (waBtn) waBtn.style.display = 'none';
-      
-      const targetContainer = document.getElementById('flutter-app-container');
-      targetContainer.style.display = 'block';
-
-      if (!window._flutterLoaded) {
-        window._flutterLoaded = true;
-        
-        window._flutter = {
-          loader: {
-            didCreateEngineInitializer: function(engineInitializer) {
-              engineInitializer.initializeEngine({
-                hostElement: targetContainer
-              }).then(function(appRunner) {
-                appRunner.run();
-              });
-            }
-          }
-        };
-
-        const scriptTag = document.createElement('script');
-        scriptTag.src = 'flutter_bootstrap.js';
-        scriptTag.async = true;
-        document.body.appendChild(scriptTag);
-      }
-    }
-
-    function toggleMobileMenu() {
-      document.getElementById('mobile-menu').classList.toggle('hidden');
-    }
-    function openLegalModal() {
-      document.getElementById('legal-modal').classList.remove('hidden');
-    }
-    function closeLegalModal() {
-      document.getElementById('legal-modal').classList.add('hidden');
-    }
+    function toggleMobileMenu() { document.getElementById('mobile-menu').classList.toggle('hidden'); }
+    function openLegalModal() { document.getElementById('legal-modal').classList.remove('hidden'); }
+    function closeLegalModal() { document.getElementById('legal-modal').classList.add('hidden'); }
 
     const slides = [
       {
@@ -773,73 +655,31 @@
       document.getElementById('carousel-quote').textContent = s.quote;
       document.getElementById('carousel-desc').textContent = s.desc;
       document.getElementById('carousel-visual-box').innerHTML = s.visual;
-
-      document.getElementById('carousel-badges').innerHTML = s.badges.map(b =>
-        `<span class="bg-blue-600/30 border border-cyan-400/40 text-cyan-300 text-[11px] font-extrabold px-3 py-1 rounded-full">${b}</span>`
-      ).join('');
-
-      document.getElementById('carousel-bullets').innerHTML = s.bullets.map(item =>
-        `<li>${item}</li>`
-      ).join('');
-
-      document.getElementById('carousel-dots').innerHTML = slides.map((_, i) =>
-        `<button onclick="goToSlide(${i})" aria-label="Slide ${i + 1}" class="h-2.5 rounded-full transition-all ${i === idx ? 'w-9 bg-cyan-400' : 'w-2.5 bg-white/25 hover:bg-white/50'}"></button>`
-      ).join('');
+      document.getElementById('carousel-badges').innerHTML = s.badges.map(b => `<span class="bg-blue-600/30 border border-cyan-400/40 text-cyan-300 text-[11px] font-extrabold px-3 py-1 rounded-full">${b}</span>`).join('');
+      document.getElementById('carousel-bullets').innerHTML = s.bullets.map(item => `<li>${item}</li>`).join('');
+      document.getElementById('carousel-dots').innerHTML = slides.map((_, i) => `<button onclick="goToSlide(${i})" aria-label="Slide ${i + 1}" class="h-2.5 rounded-full transition-all ${i === idx ? 'w-9 bg-cyan-400' : 'w-2.5 bg-white/25 hover:bg-white/50'}"></button>`).join('');
     }
 
     function nextSlide() { currentSlide = (currentSlide + 1) % slides.length; renderSlide(currentSlide); }
     function prevSlide() { currentSlide = (currentSlide - 1 + slides.length) % slides.length; renderSlide(currentSlide); }
     function goToSlide(i) { currentSlide = i; renderSlide(currentSlide); }
-    function jumpToSlide(i) {
-      goToSlide(i);
-      document.getElementById('carrusel-pro').scrollIntoView({ behavior: 'smooth' });
-    }
+    function jumpToSlide(i) { goToSlide(i); document.getElementById('carrusel-pro').scrollIntoView({ behavior: 'smooth' }); }
 
     const guides = {
-      tv: [
-        { step: "01", title: "Abre el Navegador o App TV", desc: "Ingresa a esta misma dirección web desde el navegador de tu Smart TV Samsung/LG o instala nuestra APK en Android TV." },
-        { step: "02", title: "Inicia Sesión o Canjea tu PIN", desc: "Toca 'Ingresar a la App', accede con tu cuenta VIP y tus listas guardadas en el celular aparecerán solas en la TV." },
-        { step: "03", title: "Controla Todo desde tu Celular", desc: "Abre el 'Mando TV' desde tu teléfono para cambiar canales o usar búsqueda por voz cómodamente desde tu sofá." }
-      ],
-      mobile: [
-        { step: "01", title: "Solicita nuestra APK Oficial", desc: "Pídenos el instalador ligero libre de anuncios por WhatsApp o entra directo desde tu navegador móvil." },
-        { step: "02", title: "Activa tu Licencia con PIN 24/7", desc: "Ingresa tu código PIN y carga tus enlaces personales M3U en el Gestor Nube (soporta hasta 5 listas)." },
-        { step: "03", title: "Activa el Modo Burbuja (PiP)", desc: "Disfruta de reproducción flotante en segundo plano, grabador DVR y recordatorios con alarma." }
-      ],
-      fire: [
-        { step: "01", title: "Instala en Fire TV / TV Box", desc: "Compatible al 100% con controles remotos D-Pad de Amazon Fire TV Stick, Chromecast y Xiaomi TV Box." },
-        { step: "02", title: "Sincronización Instantánea", desc: "No necesitas escribir enlaces largos con el control: agrégalos en tu celular y se sincronizarán en la nube." },
-        { step: "03", title: "Fluidez en Pantalla Grande", desc: "Navega con las flechas arriba/abajo para un zapping veloz y guía EPG en calidad Full HD / 4K." }
-      ],
-      pc: [
-        { step: "01", title: "Sin Instalaciones Pesadas", desc: "Haz clic en el botón 'Ingresar a la App' aquí arriba desde Chrome, Edge o Brave en Windows o Mac." },
-        { step: "02", title: "Atajos de Teclado Integrados", desc: "Usa las flechas para cambiar canal o retroceder -15s en vivo, Barra Espaciadora para pausar y 'F' para pantalla completa." },
-        { step: "03", title: "Multitarea en Escritorio", desc: "Haz clic derecho sobre el reproductor para activar Pantalla en Pantalla mientras trabajas o estudias." }
-      ]
+      tv: [{ step: "01", title: "Abre el Navegador o App TV", desc: "Ingresa a esta dirección web desde tu Smart TV Samsung/LG o instala el APK en Android TV." }, { step: "02", title: "Inicia Sesión o Canjea PIN", desc: "Toca 'Ingresar a la App', accede con tu cuenta VIP y tus listas aparecerán solas en la TV." }, { step: "03", title: "Controla desde tu Celular", desc: "Abre el 'Mando TV' en tu teléfono para cambiar canales por voz cómodamente." }],
+      mobile: [{ step: "01", title: "Solicita nuestra APK", desc: "Pídenos el instalador ligero libre de anuncios por WhatsApp o entra desde tu navegador." }, { step: "02", title: "Activa tu Licencia 24/7", desc: "Ingresa tu PIN y carga tus enlaces personales M3U en el Gestor Nube." }, { step: "03", title: "Activa el Modo PiP", desc: "Disfruta de reproducción flotante en segundo plano y grabador DVR." }],
+      fire: [{ step: "01", title: "Instala en Fire TV", desc: "Compatible al 100% con controles D-Pad de Amazon Fire TV Stick y Xiaomi Box." }, { step: "02", title: "Sincronización Nube", desc: "No escribas enlaces largos en la TV: agrégalos en tu celular y se sincronizarán solos." }, { step: "03", title: "Fluidez en Pantalla", desc: "Navega rápido con las flechas para un zapping veloz en calidad Full HD / 4K." }],
+      pc: [{ step: "01", title: "Sin Instalaciones", desc: "Haz clic en 'Ingresar a la App' desde Chrome, Edge o Brave en tu PC." }, { step: "02", title: "Atajos de Teclado", desc: "Usa las flechas para cambiar canal o retroceder -15s en vivo." }, { step: "03", title: "Multitarea Desktop", desc: "Activa Pantalla en Pantalla mientras trabajas o navegas en otras ventanas." }]
     };
 
     function selectGuide(key) {
       ['tv', 'mobile', 'fire', 'pc'].forEach(k => {
-        const btn = document.getElementById('tab-' + k);
-        if (k === key) {
-          btn.className = "guide-tab bg-gradient-to-r from-purple-600 to-cyan-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition shadow-lg";
-        } else {
-          btn.className = "guide-tab bg-[#131C31] text-white/80 hover:text-white border border-white/10 font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition";
-        }
+        document.getElementById('tab-' + k).className = (k === key) ? "guide-tab bg-gradient-to-r from-purple-600 to-cyan-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition shadow-lg" : "guide-tab bg-[#131C31] text-white/80 hover:text-white border border-white/10 font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition";
       });
-
-      document.getElementById('guide-steps').innerHTML = guides[key].map(g => `
-        <div class="bto-card bg-[#10182B] border border-purple-500/25 p-7 rounded-3xl">
-          <span class="inline-block text-xs font-black bg-cyan-400/15 text-cyan-300 border border-cyan-400/30 px-3 py-1 rounded-lg mb-4">PASO ${g.step}</span>
-          <h4 class="text-xl font-black text-white mb-2">${g.title}</h4>
-          <p class="text-white/75 text-sm leading-relaxed">${g.desc}</p>
-        </div>
-      `).join('');
+      document.getElementById('guide-steps').innerHTML = guides[key].map(g => `<div class="bto-card bg-[#10182B] border border-purple-500/25 p-7 rounded-3xl"><span class="inline-block text-xs font-black bg-cyan-400/15 text-cyan-300 border border-cyan-400/30 px-3 py-1 rounded-lg mb-4">PASO ${g.step}</span><h4 class="text-xl font-black text-white mb-2">${g.title}</h4><p class="text-white/75 text-sm leading-relaxed">${g.desc}</p></div>`).join('');
     }
 
-    renderSlide(0);
-    selectGuide('tv');
+    renderSlide(0); selectGuide('tv');
   </script>
-
 </body>
 </html>
