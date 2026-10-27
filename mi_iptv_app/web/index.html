@@ -50,6 +50,14 @@
     // Inicialización nativa web antes de que Flutter monte los widgets
     firebase.initializeApp(firebaseConfig);
   </script>
+  <style>
+    /* Ocultar superposiciones y controles nativos en Smart TVs (Tizen/WebOS) */
+    video::-webkit-media-controls { display: none !important; }
+    video::-webkit-media-controls-enclosure { display: none !important; }
+    video::-webkit-media-controls-panel { display: none !important; }
+    video::-webkit-media-controls-overlay-play-button { display: none !important; }
+    * { -webkit-tap-highlight-color: transparent; }
+  </style>
 </head>
 <body>
   <!--

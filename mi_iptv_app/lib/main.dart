@@ -359,6 +359,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   StreamSubscription<UserModel?>? _accountGuardSub;
   StreamSubscription<String>? _alarmTapSub;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _cloudPlaylistSub;
 
   String get _currentProfileId =>
       AuthService.currentActiveProfile?.id ??
@@ -420,6 +421,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _startListeningRemoteTvCommands();
     _loadFavorites();
     _loadSavedChannels();
+    _startCloudPlaylistsRealtimeListener();
     _ensureUserHasReferralCode();
 
     if (!kIsWeb) {
@@ -895,6 +897,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _loadFavorites() async {
     final prefs = await SharedPreferences.getInstance();
     final favList = prefs.getStringList('favorite_channels_$_currentProfileId') ?? [];
+
+    final user = AuthService.currentUser;
+    if (user != null && AuthService.isFirebaseAvailable) {
+      try {
+        final doc = await FirebaseFirestore.instance.collection('users').doc(user.id).get();
+        final data = doc.data();
+        final cloudFavKey = 'fav_urls_$_currentProfileId';
+        if (data != null && data[cloudFavKey] is List) {
+          final remoteFavs = (data[cloudFavKey] as List).map((e) => e.toString()).toList();
+          if (remoteFavs.isNotEmpty) {
+            favList
+              ..clear()
+              ..addAll(remoteFavs);
+            await prefs.setStringList('favorite_channels_$_currentProfileId', favList);
+          }
+        }
+      } catch (_) {}
+    }
+
     if (mounted) {
       setState(() {
         _favoriteChannelUrls
@@ -915,7 +936,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('favorite_channels_$_currentProfileId', _favoriteChannelUrls.toList());
+    final updatedList = _favoriteChannelUrls.toList();
+    await prefs.setStringList('favorite_channels_$_currentProfileId', updatedList);
+
+    final user = AuthService.currentUser;
+    if (user != null && AuthService.isFirebaseAvailable) {
+      unawaited(
+        FirebaseFirestore.instance.collection('users').doc(user.id).set({
+          'fav_urls_$_currentProfileId': updatedList,
+        }, SetOptions(merge: true)),
+      );
+    }
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1120,6 +1151,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _forceLogoutWithReason(String reason) async {
     _accountGuardSub?.cancel();
+    _cloudPlaylistSub?.cancel();
     _videoPlayerController?.pause();
     await _syncAutoPipState(false);
     await AuthService.logout();
@@ -1153,36 +1185,125 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  // ===========================================================================
+  // SINCRONIZACIÓN AUTOMÁTICA EN LA NUBE (CELULAR <-> SMART TV <-> PC)
+  // ===========================================================================
+
+  Future<void> _syncPlaylistsToCloud() async {
+    final user = AuthService.currentUser;
+    if (user == null || !AuthService.isFirebaseAvailable) return;
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(user.id).set({
+        'm3u_playlists': _savedPlaylists,
+        'm3u_playlists_$_currentProfileId': _savedPlaylists,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Aviso sincronizando listas M3U en Firestore: $e');
+    }
+  }
+
+  void _startCloudPlaylistsRealtimeListener() {
+    final user = AuthService.currentUser;
+    if (user == null || !AuthService.isFirebaseAvailable) return;
+
+    _cloudPlaylistSub?.cancel();
+    _cloudPlaylistSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.id)
+        .snapshots()
+        .listen((snap) async {
+      if (!mounted || !snap.exists) return;
+      final data = snap.data();
+      if (data == null) return;
+
+      final rawCloud = data['m3u_playlists_$_currentProfileId'] ?? data['m3u_playlists'];
+      if (rawCloud is! List || rawCloud.isEmpty) return;
+
+      final incoming = rawCloud.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      final currentActiveUrl = _savedPlaylists
+          .where((l) => l['isActive'] == true)
+          .map((l) => (l['url'] ?? '').toString())
+          .firstOrNull;
+      final incomingActive = incoming.where((l) => l['isActive'] == true).toList();
+      final incomingActiveUrl =
+          incomingActive.isNotEmpty ? (incomingActive.first['url'] ?? '').toString() : '';
+
+      if (incomingActiveUrl.isNotEmpty &&
+          (incomingActiveUrl != currentActiveUrl || _channels.length <= 2)) {
+        _savedPlaylists = incoming;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+        _downloadAndSanitizeM3u(
+          incomingActiveUrl,
+          playlistId: incomingActive.first['id']?.toString(),
+          playlistName: incomingActive.first['name']?.toString(),
+        );
+      }
+    });
+  }
+
   void _loadSavedChannels() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       _customAvatarIdx = prefs.getInt('custom_avatar_$_currentProfileId') ?? 0;
       _selectedLanguage = prefs.getString('app_lang') ?? 'Español (Latinoamérica)';
 
-      final rawLists = prefs.getString('m3u_lists_$_currentProfileId');
-      if (rawLists != null && rawLists.isNotEmpty) {
-        final List decoded = jsonDecode(rawLists);
-        _savedPlaylists = decoded.map((e) => Map<String, dynamic>.from(e)).toList();
-      } else {
-        final legacyUrl = prefs.getString('saved_m3u_url') ?? '';
-        if (legacyUrl.isNotEmpty) {
-          _savedPlaylists = [
-            {
-              'id': 'pl_1',
-              'name': 'Lista Principal',
-              'url': legacyUrl,
-              'isActive': true,
-            }
-          ];
-          await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+      bool loadedFromCloud = false;
+      final user = AuthService.currentUser;
+      if (user != null && AuthService.isFirebaseAvailable) {
+        try {
+          final doc = await FirebaseFirestore.instance.collection('users').doc(user.id).get();
+          final data = doc.data();
+          final rawCloud = data?['m3u_playlists_$_currentProfileId'] ?? data?['m3u_playlists'];
+          if (rawCloud is List && rawCloud.isNotEmpty) {
+            _savedPlaylists =
+                rawCloud.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+            await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+            loadedFromCloud = true;
+          }
+        } catch (e) {
+          debugPrint('Aviso leyendo M3U desde la nube: $e');
+        }
+      }
+
+      if (!loadedFromCloud) {
+        final rawLists = prefs.getString('m3u_lists_$_currentProfileId');
+        if (rawLists != null && rawLists.isNotEmpty) {
+          final List decoded = jsonDecode(rawLists);
+          _savedPlaylists = decoded.map((e) => Map<String, dynamic>.from(e)).toList();
+          unawaited(_syncPlaylistsToCloud());
+        } else {
+          final legacyUrl = prefs.getString('saved_m3u_url') ?? '';
+          if (legacyUrl.isNotEmpty) {
+            _savedPlaylists = [
+              {
+                'id': 'pl_1',
+                'name': 'Lista Principal',
+                'url': legacyUrl,
+                'isActive': true,
+              }
+            ];
+            await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+            unawaited(_syncPlaylistsToCloud());
+          }
         }
       }
 
       final activeList = _savedPlaylists.where((l) => l['isActive'] == true).toList();
       String? savedM3u;
       if (activeList.isNotEmpty) {
-        savedM3u = prefs.getString('m3u_cache_${activeList.first['id']}') ??
-            prefs.getString('saved_m3u_content');
+        savedM3u = prefs.getString('m3u_cache_${activeList.first['id']}');
+        if (savedM3u == null || savedM3u.trim().isEmpty) {
+          final activeUrl = (activeList.first['url'] ?? '').toString().trim();
+          if (activeUrl.isNotEmpty) {
+            _downloadAndSanitizeM3u(
+              activeUrl,
+              playlistId: activeList.first['id']?.toString(),
+              playlistName: activeList.first['name']?.toString(),
+            );
+            return;
+          }
+        }
       } else {
         savedM3u = prefs.getString('saved_m3u_content');
       }
@@ -1629,7 +1750,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 16),
 
-              if (AuthService.isAdmin)
+              if (AuthService.isAdmin) ...[
                 _buildSettingsTile(
                   icon: Icons.admin_panel_settings_rounded,
                   color: const Color(0xFFFFD600),
@@ -1640,6 +1761,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     _openMasterExecutiveAdmin();
                   },
                 ),
+                _buildSettingsTile(
+                  icon: Icons.campaign_rounded,
+                  color: const Color(0xFF00E5FF),
+                  title: 'Publicar Anuncio Global / Actualización',
+                  subtitle: 'Enviar alerta en vivo a las pantallas de todos los clientes',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    BroadcastAdminSheet.show(context);
+                  },
+                ),
+              ],
 
               _buildSettingsTile(
                 icon: Icons.confirmation_number_outlined,
@@ -1661,16 +1793,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   _openRemoteControlModalScreen();
                 },
               ),
-              _buildSettingsTile(
-                icon: Icons.fiber_smart_record,
-                color: const Color(0xFFFF1744),
-                title: 'Mis Grabaciones DVR (${DvrRecordingService.recordings.length})',
-                subtitle: 'Ver programas grabados desde el inicio o liberar espacio',
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _openDvrRecordingsVaultModal();
-                },
-              ),
+              if (!kIsWeb)
+                _buildSettingsTile(
+                  icon: Icons.fiber_smart_record,
+                  color: const Color(0xFFFF1744),
+                  title: 'Mis Grabaciones DVR (${DvrRecordingService.recordings.length})',
+                  subtitle: 'Ver programas grabados desde el inicio o liberar espacio',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _openDvrRecordingsVaultModal();
+                  },
+                ),
               _buildSettingsTile(
                 icon: Icons.card_giftcard,
                 color: const Color(0xFFFFD600),
@@ -1695,7 +1828,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 icon: Icons.playlist_play,
                 color: const Color(0xFF9D4EDD),
                 title: 'Gestor Multi-Lista M3U (${_savedPlaylists.length}/5)',
-                subtitle: 'Administrar hasta 5 listas de canales y Guía EPG',
+                subtitle: 'Sincronizado en la nube entre Celular, PC y Smart TV',
                 onTap: () {
                   Navigator.pop(ctx);
                   _openM3uDialog();
@@ -1760,6 +1893,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             Navigator.pop(context);
                             _loadFavorites();
                             _loadSavedChannels();
+                            _startCloudPlaylistsRealtimeListener();
                           },
                         ),
                       ),
@@ -2657,7 +2791,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
                             ),
                             Text(
-                              'Listas guardadas en este perfil: ${_savedPlaylists.length} / 5',
+                              'Sincronizado en la Nube • ${_savedPlaylists.length} / 5 listas',
                               style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11.5, fontWeight: FontWeight.bold),
                             ),
                           ],
@@ -2674,7 +2808,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
                 if (_savedPlaylists.isNotEmpty) ...[
                   const Text(
-                    'Tus Listas Guardadas (Toca una para activarla):',
+                    'Tus Listas Guardadas (Se reflejan en tu Celular, PC y TV):',
                     style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
@@ -2715,6 +2849,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             }
                             await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
                             await prefs.remove('m3u_cache_${pl['id']}');
+                            await _syncPlaylistsToCloud();
                             setModalState(() {});
                             _loadSavedChannels();
                           },
@@ -2724,6 +2859,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             item['isActive'] = (item['id'] == pl['id']);
                           }
                           await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+                          await _syncPlaylistsToCloud();
                           if (ctx.mounted) Navigator.pop(ctx);
                           _downloadAndSanitizeM3u(pl['url'], playlistId: pl['id'], playlistName: pl['name']);
                         },
@@ -2821,7 +2957,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                     icon: const Icon(Icons.cloud_download),
-                    label: const Text('GUARDAR Y CARGAR LISTA', style: TextStyle(fontWeight: FontWeight.w900)),
+                    label: const Text('GUARDAR Y SINCRONIZAR EN NUBE', style: TextStyle(fontWeight: FontWeight.w900)),
                     onPressed: () async {
                       final url = m3uController.text.trim();
                       final name = listNameCtrl.text.trim().isEmpty
@@ -2844,9 +2980,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         });
                         await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
                         await prefs.setString('saved_m3u_url', url);
+                        await _syncPlaylistsToCloud();
                         if (ctx.mounted) Navigator.pop(ctx);
                         _downloadAndSanitizeM3u(url, playlistId: newId, playlistName: name);
                       } else {
+                        await _syncPlaylistsToCloud();
                         if (ctx.mounted) Navigator.pop(ctx);
                       }
                     },
@@ -2862,9 +3000,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _downloadAndSanitizeM3u(String url, {String? playlistId, String? playlistName}) async {
     setState(() => _isVideoLoading = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Sincronizando ${playlistName ?? "lista M3U"} y guía EPG...')),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sincronizando ${playlistName ?? "lista M3U"} y guía EPG...')),
+      );
+    }
 
     try {
       final res = await http.get(Uri.parse(url));
@@ -3015,6 +3155,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return SafeArea(
       child: Column(
         children: [
+          const LiveBroadcastBanner(),
           _buildTopGlassBar(activeChannel),
           _buildSectionTabs(),
           if (_selectedSection == 'En Vivo') ...[
@@ -3062,162 +3203,169 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     return SafeArea(
-      child: Row(
+      child: Column(
         children: [
-          Container(
-            width: 172,
-            decoration: BoxDecoration(
-              color: const Color(0xFF0F172A).withOpacity(0.85),
-              border: const Border(right: BorderSide(color: Color(0x337B2CBF))),
-            ),
-            child: ListView(
+          const LiveBroadcastBanner(),
+          Expanded(
+            child: Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(left: 14, top: 16, bottom: 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                Container(
+                  width: 172,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F172A).withOpacity(0.85),
+                    border: const Border(right: BorderSide(color: Color(0x337B2CBF))),
+                  ),
+                  child: ListView(
                     children: [
-                      const Text(
-                        'AMEYCAR TV',
-                        style: TextStyle(
-                          color: Color(0xFFC77DFF),
-                          fontWeight: FontWeight.w900,
-                          fontSize: 15,
-                          letterSpacing: 1.1,
+                      Padding(
+                        padding: const EdgeInsets.only(left: 14, top: 16, bottom: 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'AMEYCAR TV',
+                              style: TextStyle(
+                                color: Color(0xFFC77DFF),
+                                fontWeight: FontWeight.w900,
+                                fontSize: 15,
+                                letterSpacing: 1.1,
+                              ),
+                            ),
+                            Text(
+                              '🕒 $_currentTime',
+                              style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                          ],
                         ),
                       ),
-                      Text(
-                        '🕒 $_currentTime',
-                        style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
-                      ),
+                      if (AuthService.isAdmin) ...[
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFFFD600),
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            icon: const Icon(Icons.admin_panel_settings, size: 16),
+                            label: const Text(
+                              'Suite Admin VIP',
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+                            ),
+                            onPressed: _openMasterExecutiveAdmin,
+                          ),
+                        ),
+                        const Divider(color: Colors.white12),
+                      ],
+                      _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
+                      _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
+                      _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
+                      _buildSideMenuItem(Icons.settings_remote, 'Mando TV & Cast', _openRemoteControlModalScreen),
+                      if (!kIsWeb)
+                        _buildSideMenuItem(Icons.fiber_smart_record, 'Grabaciones DVR (${DvrRecordingService.recordings.length})', _openDvrRecordingsVaultModal),
+                      _buildSideMenuItem(Icons.alarm_on, 'Alarmas (${_activeAlarms.length})', _openActiveAlarmsManagerModal),
+                      _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
+                      _buildSideMenuItem(Icons.forum_outlined, 'Chat / Emojis Vivo', () => setState(() => _showLiveChat = !_showLiveChat)),
+                      _buildSideMenuItem(Icons.playlist_add, 'Mis Listas (${_savedPlaylists.length}/5)', _openM3uDialog),
+                      const Divider(color: Colors.white12),
+                      _buildSideMenuItem(Icons.confirmation_number_outlined, 'Renovar / Pagos', _showRenewSubscriptionModal),
+                      _buildSideMenuItem(Icons.card_giftcard, 'Gana +15 Días', _showReferralClubModal),
+                      _buildSideMenuItem(Icons.headset_mic, 'Soporte / CEO', _openSupportMenu),
+                      _buildSideMenuItem(Icons.settings, 'Configuración', _showSettingsMenu),
                     ],
                   ),
                 ),
-                if (AuthService.isAdmin) ...[
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFFD600),
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                if (_selectedSection == 'En Vivo') ...[
+                  Expanded(
+                    flex: 5,
+                    child: Container(
+                      margin: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.black,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0x337B2CBF)),
                       ),
-                      icon: const Icon(Icons.admin_panel_settings, size: 16),
-                      label: const Text(
-                        'Suite Admin VIP',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: _buildVideoPlayerSection(activeChannel, fillAvailableHeight: true),
                       ),
-                      onPressed: _openMasterExecutiveAdmin,
                     ),
                   ),
-                  const Divider(color: Colors.white12),
-                ],
-                _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
-                _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
-                _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
-                _buildSideMenuItem(Icons.settings_remote, 'Mando TV & Cast', _openRemoteControlModalScreen),
-                if (!kIsWeb)
-                  _buildSideMenuItem(Icons.fiber_smart_record, 'Grabaciones DVR (${DvrRecordingService.recordings.length})', _openDvrRecordingsVaultModal),
-                _buildSideMenuItem(Icons.alarm_on, 'Alarmas (${_activeAlarms.length})', _openActiveAlarmsManagerModal),
-                _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
-                _buildSideMenuItem(Icons.forum_outlined, 'Chat / Emojis Vivo', () => setState(() => _showLiveChat = !_showLiveChat)),
-                _buildSideMenuItem(Icons.playlist_add, 'Mis Listas (${_savedPlaylists.length}/5)', _openM3uDialog),
-                const Divider(color: Colors.white12),
-                _buildSideMenuItem(Icons.confirmation_number_outlined, 'Renovar / Pagos', _showRenewSubscriptionModal),
-                _buildSideMenuItem(Icons.card_giftcard, 'Gana +15 Días', _showReferralClubModal),
-                _buildSideMenuItem(Icons.headset_mic, 'Soporte / CEO', _openSupportMenu),
-                _buildSideMenuItem(Icons.settings, 'Configuración', _showSettingsMenu),
-              ],
-            ),
-          ),
-          if (_selectedSection == 'En Vivo') ...[
-            Expanded(
-              flex: 5,
-              child: Container(
-                margin: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0x337B2CBF)),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: _buildVideoPlayerSection(activeChannel, fillAvailableHeight: true),
-                ),
-              ),
-            ),
-            Expanded(
-              flex: 4,
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(2, 6, 6, 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0F172A).withOpacity(0.78),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
-                      child: Row(
+                  Expanded(
+                    flex: 4,
+                    child: Container(
+                      margin: const EdgeInsets.fromLTRB(2, 6, 6, 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F172A).withOpacity(0.78),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
                         children: [
-                          Expanded(
-                            child: Text(
-                              'Canales (${_filteredChannels.length})',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Colors.white70, fontSize: 11.5, fontWeight: FontWeight.bold),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    'Canales (${_filteredChannels.length})',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(color: Colors.white70, fontSize: 11.5, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                  icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 17),
+                                  onPressed: () => setState(() => _isSearching = !_isSearching),
+                                ),
+                                IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                  icon: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 17),
+                                  onPressed: _startVoiceSearch,
+                                ),
+                              ],
                             ),
                           ),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                            icon: const Icon(Icons.search, color: Color(0xFFC77DFF), size: 17),
-                            onPressed: () => setState(() => _isSearching = !_isSearching),
-                          ),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                            icon: const Icon(Icons.mic, color: Color(0xFF00E5FF), size: 17),
-                            onPressed: _startVoiceSearch,
-                          ),
+                          _buildSearchInputHeader(),
+                          _buildCategoryChips(),
+                          Expanded(child: _buildChannelListView(compactLandscape: true)),
                         ],
                       ),
                     ),
-                    _buildSearchInputHeader(),
-                    _buildCategoryChips(),
-                    Expanded(child: _buildChannelListView(compactLandscape: true)),
-                  ],
-                ),
-              ),
+                  ),
+                ] else if (_selectedSection == 'Películas') ...[
+                  Expanded(
+                    child: VodGridView(
+                      items: _movies,
+                      contentType: 'movie',
+                      searchQuery: _searchQuery,
+                      onPlayItem: (item) {
+                        _changeChannel(item);
+                        setState(() => _isFullScreenMode = true);
+                      },
+                    ),
+                  ),
+                ] else ...[
+                  Expanded(
+                    child: VodGridView(
+                      items: _series,
+                      contentType: 'series',
+                      searchQuery: _searchQuery,
+                      onPlayItem: (item) {
+                        _changeChannel(item);
+                        setState(() => _isFullScreenMode = true);
+                      },
+                    ),
+                  ),
+                ],
+              ],
             ),
-          ] else if (_selectedSection == 'Películas') ...[
-            Expanded(
-              child: VodGridView(
-                items: _movies,
-                contentType: 'movie',
-                searchQuery: _searchQuery,
-                onPlayItem: (item) {
-                  _changeChannel(item);
-                  setState(() => _isFullScreenMode = true);
-                },
-              ),
-            ),
-          ] else ...[
-            Expanded(
-              child: VodGridView(
-                items: _series,
-                contentType: 'series',
-                searchQuery: _searchQuery,
-                onPlayItem: (item) {
-                  _changeChannel(item);
-                  setState(() => _isFullScreenMode = true);
-                },
-              ),
-            ),
-          ],
+          ),
         ],
       ),
     );
@@ -3311,6 +3459,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                         Navigator.pop(context);
                                         _loadFavorites();
                                         _loadSavedChannels();
+                                        _startCloudPlaylistsRealtimeListener();
                                       },
                                     ),
                                   ),
@@ -4548,6 +4697,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   : _buildSmoothTuningTransition(activeChannel),
             ),
 
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: LiveBroadcastBanner(),
+            ),
+
             _buildActiveRecordingTopBadge(),
 
             if (_showLiveChat && activeChannel != null)
@@ -4597,7 +4753,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
             if (_showOsd)
               Positioned(
-                top: 24,
+                top: 38,
                 right: 24,
                 child: Row(
                   children: [
@@ -4675,6 +4831,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       WakelockPlus.disable();
     }
     _accountGuardSub?.cancel();
+    _cloudPlaylistSub?.cancel();
     _alarmTapSub?.cancel();
     _clockTimer?.cancel();
     _osdHideTimer?.cancel();
@@ -5419,6 +5576,21 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
           ],
         ),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00E5FF),
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: const Icon(Icons.campaign_rounded, size: 17),
+              label: const Text('Anuncio / Update',
+                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900)),
+              onPressed: () => BroadcastAdminSheet.show(context),
+            ),
+          ),
           if (widget.onOpenLegacyAdmin != null)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
@@ -5450,6 +5622,9 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
         onRefresh: _refreshAllData,
         child: CustomScrollView(
           slivers: [
+            const SliverToBoxAdapter(
+              child: LiveBroadcastBanner(),
+            ),
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
@@ -6226,6 +6401,293 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
           fontWeight: FontWeight.w800,
         ),
       ),
+    );
+  }
+}
+
+// =============================================================================
+// SISTEMA DE ANUNCIOS GLOBALES Y ALERTAS DE ACTUALIZACIÓN EN TIEMPO REAL
+// =============================================================================
+
+class LiveBroadcastBanner extends StatelessWidget {
+  const LiveBroadcastBanner({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('system_config')
+          .doc('broadcast_announcement')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || !snapshot.data!.exists) {
+          return const SizedBox.shrink();
+        }
+
+        final data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+        final bool isActive = data['isActive'] == true;
+        final String message = (data['message'] ?? '').toString();
+        final String type = (data['type'] ?? 'info').toString();
+        final String actionUrl = (data['actionUrl'] ?? '').toString().trim();
+
+        if (!isActive || message.trim().isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        Color bannerColor = const Color(0xFF7B2CBF);
+        Color borderColor = const Color(0xFF9D4EDD);
+        IconData bannerIcon = Icons.campaign_rounded;
+        bool darkText = false;
+
+        if (type == 'match') {
+          bannerColor = const Color(0xFFFF1744);
+          borderColor = const Color(0xFFFF8A80);
+          bannerIcon = Icons.sports_soccer_rounded;
+        } else if (type == 'promo') {
+          bannerColor = const Color(0xFFFFD600);
+          borderColor = const Color(0xFFFFEA00);
+          bannerIcon = Icons.card_giftcard_rounded;
+          darkText = true;
+        } else if (type == 'update') {
+          bannerColor = const Color(0xFF00E5FF);
+          borderColor = Colors.white;
+          bannerIcon = Icons.system_update_rounded;
+          darkText = true;
+        } else if (type == 'warning') {
+          bannerColor = const Color(0xFFFFB703);
+          borderColor = const Color(0xFFFFD54F);
+          bannerIcon = Icons.warning_amber_rounded;
+          darkText = true;
+        }
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: BoxDecoration(
+            color: bannerColor.withOpacity(0.95),
+            border: Border(bottom: BorderSide(color: borderColor, width: 1.5)),
+          ),
+          child: Row(
+            children: [
+              Icon(bannerIcon, color: darkText ? Colors.black : Colors.white, size: 19),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(
+                    color: darkText ? Colors.black : Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (actionUrl.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black87,
+                    foregroundColor: const Color(0xFF00E5FF),
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  ),
+                  onPressed: () async {
+                    final uri = Uri.tryParse(actionUrl);
+                    if (uri != null) {
+                      await launchUrl(uri, mode: LaunchMode.externalApplication);
+                    }
+                  },
+                  child: const Text(
+                    'ACTUALIZAR / VER',
+                    style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class BroadcastAdminSheet {
+  static void show(BuildContext context) {
+    final msgCtrl = TextEditingController();
+    final urlCtrl = TextEditingController();
+    String selectedType = 'match';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0B0F19),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) {
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.campaign_rounded, color: Color(0xFFFFD600), size: 28),
+                          SizedBox(width: 10),
+                          Text(
+                            'Anuncio Global & Actualizaciones',
+                            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white54),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Aparecerá al instante en celulares, PC y Smart TV de todos los clientes conectados.',
+                    style: TextStyle(color: Colors.white60, fontSize: 12),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: msgCtrl,
+                    maxLength: 140,
+                    maxLines: 2,
+                    style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                    decoration: InputDecoration(
+                      labelText: 'Mensaje del evento o actualización',
+                      labelStyle: const TextStyle(color: Colors.white60),
+                      hintText: 'Ej: ⚽ HOY 8:00 PM: Gran Partido en Vivo • ¡No te lo pierdas!',
+                      hintStyle: const TextStyle(color: Colors.white30),
+                      filled: true,
+                      fillColor: const Color(0xFF1F2937),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: urlCtrl,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: InputDecoration(
+                      labelText: 'Link de Descarga APK o Promo (Opcional)',
+                      labelStyle: const TextStyle(color: Colors.white60, fontSize: 12),
+                      hintText: 'https://...',
+                      hintStyle: const TextStyle(color: Colors.white30),
+                      prefixIcon: const Icon(Icons.link, color: Color(0xFF00E5FF)),
+                      filled: true,
+                      fillColor: const Color(0xFF1F2937),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _chip('Evento / Partido', 'match', const Color(0xFFFF1744), selectedType,
+                          (v) => setModalState(() => selectedType = v)),
+                      _chip('Nueva Actualización', 'update', const Color(0xFF00E5FF), selectedType,
+                          (v) => setModalState(() => selectedType = v)),
+                      _chip('Promoción', 'promo', const Color(0xFFFFD600), selectedType,
+                          (v) => setModalState(() => selectedType = v)),
+                      _chip('Informativo', 'info', const Color(0xFFC77DFF), selectedType,
+                          (v) => setModalState(() => selectedType = v)),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.redAccent,
+                            side: const BorderSide(color: Colors.redAccent),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () async {
+                            await FirebaseFirestore.instance
+                                .collection('system_config')
+                                .doc('broadcast_announcement')
+                                .set({'isActive': false, 'message': ''}, SetOptions(merge: true));
+                            if (ctx.mounted) Navigator.pop(ctx);
+                          },
+                          child: const Text('APAGAR AVISO', style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00E5FF),
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          icon: const Icon(Icons.send_rounded, size: 18),
+                          label: const Text('PUBLICAR AHORA', style: TextStyle(fontWeight: FontWeight.w900)),
+                          onPressed: () async {
+                            if (msgCtrl.text.trim().isEmpty) return;
+                            await FirebaseFirestore.instance
+                                .collection('system_config')
+                                .doc('broadcast_announcement')
+                                .set({
+                              'isActive': true,
+                              'message': msgCtrl.text.trim(),
+                              'type': selectedType,
+                              'actionUrl': urlCtrl.text.trim(),
+                              'updatedAt': FieldValue.serverTimestamp(),
+                            });
+                            if (ctx.mounted) Navigator.pop(ctx);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  static Widget _chip(
+      String label, String val, Color color, String current, ValueChanged<String> onTap) {
+    final sel = val == current;
+    return ChoiceChip(
+      label: Text(label),
+      selected: sel,
+      selectedColor: color.withOpacity(0.28),
+      backgroundColor: const Color(0xFF1F2937),
+      labelStyle: TextStyle(
+        color: sel ? color : Colors.white70,
+        fontWeight: FontWeight.bold,
+        fontSize: 11.5,
+      ),
+      side: BorderSide(color: sel ? color : Colors.white12),
+      onSelected: (_) => onTap(val),
     );
   }
 }
