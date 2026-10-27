@@ -24,7 +24,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
-  <!-- Firebase Web SDKs (Compatibles con Flutter Web - INTACTO) -->
+  <!-- Firebase Web SDKs (Compatibles con Flutter Web) -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
@@ -38,13 +38,10 @@
       messagingSenderId: "1056187378484",
       appId: "1:1056187378484:web:18fd0ec0a86c7c9af19361"
     };
-
-    // Inicialización nativa web antes de que Flutter monte los widgets
     firebase.initializeApp(firebaseConfig);
   </script>
   
   <style>
-    /* Ocultar superposiciones y controles nativos en Smart TVs (Tizen/WebOS) */
     video::-webkit-media-controls { display: none !important; }
     video::-webkit-media-controls-enclosure { display: none !important; }
     video::-webkit-media-controls-panel { display: none !important; }
@@ -58,7 +55,6 @@
       overflow-x: hidden;
     }
 
-    /* Degradado multicolor icónico para Logo y Acentos */
     .logo-multicolor {
       background: linear-gradient(90deg, #D946EF 0%, #9D4EDD 30%, #3B82F6 65%, #00E5FF 100%);
       background-size: 200% auto;
@@ -72,7 +68,6 @@
       100% { background-position: 200% center; }
     }
 
-    /* Animaciones de tarjetas estilo BTO al pasar el mouse */
     .bto-card {
       transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.45s ease, border-color 0.35s ease;
     }
@@ -87,7 +82,6 @@
       transform: scale(1.08) rotate(-1.5deg);
     }
 
-    /* Animación de mockups interactivos */
     .mockup-hover {
       transition: transform 0.5s ease, box-shadow 0.5s ease;
     }
@@ -114,23 +108,19 @@
 </head>
 <body class="antialiased selection:bg-cyan-400 selection:text-black">
 
-  <!-- ===================================================================== -->
-  <!-- PORTADA COMERCIAL / LANDING PAGE COMPLETA ESTILO BTO ADAPTADA         -->
-  <!-- ===================================================================== -->
   <div id="commercial-landing" class="min-h-screen flex flex-col justify-between relative">
 
-    <!-- LUCES AMBIENTALES DE FONDO -->
+    <!-- LUCES AMBIENTALES -->
     <div class="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
       <div class="absolute -top-40 left-1/4 w-[500px] h-[500px] bg-purple-700/20 rounded-full blur-[130px]"></div>
       <div class="absolute top-1/3 -right-32 w-[450px] h-[450px] bg-blue-600/15 rounded-full blur-[130px]"></div>
       <div class="absolute -bottom-40 left-10 w-[420px] h-[420px] bg-cyan-500/15 rounded-full blur-[130px]"></div>
     </div>
 
-    <!-- BARRA DE NAVEGACIÓN SUPERIOR CON PESTAÑAS FUNCIONALES -->
-    <nav class="sticky top-0 z-50 backdrop-blur-xl bg-[#070A10]/90 border-b border-purple-500/20 px-4 sm:px-8 py-3.5">
+    <!-- NAVBAR (CON ENLACES INTERNOS SUAVES) -->
+    <nav class="sticky top-0 z-50 backdrop-blur-xl bg-[#070A10]/95 border-b border-purple-500/20 px-4 sm:px-8 py-3.5">
       <div class="max-w-7xl mx-auto flex justify-between items-center">
-        <!-- Logo Multicolor Degradado -->
-        <a href="#inicio" class="flex items-center space-x-2.5 group">
+        <a href="#" class="flex items-center space-x-2.5 group">
           <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-600 via-blue-500 to-cyan-400 p-[2px] shadow-lg group-hover:scale-105 transition">
             <div class="w-full h-full bg-[#070A10] rounded-[10px] flex items-center justify-center">
               <span class="text-cyan-400 font-black text-base">▶</span>
@@ -142,7 +132,6 @@
           </div>
         </a>
 
-        <!-- Pestañas Superiores Escritorio -->
         <div class="hidden lg:flex items-center space-x-7 text-sm font-semibold text-white/90">
           <a href="#superpoderes" class="hover:text-cyan-400 transition">Superpoderes</a>
           <a href="#carrusel-pro" class="hover:text-cyan-400 transition">Tour Interactivo</a>
@@ -154,7 +143,6 @@
           </a>
         </div>
 
-        <!-- Botones de Acción Rápida -->
         <div class="flex items-center gap-2.5">
           <button onclick="launchApp()" class="bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 text-white font-extrabold px-4 py-2.5 rounded-xl shadow-lg hover:opacity-95 hover:scale-[1.03] transition text-xs sm:text-sm">
             🚀 Ingresar a la App
@@ -163,14 +151,12 @@
              class="hidden sm:inline-flex items-center gap-1.5 bg-[#121B2E] border border-cyan-400/40 text-white font-bold px-4 py-2.5 rounded-xl hover:bg-cyan-400 hover:text-black transition text-xs sm:text-sm">
             <span>💬</span> Contacto
           </a>
-          <!-- Botón Menú Móvil -->
           <button onclick="toggleMobileMenu()" aria-label="Menú" class="lg:hidden p-2 rounded-xl bg-white/5 border border-white/10 text-white">
             ☰
           </button>
         </div>
       </div>
 
-      <!-- Menú Desplegable Móvil -->
       <div id="mobile-menu" class="hidden lg:hidden mt-3 pt-3 border-t border-white/10 flex flex-col space-y-2.5 text-sm font-semibold text-white px-2 pb-2">
         <a href="#superpoderes" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">⚡ Superpoderes de la App</a>
         <a href="#carrusel-pro" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">🎯 Tour Interactivo en Vivo</a>
@@ -181,9 +167,7 @@
       </div>
     </nav>
 
-    <!-- =================================================================== -->
-    <!-- HERO SECTION + 4 TARJETAS ANIMADAS ESTILO "BTO DIGITAL"             -->
-    <!-- =================================================================== -->
+    <!-- HERO SECTION -->
     <header id="inicio" class="pt-14 pb-20 px-4 sm:px-8 max-w-7xl mx-auto w-full text-center">
       <div class="inline-flex items-center gap-2 bg-purple-950/70 border border-purple-500/40 text-white px-4 py-1.5 rounded-full text-xs font-bold tracking-wider uppercase mb-6 glow-purple">
         <span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
@@ -207,12 +191,10 @@
         </a>
       </div>
 
-      <!-- PORTAFOLIO DE 4 TARJETAS INTERACTIVAS (INSPIRADO EN BTO DIGITAL) -->
+      <!-- 4 TARJETAS INTERACTIVAS -->
       <div id="superpoderes" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 text-left pt-4">
         
-        <!-- Tarjeta 1: 0% Anuncios & Zapping -->
         <div onclick="jumpToSlide(0)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#4C1D95] via-[#1E1B4B] to-[#0B1020] border border-purple-400/30 p-6 flex flex-col justify-between min-h-[340px] relative overflow-hidden">
-          <!-- Arte UI animado al pasar el mouse -->
           <div class="card-visual bg-[#070A10]/80 border border-purple-400/30 rounded-2xl p-4 mb-5 shadow-inner">
             <div class="flex justify-between items-center mb-3">
               <span class="text-[10px] font-black text-purple-300 tracking-wider">ZAPPING TURBO</span>
@@ -238,7 +220,6 @@
           </div>
         </div>
 
-        <!-- Tarjeta 2: Asistente de Voz con IA -->
         <div onclick="jumpToSlide(1)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#0369A1] via-[#0F294A] to-[#0B1020] border border-cyan-400/35 p-6 flex flex-col justify-between min-h-[340px] relative overflow-hidden">
           <div class="card-visual bg-[#070A10]/80 border border-cyan-400/30 rounded-2xl p-4 mb-5 flex flex-col items-center justify-center h-[116px]">
             <div class="w-12 h-12 rounded-full bg-gradient-to-tr from-blue-500 to-cyan-400 flex items-center justify-center text-black text-xl font-black mic-pulse mb-2">
@@ -255,7 +236,6 @@
           </div>
         </div>
 
-        <!-- Tarjeta 3: Timeshift & DVR -->
         <div onclick="jumpToSlide(2)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#6D28D9] via-[#2E1065] to-[#0B1020] border border-fuchsia-400/30 p-6 flex flex-col justify-between min-h-[340px] relative overflow-hidden">
           <div class="card-visual bg-[#070A10]/80 border border-fuchsia-400/30 rounded-2xl p-4 mb-5">
             <div class="flex justify-between items-center mb-2">
@@ -279,7 +259,6 @@
           </div>
         </div>
 
-        <!-- Tarjeta 4: Control TV, PiP y Social Chat -->
         <div onclick="jumpToSlide(3)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#1D4ED8] via-[#172554] to-[#0B1020] border border-blue-400/35 p-6 flex flex-col justify-between min-h-[340px] relative overflow-hidden">
           <div class="card-visual bg-[#070A10]/80 border border-blue-400/30 rounded-2xl p-4 mb-5 relative h-[116px] flex flex-col justify-between">
             <div class="flex justify-between items-center">
@@ -303,9 +282,7 @@
       </div>
     </header>
 
-    <!-- =================================================================== -->
-    <!-- CARRUSEL INTERACTIVO PRO (ESTILO "BMW MOMENTUM" DE BTO DIGITAL)     -->
-    <!-- =================================================================== -->
+    <!-- CARRUSEL INTERACTIVO PRO -->
     <section id="carrusel-pro" class="py-20 px-4 sm:px-8 border-t border-white/10 bg-[#090D18]/80">
       <div class="max-w-6xl mx-auto">
         <div class="text-center max-w-3xl mx-auto mb-10">
@@ -314,10 +291,8 @@
           <p class="text-white/75 text-sm sm:text-base">Usa las flechas del carrusel para descubrir por qué miles de usuarios están migrando a nuestra tecnología.</p>
         </div>
 
-        <!-- Caja Principal del Carrusel -->
         <div class="bg-[#050811] border border-purple-500/30 rounded-[32px] p-6 sm:p-10 glow-purple relative overflow-hidden">
           
-          <!-- Cabecera del Carrusel con Flechas Circulares -->
           <div class="bg-[#0D1425] border border-white/10 rounded-2xl px-4 sm:px-8 py-4 flex items-center justify-between mb-10">
             <button onclick="prevSlide()" aria-label="Anterior" class="w-11 h-11 rounded-full border border-white/25 hover:border-cyan-400 hover:bg-cyan-400 hover:text-black text-white flex items-center justify-center font-bold text-lg transition">
               ←
@@ -330,9 +305,7 @@
             </button>
           </div>
 
-          <!-- Cuerpo Dinámico de 2 Columnas -->
           <div class="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
-            <!-- Texto Comercial -->
             <div class="lg:col-span-6 space-y-5 text-left">
               <div id="carousel-badges" class="flex flex-wrap gap-2"></div>
               <p id="carousel-subtitle" class="text-cyan-300 text-xs sm:text-sm font-bold uppercase tracking-wider"></p>
@@ -349,23 +322,17 @@
               </div>
             </div>
 
-            <!-- Mockup Visual Interactivo con Animación Hover (Sin marcas registradas) -->
             <div class="lg:col-span-6 flex justify-center">
-              <div id="carousel-visual-box" class="mockup-hover w-full max-w-md bg-gradient-to-br from-[#131C33] to-[#080C17] border border-cyan-400/35 rounded-3xl p-6 shadow-2xl">
-                <!-- Se rellena dinámicamente por JS -->
-              </div>
+              <div id="carousel-visual-box" class="mockup-hover w-full max-w-md bg-gradient-to-br from-[#131C33] to-[#080C17] border border-cyan-400/35 rounded-3xl p-6 shadow-2xl"></div>
             </div>
           </div>
 
-          <!-- Indicadores inferiores (Dots) -->
           <div class="flex justify-center items-center gap-2.5 mt-10" id="carousel-dots"></div>
         </div>
       </div>
     </section>
 
-    <!-- =================================================================== -->
-    <!-- COMPARATIVA DIRECTA: APPS OBSOLETAS VS AMEYCAR TV VIP               -->
-    <!-- =================================================================== -->
+    <!-- COMPARATIVA -->
     <section class="py-16 px-4 sm:px-8 max-w-6xl mx-auto w-full">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div class="bg-[#111522]/70 border border-red-500/20 rounded-3xl p-8">
@@ -394,18 +361,15 @@
       </div>
     </section>
 
-    <!-- =================================================================== -->
-    <!-- GUÍA INTUITIVA INTERACTIVA EN 3 PASOS POR DISPOSITIVO               -->
-    <!-- =================================================================== -->
+    <!-- GUÍA 3 PASOS -->
     <section id="guia-uso" class="py-20 px-4 sm:px-8 bg-[#0A0F1E]/70 border-t border-white/10">
       <div class="max-w-5xl mx-auto text-center">
         <span class="text-purple-400 text-xs font-extrabold uppercase tracking-widest">Configuración en Menos de 2 Minutos</span>
         <h2 class="text-3xl sm:text-5xl font-black text-white mt-2 mb-4">Guía Intuitiva de Inicio Rápido</h2>
         <p class="text-white/75 text-sm sm:text-base mb-8">Selecciona tu dispositivo para ver cómo activar tu reproductor en 3 simples pasos:</p>
 
-        <!-- Pestañas de Dispositivos -->
         <div class="flex flex-wrap justify-center gap-2.5 mb-10">
-          <button onclick="selectGuide('tv')" id="tab-tv" class="guide-tab bg-gradient-to-r from-purple-600 to-cyan-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition">
+          <button onclick="selectGuide('tv')" id="tab-tv" class="guide-tab bg-gradient-to-r from-purple-600 to-cyan-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition shadow-lg">
             📺 Smart TV (Samsung / LG / Android)
           </button>
           <button onclick="selectGuide('mobile')" id="tab-mobile" class="guide-tab bg-[#131C31] text-white/80 hover:text-white border border-white/10 font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition">
@@ -419,14 +383,11 @@
           </button>
         </div>
 
-        <!-- Contenido Dinámico de los 3 Pasos -->
         <div id="guide-steps" class="grid grid-cols-1 md:grid-cols-3 gap-6 text-left"></div>
       </div>
     </section>
 
-    <!-- =================================================================== -->
-    <!-- PLANES DE LICENCIA DE SOFTWARE VIP                                  -->
-    <!-- =================================================================== -->
+    <!-- PLANES VIP -->
     <section id="planes" class="py-24 px-4 sm:px-8 max-w-6xl mx-auto w-full">
       <div class="text-center max-w-3xl mx-auto mb-14">
         <span class="text-cyan-400 text-xs font-extrabold uppercase tracking-widest">Activación Automática 24/7 con PIN</span>
@@ -435,7 +396,6 @@
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
-        <!-- Plan Individual -->
         <div class="bto-card bg-[#0E1526] border border-white/15 p-8 rounded-3xl flex flex-col justify-between">
           <div>
             <span class="text-cyan-400 text-xs font-bold uppercase">Uso Personal</span>
@@ -456,7 +416,6 @@
           </a>
         </div>
 
-        <!-- Plan Familiar VIP (Destacado) -->
         <div class="bto-card bg-gradient-to-b from-[#2A1458] via-[#131B36] to-[#0B1020] border-2 border-cyan-400 p-8 rounded-3xl flex flex-col justify-between relative glow-purple">
           <span class="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-purple-500 via-blue-500 to-cyan-400 text-white text-[10px] font-black px-4 py-1 rounded-full uppercase tracking-widest shadow-lg whitespace-nowrap">
             ⭐ Más Elegido por Familias
@@ -480,7 +439,6 @@
           </a>
         </div>
 
-        <!-- Pase Trimestral -->
         <div class="bto-card bg-[#0E1526] border border-white/15 p-8 rounded-3xl flex flex-col justify-between">
           <div>
             <span class="text-blue-400 text-xs font-bold uppercase">Máximo Ahorro</span>
@@ -503,9 +461,7 @@
       </div>
     </section>
 
-    <!-- =================================================================== -->
-    <!-- MÉTODOS DE PAGO NACIONALES E INTERNACIONALES (CERO COMISIONES)      -->
-    <!-- =================================================================== -->
+    <!-- MÉTODOS DE PAGO -->
     <section id="pagos" class="py-20 px-4 sm:px-8 bg-[#0A0F1E]/80 border-t border-white/10">
       <div class="max-w-6xl mx-auto text-center">
         <span class="text-cyan-400 text-xs font-extrabold uppercase tracking-widest">Pagos Seguros y Entrega de PIN al Instante</span>
@@ -513,7 +469,6 @@
         <p class="text-white/75 text-sm max-w-2xl mx-auto mb-12">Haz clic en tu medio de pago preferido para solicitar los datos verificados por WhatsApp o canjea tu PIN directamente en la plataforma.</p>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 text-left">
-          <!-- Yape -->
           <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20pagar%20mi%20licencia%20de%20Ameycar%20TV%20VIP%20por%20YAPE." target="_blank" rel="noopener"
              class="bto-card bg-[#11182B] border border-purple-500/40 p-5 rounded-2xl flex flex-col justify-between">
             <div class="w-10 h-10 rounded-xl bg-purple-600/25 text-purple-300 flex items-center justify-center font-black text-lg mb-3">📱</div>
@@ -524,7 +479,6 @@
             </div>
           </a>
 
-          <!-- BCP -->
           <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20pagar%20mi%20licencia%20de%20Ameycar%20TV%20VIP%20por%20Transferencia%20BCP." target="_blank" rel="noopener"
              class="bto-card bg-[#11182B] border border-blue-500/40 p-5 rounded-2xl flex flex-col justify-between">
             <div class="w-10 h-10 rounded-xl bg-blue-600/25 text-blue-300 flex items-center justify-center font-black text-lg mb-3">🏦</div>
@@ -535,7 +489,6 @@
             </div>
           </a>
 
-          <!-- Binance Pay -->
           <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20pagar%20mi%20licencia%20de%20Ameycar%20TV%20VIP%20con%20Binance%20Pay%20(USDT)." target="_blank" rel="noopener"
              class="bto-card bg-[#11182B] border border-yellow-500/40 p-5 rounded-2xl flex flex-col justify-between">
             <div class="w-10 h-10 rounded-xl bg-yellow-500/20 text-yellow-300 flex items-center justify-center font-black text-lg mb-3">🪙</div>
@@ -546,7 +499,6 @@
             </div>
           </a>
 
-          <!-- PayPal -->
           <a href="https://wa.me/51905823660?text=%C2%A1Hola!%20Deseo%20pagar%20mi%20licencia%20de%20Ameycar%20TV%20VIP%20v%C3%ADa%20PayPal." target="_blank" rel="noopener"
              class="bto-card bg-[#11182B] border border-cyan-500/40 p-5 rounded-2xl flex flex-col justify-between">
             <div class="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-black text-lg mb-3">🌎</div>
@@ -557,7 +509,6 @@
             </div>
           </a>
 
-          <!-- Canjear PIN -->
           <button onclick="launchApp()" class="bto-card bg-gradient-to-b from-purple-900/60 to-[#11182B] border border-cyan-400 p-5 rounded-2xl flex flex-col justify-between text-left">
             <div class="w-10 h-10 rounded-xl bg-cyan-400 text-black flex items-center justify-center font-black text-lg mb-3">🔑</div>
             <div>
@@ -570,9 +521,7 @@
       </div>
     </section>
 
-    <!-- =================================================================== -->
-    <!-- CERTIFICADO LEGAL Y DECLARACIÓN DE NEUTRALIDAD TECNOLÓGICA          -->
-    <!-- =================================================================== -->
+    <!-- CERTIFICADO LEGAL -->
     <section id="certificado-legal" class="py-14 px-4 sm:px-8 border-t border-purple-900/40 bg-[#05070C]">
       <div class="max-w-6xl mx-auto">
         <div class="bg-[#0B1120] border border-cyan-500/25 rounded-3xl p-6 sm:p-8 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
@@ -600,7 +549,6 @@
           </button>
         </div>
 
-        <!-- FOOTER FINAL -->
         <div class="mt-10 pt-6 border-t border-white/10 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-white/50">
           <div class="flex items-center gap-2">
             <span class="font-black logo-multicolor text-sm">AMEYCAR TV VIP</span>
@@ -617,7 +565,7 @@
 
   </div>
 
-  <!-- MODAL DE CERTIFICADO LEGAL Y CUMPLIMIENTO DMCA -->
+  <!-- MODAL LEGAL -->
   <div id="legal-modal" class="hidden fixed inset-0 z-[9000] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
     <div class="bg-[#0D1324] border border-cyan-400/40 rounded-3xl max-w-2xl w-full p-6 sm:p-8 text-left shadow-2xl max-h-[88vh] overflow-y-auto">
       <div class="flex justify-between items-center mb-4 border-b border-white/10 pb-4">
@@ -644,9 +592,9 @@
     </div>
   </div>
 
-  <!-- BOTÓN FLOTANTE DE WHATSAPP PARA CONVERSIÓN INMEDIATA -->
+  <!-- BOTÓN FLOTANTE DE WHATSAPP REUBICADO -->
   <a id="floating-wa" href="https://wa.me/51905823660?text=%C2%A1Hola!%20Vi%20la%20web%20oficial%20de%20Ameycar%20TV%20VIP%20y%20quiero%20activar%20mi%20licencia." target="_blank" rel="noopener"
-     class="fixed bottom-5 right-5 z-40 bg-gradient-to-r from-emerald-400 to-cyan-400 text-black font-black text-xs sm:text-sm px-4 py-3 rounded-full shadow-2xl flex items-center gap-2 hover:scale-105 transition">
+     class="fixed bottom-16 right-5 z-40 bg-gradient-to-r from-emerald-400 to-cyan-400 text-black font-black text-xs sm:text-sm px-4 py-3 rounded-full shadow-2xl flex items-center gap-2 hover:scale-105 transition">
     <span class="text-base">💬</span>
     <span>Atención Directa</span>
   </a>
@@ -656,20 +604,21 @@
   <!-- ===================================================================== -->
   <div id="flutter-app-container" style="display: none; width: 100vw; height: 100vh; position: fixed; top: 0; left: 0; background: #070A10; z-index: 9999;"></div>
 
-  <!-- SCRIPTS INTERACTIVOS DE LA WEB + LANZADOR OFICIAL FLUTTER INTACTO -->
+  <!-- SCRIPTS CORREGIDOS -->
   <script>
-    // 1. Lanzador original de Flutter Web (Conservado intacto y optimizado para bloqueo de scroll)
+    // Función corregida para arrancar Flutter Web correctamente sin dejar pantalla en negro
     function launchApp() {
       window.scrollTo(0, 0);
       document.body.style.overflow = 'hidden';
       document.getElementById('commercial-landing').style.display = 'none';
       const waBtn = document.getElementById('floating-wa');
       if (waBtn) waBtn.style.display = 'none';
-      document.getElementById('flutter-app-container').style.display = 'block';
+      
+      const targetContainer = document.getElementById('flutter-app-container');
+      targetContainer.style.display = 'block';
 
       if (!window._flutterLoaded) {
         window._flutterLoaded = true;
-        const targetContainer = document.getElementById('flutter-app-container');
         
         window._flutter = {
           loader: {
@@ -690,7 +639,6 @@
       }
     }
 
-    // 2. Menú móvil y Modal Legal
     function toggleMobileMenu() {
       document.getElementById('mobile-menu').classList.toggle('hidden');
     }
@@ -701,7 +649,6 @@
       document.getElementById('legal-modal').classList.add('hidden');
     }
 
-    // 3. Datos del Carrusel Interactivo Pro
     const slides = [
       {
         topTitle: "Cero Anuncios & Zapping Instantáneo",
@@ -844,7 +791,6 @@
       document.getElementById('carrusel-pro').scrollIntoView({ behavior: 'smooth' });
     }
 
-    // 4. Guía Intuitiva por Pestañas
     const guides = {
       tv: [
         { step: "01", title: "Abre el Navegador o App TV", desc: "Ingresa a esta misma dirección web desde el navegador de tu Smart TV Samsung/LG o instala nuestra APK en Android TV." },
@@ -887,7 +833,6 @@
       `).join('');
     }
 
-    // Inicializar componentes interactivos al cargar
     renderSlide(0);
     selectGuide('tv');
   </script>
