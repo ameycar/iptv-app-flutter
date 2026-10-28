@@ -114,12 +114,3 @@ class ChannelModel {
     );
   }
 }
-```[cite: 3]
-
----
-
-### ¿Cómo integramos la experiencia intuitiva de Control Parental en la interfaz?
-
-Para que sea totalmente intuitivo al tocar una categoría bloqueada (por ejemplo, "Adultos" o cualquier otra que el usuario decida bloquear con candado), crearemos un método de validación flotante que pida el PIN de 4 dígitos antes de permitir el acceso.
-
-**¿Quieres que te proporcione el código del diálogo de PIN (`PinDialog`) y la función integrada para que la añadamos directamente a los chips de categoría y al menú de ajustes?** ¡Dímelo y te paso el bloque listo para ensamblar! 🚀
