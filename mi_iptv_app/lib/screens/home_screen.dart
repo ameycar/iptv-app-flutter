@@ -13,12 +13,14 @@ import '../services/reminder_service.dart';
 import '../services/m3u_parser_service.dart'; 
 import '../services/parental_service.dart';
 import '../services/user_customization_service.dart';
+import '../services/playback_history_service.dart';
 import '../widgets/active_reminders_dialog.dart';
 import '../widgets/epg_modal.dart';
 import '../widgets/alexa_voice_sheet.dart';
 import '../widgets/pin_dialog.dart';
 import '../widgets/rename_channel_dialog.dart';
 import '../widgets/profile_customization_sheet.dart';
+import '../widgets/continue_watching_carousel.dart';
 import 'add_playlist_screen.dart';
 import 'video_player_screen.dart';
 import 'profile_selector_screen.dart';
@@ -48,6 +50,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   Map<String, String> _customChannelAliases = {};
   Color _accentColor = const Color(0xFF00E5FF);
   String? _userAvatarUrl;
+  List<PlaybackHistoryItem> _continueWatchingItems = [];
 
   String get _currentProfileId =>
       AuthService.currentActiveProfile?.id ??
@@ -61,7 +64,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   bool get _isJefeProfile => AuthService.isFamilyAdmin;
 
-  // LÓGICA FINANCIERA: Usuarios Individuales o Jefes de Familia ven los bancos.
   bool get _canSeePaymentBanks {
     final user = AuthService.currentUser;
     if (user == null) return false;
@@ -75,6 +77,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) => _updateClock());
     _loadRemindersCount();
     _loadCustomizations();
+    _loadContinueWatching();
     _loadProfileChannelsAndPlaylists();
   }
 
@@ -83,6 +86,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _clockTimer.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadContinueWatching() async {
+    try {
+      final items = await PlaybackHistoryService.getHistory(_currentProfileId);
+      if (mounted) {
+        setState(() {
+          _continueWatchingItems = items;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadCustomizations() async {
@@ -203,6 +217,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       }
 
       await _loadCustomizations();
+      await _loadContinueWatching();
 
       if (mounted) {
         setState(() {
@@ -571,7 +586,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  void _playChannel(PlaylistItem channel) {
+  void _playChannel(PlaylistItem channel, {int? resumeAtSeconds}) {
     setState(() {
       _pipChannel = null;
     });
@@ -581,6 +596,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         builder: (context) => VideoPlayerScreen(
           item: channel,
           channels: _channels,
+          startAtSeconds: resumeAtSeconds,
           onMinimizeToPiP: (minimizedItem) {
             setState(() {
               _pipChannel = minimizedItem;
@@ -588,7 +604,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           },
         ),
       ),
-    );
+    ).then((_) {
+      _loadContinueWatching();
+      _loadRemindersCount();
+    });
   }
 
   void _openEPGModal(PlaylistItem channel) {
@@ -610,7 +629,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  // --- CONTROL PARENTAL: VALIDACIÓN ANTES DE ENTRAR A UNA CATEGORÍA ---
   Future<void> _handleCategorySelection(String categoryName) async {
     final isLocked = await ParentalService.isCategoryLocked(categoryName);
     if (isLocked) {
@@ -642,7 +660,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     });
   }
 
-  // --- RENOMBRAR CANAL INDIVIDUAL ---
   Future<void> _onChannelLongPress(PlaylistItem channel) async {
     final channelKey = channel.url.isNotEmpty ? channel.url : channel.id;
     final currentDisplayName = _customChannelAliases[channelKey] ?? channel.name;
@@ -704,7 +721,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return list;
   }
 
-  // ENGRANAJE: MENÚ MAESTRO DE CONFIGURACIÓN
   void _showSettingsMenu() {
     showModalBottomSheet(
       context: context,
@@ -826,7 +842,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  // GESTOR DE CONTROL PARENTAL DENTRO DE AJUSTES
   void _openParentalManagerDialog() async {
     final categories = _channels
         .map((c) => c.category.isEmpty ? 'General' : c.category)
@@ -1214,7 +1229,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
                 if (isHead) ...[
                   const SizedBox(height: 20),
-                  
                   const Row(
                     children: [
                       Text('🇵🇪 ', style: TextStyle(fontSize: 16)),
@@ -1222,7 +1236,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ],
                   ),
                   const SizedBox(height: 10),
-
                   _buildPaymentTile(
                     icon: Icons.phone_android,
                     color: const Color(0xFF7B2CBF),
@@ -1240,9 +1253,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     copyText: '19194759620085', 
                     context: context,
                   ),
-
                   const SizedBox(height: 20),
-
                   const Row(
                     children: [
                       Text('🌎 ', style: TextStyle(fontSize: 16)),
@@ -1250,7 +1261,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ],
                   ),
                   const SizedBox(height: 10),
-
                   _buildPaymentTile(
                     icon: Icons.currency_bitcoin,
                     color: const Color(0xFFFFD700),
@@ -1268,9 +1278,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     copyText: 'carlos_87_21@hotmail.com', 
                     context: context,
                   ),
-
                   const SizedBox(height: 20),
-
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(14),
@@ -1387,7 +1395,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildDeviceSyncStatus() {
-    // INDICADOR DUAL: Representa el celular y el TV
     bool isPhoneLinked = true; 
     bool isTvLinked = false;   
 
@@ -1659,8 +1666,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       ),
                     ),
                   ),
-
-                  // BOTÓN RENOVAR - Usa la nueva lógica _canSeePaymentBanks
                   const SizedBox(width: 8),
                   InkWell(
                     onTap: () => _showPaymentOptionsModal(context, isHead: _canSeePaymentBanks), 
@@ -1688,13 +1693,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       ),
                     ),
                   ),
-                  
                   const Spacer(),
-                  
-                  // Indicador Visual de 2 Pantallas (Celular & TV)
                   _buildDeviceSyncStatus(),
-
-                  // Botón del Perfil Activo con Avatar Personalizado
                   InkWell(
                     onTap: _switchProfile,
                     borderRadius: BorderRadius.circular(16),
@@ -1743,14 +1743,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ],
               ),
         actions: [
-          // ENGRANAJE - Menú de Configuración
           if (!_isSearching)
             IconButton(
               tooltip: 'Configuración',
               icon: const Icon(Icons.settings, color: Colors.white70),
               onPressed: _showSettingsMenu,
             ),
-            
           if (!_isSearching)
             IconButton(
               tooltip: 'Buscar contenido',
@@ -1759,7 +1757,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 setState(() => _isSearching = true);
               },
             ),
-
           if (_activeRemindersCount > 0)
             Stack(
               alignment: Alignment.center,
@@ -1812,8 +1809,37 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         ],
                       ),
                     ),
-                    // EPG DINÁMICO (Solo en Live y si hay canales)
+
+                    // CARRUSEL DINÁMICO DISNEY+: SEGUIR VIENDO (VOD)
+                    if ((_activeTab == 'movies' || _activeTab == 'series') &&
+                        _continueWatchingItems.isNotEmpty &&
+                        !_isSearching)
+                      ContinueWatchingCarousel(
+                        items: _continueWatchingItems,
+                        onItemTap: (historyItem) {
+                          // Busca el PlaylistItem original o crea una instancia temporal para reanudar
+                          final matched = _channels.firstWhere(
+                            (c) => (c.url.isNotEmpty ? c.url : c.id) == historyItem.id,
+                            orElse: () => PlaylistItem(
+                              id: historyItem.id,
+                              name: historyItem.title,
+                              url: historyItem.streamUrl,
+                              category: historyItem.category,
+                              logo: historyItem.logoUrl,
+                              isLive: false,
+                            ),
+                          );
+                          _playChannel(matched, resumeAtSeconds: historyItem.positionSeconds);
+                        },
+                        onItemRemove: (historyItem) async {
+                          await PlaybackHistoryService.removeProgress(_currentProfileId, historyItem.id);
+                          _loadContinueWatching();
+                        },
+                      ),
+
+                    // EPG DINÁMICO (Solo en Live)
                     _buildDynamicEPGBar(),
+
                     // FILTROS HORIZONTALES (Categorías con Control Parental)
                     if (categories.isNotEmpty)
                       Container(
@@ -1848,7 +1874,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         ),
                       ),
                     const SizedBox(height: 8),
-                    // LISTA DE CANALES (Con soporte para renombrado individual con LongPress)
+
+                    // LISTA DE CANALES CON RENOMBRADO LOCAL
                     Expanded(
                       child: filteredChannels.isEmpty
                           ? Center(
@@ -1951,6 +1978,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _activeTab = tabValue;
           _selectedCategory = 'Todos';
         });
+        _loadContinueWatching();
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),

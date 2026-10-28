@@ -1,20 +1,25 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../models/playlist_item.dart';
+import '../services/auth_service.dart';
+import '../services/playback_history_service.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
   final PlaylistItem item;
   final List<PlaylistItem>? channels;
   final Function(PlaylistItem)? onMinimizeToPiP;
+  final int? startAtSeconds; // Soporte para saltar directo al minuto guardado
 
   const VideoPlayerScreen({
     super.key,
     required this.item,
     this.channels,
     this.onMinimizeToPiP,
+    this.startAtSeconds,
   });
 
   @override
@@ -29,6 +34,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _hasError = false;
   String _errorMessage = '';
   bool _isCasting = false;
+  Timer? _historyTimer;
+
+  String get _currentProfileId =>
+      AuthService.currentActiveProfile?.id ??
+      AuthService.currentUser?.id ??
+      'perfil_principal';
 
   @override
   void initState() {
@@ -36,6 +47,37 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     WakelockPlus.enable(); // Mantiene la pantalla encendida
     _currentItem = widget.item;
     _initializePlayer();
+    _startHistoryTracker();
+  }
+
+  // RASTREADOR PERIÓDICO DE PROGRESO (SEGUIR VIENDO)
+  void _startHistoryTracker() {
+    _historyTimer?.cancel();
+    _historyTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _saveCurrentProgress();
+    });
+  }
+
+  Future<void> _saveCurrentProgress() async {
+    if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) return;
+    if (_currentItem.isLive) return; // Las señales en vivo no se guardan en el carrusel
+
+    final position = _videoPlayerController!.value.position.inSeconds;
+    final total = _videoPlayerController!.value.duration.inSeconds;
+
+    if (position > 10 && total > 0) {
+      final itemId = _currentItem.url.isNotEmpty ? _currentItem.url : _currentItem.id;
+      await PlaybackHistoryService.saveProgress(
+        profileId: _currentProfileId,
+        itemId: itemId,
+        title: _currentItem.name,
+        streamUrl: _currentItem.url,
+        logoUrl: _currentItem.logo,
+        positionSeconds: position,
+        totalDurationSeconds: total,
+        category: _currentItem.category,
+      );
+    }
   }
 
   Future<void> _initializePlayer() async {
@@ -56,6 +98,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       );
 
       await _videoPlayerController!.initialize();
+
+      // Si venía desde el botón "Seguir Viendo", saltamos directo a la posición
+      if (widget.startAtSeconds != null && widget.startAtSeconds! > 0 && !_currentItem.isLive) {
+        await _videoPlayerController!.seekTo(Duration(seconds: widget.startAtSeconds!));
+      }
 
       _chewieController = ChewieController(
         videoPlayerController: _videoPlayerController!,
@@ -93,6 +140,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   void _zapNextChannel() {
     if (widget.channels == null || widget.channels!.isEmpty) return;
+    _saveCurrentProgress();
     int currentIndex = widget.channels!.indexWhere((c) => c.url == _currentItem.url);
     if (currentIndex != -1 && currentIndex < widget.channels!.length - 1) {
       _switchChannel(widget.channels![currentIndex + 1]);
@@ -103,6 +151,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   void _zapPreviousChannel() {
     if (widget.channels == null || widget.channels!.isEmpty) return;
+    _saveCurrentProgress();
     int currentIndex = widget.channels!.indexWhere((c) => c.url == _currentItem.url);
     if (currentIndex > 0) {
       _switchChannel(widget.channels![currentIndex - 1]);
@@ -180,6 +229,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   @override
   void dispose() {
+    _saveCurrentProgress();
+    _historyTimer?.cancel();
     WakelockPlus.disable(); // Permite que la pantalla vuelva a apagarse normalmente
     _chewieController?.dispose();
     _videoPlayerController?.dispose();
@@ -195,6 +246,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Widget build(BuildContext context) {
     return WillPopScope(
       onWillPop: () async {
+        _saveCurrentProgress();
         if (widget.onMinimizeToPiP != null) {
           widget.onMinimizeToPiP!(_currentItem);
         }
@@ -235,6 +287,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               icon: const Icon(Icons.picture_in_picture_alt_rounded, color: Colors.white),
               tooltip: "Pantalla miniatura / Multitarea",
               onPressed: () {
+                _saveCurrentProgress();
                 if (widget.onMinimizeToPiP != null) {
                   widget.onMinimizeToPiP!(_currentItem);
                 }
