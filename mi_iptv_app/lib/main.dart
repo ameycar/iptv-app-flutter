@@ -34,6 +34,11 @@ import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
 import 'widgets/live_chat_overlay.dart';
 import 'firebase_options.dart';
+import 'services/parental_service.dart';
+import 'services/user_customization_service.dart';
+import 'widgets/pin_dialog.dart';
+import 'widgets/rename_channel_dialog.dart';
+import 'widgets/profile_customization_sheet.dart';
 
 // SERVICIO NATIVO PARA ALARMAS CON AUTO-SINTONIZACIÓN Y SOPORTE DVR
 class NotificationService {
@@ -334,6 +339,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _isPremiumToolsExpanded = false;
   String _selectedLanguage = 'Español (Latinoamérica)';
   int _customAvatarIdx = 0;
+  Map<String, String> _customChannelAliases = {};
+  Color _accentColor = const Color(0xFF00E5FF);
+  String? _userAvatarUrl;
+
+  Future<void> _loadCustomizations() async {
+    try {
+      final aliases = await UserCustomizationService.getChannelAliases();
+      final color = await UserCustomizationService.getAccentColor();
+      final avatar = await UserCustomizationService.getUserAvatar();
+      if (mounted) {
+        setState(() {
+          _customChannelAliases = aliases;
+          _accentColor = color;
+          _userAvatarUrl = avatar;
+        });
+      }
+    } catch (_) {}
+  }
 
   List<Map<String, dynamic>> _savedPlaylists = [];
   final Set<String> _favoriteChannelUrls = {};
@@ -419,6 +442,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _startAccountHardwareGuard();
     _listenToAlarmNotificationTaps();
     _startListeningRemoteTvCommands();
+    _loadCustomizations();
     _loadFavorites();
     _loadSavedChannels();
     _startCloudPlaylistsRealtimeListener();
