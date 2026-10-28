@@ -1723,6 +1723,59 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     return null;
   }
+  // --- CONTROL PARENTAL: VALIDACIÓN DE PIN AL TOCAR CATEGORÍA ---
+  Future<void> _handleCategorySelection(String categoryName) async {
+    final isLocked = await ParentalService.isCategoryLocked(categoryName);
+    if (isLocked) {
+      if (!mounted) return;
+      final enteredPin = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => PinDialog(title: 'Categoría Protegida: $categoryName'),
+      );
+
+      if (enteredPin == null) return;
+
+      final isValid = await ParentalService.verifyPin(enteredPin);
+      if (!isValid) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('PIN incorrecto. Acceso bloqueado.'),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
+        return;
+      }
+    }
+    setState(() => _selectedCategory = categoryName);
+  }
+
+  // --- RENOMBRAR CANAL INDIVIDUAL (TOQUE LARGO) ---
+  Future<void> _onChannelLongPress(ChannelModel channel) async {
+    final channelKey = channel.streamUrl.isNotEmpty ? channel.streamUrl : channel.id;
+    final currentDisplayName = _customChannelAliases[channelKey] ?? channel.name;
+
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (_) => RenameChannelDialog(
+        channelId: channelKey,
+        currentName: currentDisplayName,
+      ),
+    );
+
+    if (newName != null && mounted) {
+      await _loadCustomizations();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Nombre actualizado: "$newName"'),
+          backgroundColor: const Color(0xFF00E5FF),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
 void _openParentalManagerDialog() async {
     final categories = _channels
         .map((c) => c.groupCategory.isEmpty ? 'General' : c.groupCategory)
