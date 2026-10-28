@@ -4669,7 +4669,7 @@ void _openParentalManagerDialog() async {
           final category = _categories[index];
           final isSelected = category == _selectedCategory;
           return GestureDetector(
-            onTap: () => setState(() => _selectedCategory = category),
+            onTap: () => _handleCategorySelection(category),
             child: Container(
               margin: const EdgeInsets.symmetric(horizontal: 3),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -4729,29 +4729,17 @@ void _openParentalManagerDialog() async {
           child: InkWell(
             borderRadius: BorderRadius.circular(10),
             onTap: () => _changeChannel(channel),
-            onLongPress: () async {
-              final channelKey = channel.streamUrl.isNotEmpty ? channel.streamUrl : channel.id;
-              final currentDisplayName = _customChannelAliases[channelKey] ?? channel.name;
-
-              final newName = await showDialog<String>(
-                context: context,
-                builder: (_) => RenameChannelDialog(
-                  channelId: channelKey,
-                  currentName: currentDisplayName,
-                ),
-              );
-
-              if (newName != null && mounted) {
-                await _loadCustomizations();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Nombre actualizado: "$newName"'),
-                    backgroundColor: const Color(0xFF00E5FF),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              }
-            },
+            onLongPress: () => _onChannelLongPress(channel),
+            child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => _changeChannel(channel),
+            onLongPress: () => _onChannelLongPress(channel),
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: compactLandscape ? 8 : 12,
+                vertical: compactLandscape ? 8 : 10,
+              ),
+              child: Row(
             child: Padding(
               padding: EdgeInsets.symmetric(
                 horizontal: compactLandscape ? 8 : 12,
