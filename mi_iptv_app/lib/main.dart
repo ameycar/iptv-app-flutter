@@ -4730,17 +4730,7 @@ void _openParentalManagerDialog() async {
             borderRadius: BorderRadius.circular(10),
             onTap: () => _changeChannel(channel),
             onLongPress: () => _onChannelLongPress(channel),
-            child: InkWell(
-            borderRadius: BorderRadius.circular(10),
-            onTap: () => _changeChannel(channel),
-            onLongPress: () => _onChannelLongPress(channel),
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: compactLandscape ? 8 : 12,
-                vertical: compactLandscape ? 8 : 10,
-              ),
-              child: Row(
-            child: Padding(
+          child: Padding(
               padding: EdgeInsets.symmetric(
                 horizontal: compactLandscape ? 8 : 12,
                 vertical: compactLandscape ? 8 : 10,
