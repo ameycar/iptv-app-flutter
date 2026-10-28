@@ -11,9 +11,14 @@ import '../models/playlist_model.dart';
 import '../services/auth_service.dart';
 import '../services/reminder_service.dart';
 import '../services/m3u_parser_service.dart'; 
+import '../services/parental_service.dart';
+import '../services/user_customization_service.dart';
 import '../widgets/active_reminders_dialog.dart';
 import '../widgets/epg_modal.dart';
 import '../widgets/alexa_voice_sheet.dart';
+import '../widgets/pin_dialog.dart';
+import '../widgets/rename_channel_dialog.dart';
+import '../widgets/profile_customization_sheet.dart';
 import 'add_playlist_screen.dart';
 import 'video_player_screen.dart';
 import 'profile_selector_screen.dart';
@@ -40,6 +45,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   int _activeRemindersCount = 0;
 
   PlaylistItem? _pipChannel;
+  Map<String, String> _customChannelAliases = {};
+  Color _accentColor = const Color(0xFF00E5FF);
+  String? _userAvatarUrl;
 
   String get _currentProfileId =>
       AuthService.currentActiveProfile?.id ??
@@ -66,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _updateClock();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) => _updateClock());
     _loadRemindersCount();
+    _loadCustomizations();
     _loadProfileChannelsAndPlaylists();
   }
 
@@ -74,6 +83,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _clockTimer.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCustomizations() async {
+    try {
+      final aliases = await UserCustomizationService.getChannelAliases();
+      final color = await UserCustomizationService.getAccentColor();
+      final avatar = await UserCustomizationService.getUserAvatar();
+      if (mounted) {
+        setState(() {
+          _customChannelAliases = aliases;
+          _accentColor = color;
+          _userAvatarUrl = avatar;
+        });
+      }
+    } catch (_) {}
   }
 
   void _updateClock() {
@@ -177,6 +201,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           }
         }
       }
+
+      await _loadCustomizations();
 
       if (mounted) {
         setState(() {
@@ -584,6 +610,63 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
+  // --- CONTROL PARENTAL: VALIDACIÓN ANTES DE ENTRAR A UNA CATEGORÍA ---
+  Future<void> _handleCategorySelection(String categoryName) async {
+    final isLocked = await ParentalService.isCategoryLocked(categoryName);
+    if (isLocked) {
+      if (!mounted) return;
+      final enteredPin = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => PinDialog(title: 'Categoría Protegida: $categoryName'),
+      );
+
+      if (enteredPin == null) return;
+
+      final isValid = await ParentalService.verifyPin(enteredPin);
+      if (!isValid) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('PIN incorrecto. Acceso bloqueado.'),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    setState(() {
+      _selectedCategory = categoryName;
+    });
+  }
+
+  // --- RENOMBRAR CANAL INDIVIDUAL ---
+  Future<void> _onChannelLongPress(PlaylistItem channel) async {
+    final channelKey = channel.url.isNotEmpty ? channel.url : channel.id;
+    final currentDisplayName = _customChannelAliases[channelKey] ?? channel.name;
+
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (_) => RenameChannelDialog(
+        channelId: channelKey,
+        currentName: currentDisplayName,
+      ),
+    );
+
+    if (newName != null && mounted) {
+      await _loadCustomizations();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Nombre actualizado: "$newName"'),
+          backgroundColor: const Color(0xFF00E5FF),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   List<PlaylistItem> _getFilteredChannels() {
     var list = _channels;
 
@@ -611,10 +694,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     if (_searchFilter.trim().isNotEmpty) {
       final q = _searchFilter.toLowerCase();
-      list = list
-          .where((c) =>
-              c.name.toLowerCase().contains(q) || c.category.toLowerCase().contains(q))
-          .toList();
+      list = list.where((c) {
+        final channelKey = c.url.isNotEmpty ? c.url : c.id;
+        final displayName = (_customChannelAliases[channelKey] ?? c.name).toLowerCase();
+        return displayName.contains(q) || c.category.toLowerCase().contains(q);
+      }).toList();
     }
 
     return list;
@@ -651,11 +735,31 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               const SizedBox(height: 16),
               _buildSettingsTile(
                 icon: Icons.person,
-                color: const Color(0xFF00E5FF),
+                color: _accentColor,
                 title: 'Editar Interfaz y Perfil',
                 subtitle: 'Cambiar avatar, nombre y diseño',
                 onTap: () {
                   Navigator.pop(context);
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (_) => ProfileCustomizationSheet(
+                      onThemeChanged: () {
+                        _loadCustomizations();
+                      },
+                    ),
+                  );
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.lock_outline_rounded,
+                color: Colors.amberAccent,
+                title: 'Control Parental & PIN',
+                subtitle: 'Bloquear categorías y proteger contenido',
+                onTap: () {
+                  Navigator.pop(context);
+                  _openParentalManagerDialog();
                 },
               ),
               _buildSettingsTile(
@@ -717,6 +821,131 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
             ],
           ),
+        );
+      },
+    );
+  }
+
+  // GESTOR DE CONTROL PARENTAL DENTRO DE AJUSTES
+  void _openParentalManagerDialog() async {
+    final categories = _channels
+        .map((c) => c.category.isEmpty ? 'General' : c.category)
+        .toSet()
+        .toList();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161F36),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setParentalState) {
+            return FutureBuilder<List<String>>(
+              future: ParentalService.getLockedCategories(),
+              builder: (context, snapshot) {
+                final lockedCats = snapshot.data ?? [];
+                return Padding(
+                  padding: EdgeInsets.only(
+                    top: 20,
+                    left: 20,
+                    right: 20,
+                    bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.shield, color: Colors.amberAccent, size: 26),
+                              SizedBox(width: 10),
+                              Text(
+                                'Categorías Bloqueadas',
+                                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.white60),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Activa el candado en las categorías que requieran PIN para acceder.',
+                        style: TextStyle(color: Colors.white60, fontSize: 12),
+                      ),
+                      const SizedBox(height: 14),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 260),
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: categories.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (ctx, i) {
+                            final cat = categories[i];
+                            final isLocked = lockedCats.contains(cat);
+                            return Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1E293B),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: isLocked ? Colors.amberAccent : Colors.white10),
+                              ),
+                              child: ListTile(
+                                leading: Icon(
+                                  isLocked ? Icons.lock : Icons.lock_open,
+                                  color: isLocked ? Colors.amberAccent : Colors.white38,
+                                ),
+                                title: Text(cat, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                                trailing: Switch(
+                                  value: isLocked,
+                                  activeColor: Colors.amberAccent,
+                                  onChanged: (val) async {
+                                    await ParentalService.toggleCategoryLock(cat);
+                                    setParentalState(() {});
+                                    setState(() {});
+                                  },
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.pin, color: Colors.black),
+                        label: const Text('Cambiar o Crear PIN Parental', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.amberAccent,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () async {
+                          final pin = await showDialog<String>(
+                            context: context,
+                            builder: (_) => const PinDialog(title: 'Establecer Nuevo PIN (4 dígitos)'),
+                          );
+                          if (pin != null && pin.length == 4) {
+                            await ParentalService.setPin(pin);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('¡PIN Parental actualizado con éxito!')),
+                              );
+                            }
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
         );
       },
     );
@@ -1465,7 +1694,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   // Indicador Visual de 2 Pantallas (Celular & TV)
                   _buildDeviceSyncStatus(),
 
-                  // Botón del Perfil Activo
+                  // Botón del Perfil Activo con Avatar Personalizado
                   InkWell(
                     onTap: _switchProfile,
                     borderRadius: BorderRadius.circular(16),
@@ -1479,22 +1708,28 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         border: Border.all(
                           color: _isJefeProfile
                               ? Colors.amber
-                              : Colors.cyanAccent.withOpacity(0.5),
+                              : _accentColor.withOpacity(0.5),
                         ),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            _isJefeProfile ? Icons.shield : Icons.person,
-                            color: _isJefeProfile ? Colors.amber : Colors.cyanAccent,
-                            size: 14,
-                          ),
+                          if (_userAvatarUrl != null && _userAvatarUrl!.isNotEmpty)
+                            CircleAvatar(
+                              radius: 8,
+                              backgroundImage: NetworkImage(_userAvatarUrl!),
+                            )
+                          else
+                            Icon(
+                              _isJefeProfile ? Icons.shield : Icons.person,
+                              color: _isJefeProfile ? Colors.amber : _accentColor,
+                              size: 14,
+                            ),
                           const SizedBox(width: 4),
                           Text(
                             _currentProfileName.toUpperCase(),
                             style: TextStyle(
-                              color: _isJefeProfile ? Colors.amber : Colors.cyanAccent,
+                              color: _isJefeProfile ? Colors.amber : _accentColor,
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
                             ),
@@ -1558,8 +1793,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ],
       ),
       body: _isLoadingChannels
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF00E5FF)))
+          ? Center(
+              child: CircularProgressIndicator(color: _accentColor))
           : Stack(
               children: [
                 Column(
@@ -1579,7 +1814,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                     // EPG DINÁMICO (Solo en Live y si hay canales)
                     _buildDynamicEPGBar(),
-                    // FILTROS HORIZONTALES (Categorías)
+                    // FILTROS HORIZONTALES (Categorías con Control Parental)
                     if (categories.isNotEmpty)
                       Container(
                         height: 50,
@@ -1601,9 +1836,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                   fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
                                 ),
                                 onSelected: (val) {
-                                  setState(() {
-                                    _selectedCategory = val ? cat : 'Todos';
-                                  });
+                                  if (val) {
+                                    _handleCategorySelection(cat);
+                                  } else {
+                                    setState(() => _selectedCategory = 'Todos');
+                                  }
                                 },
                               ),
                             );
@@ -1611,7 +1848,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         ),
                       ),
                     const SizedBox(height: 8),
-                    // LISTA DE CANALES
+                    // LISTA DE CANALES (Con soporte para renombrado individual con LongPress)
                     Expanded(
                       child: filteredChannels.isEmpty
                           ? Center(
@@ -1645,6 +1882,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               itemCount: filteredChannels.length,
                               itemBuilder: (context, index) {
                                 final channel = filteredChannels[index];
+                                final channelKey = channel.url.isNotEmpty ? channel.url : channel.id;
+                                final displayName = _customChannelAliases[channelKey] ?? channel.name;
+
                                 return Container(
                                   margin: const EdgeInsets.only(bottom: 12),
                                   decoration: BoxDecoration(
@@ -1672,18 +1912,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                       ),
                                     ),
                                     title: Text(
-                                      channel.name,
+                                      displayName,
                                       style: const TextStyle(
                                           color: Colors.white,
                                           fontWeight: FontWeight.bold,
                                           fontSize: 15),
                                     ),
                                     subtitle: Text(
-                                      'Grupo: ${channel.category.isEmpty ? "General" : channel.category} • 1080p FHD',
-                                      style: const TextStyle(color: Colors.white54, fontSize: 12),
+                                      'Grupo: ${channel.category.isEmpty ? "General" : channel.category} • 1080p FHD (Mantén presionado para renombrar)',
+                                      style: const TextStyle(color: Colors.white54, fontSize: 11),
                                     ),
                                     trailing: const Icon(Icons.volume_up, color: Color(0xFF8B5CF6), size: 20),
                                     onTap: () => _playChannel(channel),
+                                    onLongPress: () => _onChannelLongPress(channel),
                                   ),
                                 );
                               },
@@ -1696,7 +1937,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
       floatingActionButton: FloatingActionButton(
         onPressed: _openVoiceAssistant,
-        backgroundColor: const Color(0xFF00E5FF),
+        backgroundColor: _accentColor,
         child: const Icon(Icons.mic, color: Colors.black, size: 28),
       ),
     );
