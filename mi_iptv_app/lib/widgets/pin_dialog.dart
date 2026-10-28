@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import '../services/parental_service.dart';
+import 'package:flutter/services.dart';
 
 class PinDialog extends StatefulWidget {
   final String title;
-  const PinDialog({Key? key, this.title = 'Control Parental'}) : super(key: key);
+  const PinDialog({super.key, required this.title});
 
   @override
   State<PinDialog> createState() => _PinDialogState();
@@ -11,8 +11,6 @@ class PinDialog extends StatefulWidget {
 
 class _PinDialogState extends State<PinDialog> {
   final TextEditingController _pinController = TextEditingController();
-  bool _hasError = false;
-  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -20,28 +18,10 @@ class _PinDialogState extends State<PinDialog> {
     super.dispose();
   }
 
-  void _validateAndSubmit() async {
+  void _submit() {
     final pin = _pinController.text.trim();
-    if (pin.length < 4) {
-      setState(() => _hasError = true);
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-      _hasError = false;
-    });
-
-    final bool isCorrect = await ParentalService.verifyPin(pin);
-
-    if (!mounted) return;
-
-    setState(() => _isLoading = false);
-
-    if (isCorrect) {
-      Navigator.pop(context, true); // Devuelve true si el PIN es correcto
-    } else {
-      setState(() => _hasError = true);
+    if (pin.length == 4) {
+      Navigator.pop(context, pin); // Devuelve el PIN ingresado
     }
   }
 
@@ -70,9 +50,10 @@ class _PinDialogState extends State<PinDialog> {
             const SizedBox(height: 16),
             Text(
               widget.title,
+              textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 20,
+                fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -80,57 +61,51 @@ class _PinDialogState extends State<PinDialog> {
             const Text(
               'Ingresa tu PIN de 4 dígitos para desbloquear',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70, fontSize: 13),
+              style: TextStyle(color: Colors.white60, fontSize: 12),
             ),
             const SizedBox(height: 20),
             TextField(
               controller: _pinController,
-              keyboardType: TextInputType.number,
+              autofocus: true,
               obscureText: true,
-              maxLength: 4,
+              keyboardType: TextInputType.number,
               textAlign: TextAlign.center,
+              maxLength: 4,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               style: const TextStyle(
                 color: Color(0xFF00E5FF),
-                fontSize: 28,
-                letterSpacing: 16,
-                fontWeight: FontWeight.w900,
+                fontSize: 24,
+                letterSpacing: 14,
+                fontWeight: FontWeight.bold,
               ),
               decoration: InputDecoration(
                 counterText: '',
+                hintText: '••••',
+                hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 14),
                 filled: true,
                 fillColor: const Color(0xFF070A10),
+                contentPadding: const EdgeInsets.symmetric(vertical: 14),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(
-                    color: _hasError ? Colors.redAccent : const Color(0xFF7C2CBF),
-                  ),
+                  borderSide: const BorderSide(color: Color(0xFF00E5FF)),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(
-                    color: _hasError ? Colors.redAccent : const Color(0xFF7C2CBF).withOpacity(0.5),
-                  ),
+                  borderSide: const BorderSide(color: Color(0xFF00E5FF)),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
                   borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2),
                 ),
               ),
-              onSubmitted: (_) => _validateAndSubmit(),
+              onSubmitted: (_) => _submit(),
             ),
-            if (_hasError) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'PIN incorrecto. Revisa e intenta de nuevo.',
-                style: TextStyle(color: Colors.redAccent, fontSize: 12),
-              ),
-            ],
             const SizedBox(height: 24),
             Row(
               children: [
                 Expanded(
                   child: TextButton(
-                    onPressed: () => Navigator.pop(context, false),
+                    onPressed: () => Navigator.pop(context, null), // Cierra sin retornar valor
                     child: const Text('Cancelar', style: TextStyle(color: Colors.white60)),
                   ),
                 ),
@@ -143,14 +118,8 @@ class _PinDialogState extends State<PinDialog> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    onPressed: _isLoading ? null : _validateAndSubmit,
-                    child: _isLoading
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
-                          )
-                        : const Text('Entrar', style: TextStyle(fontWeight: FontWeight.w900)),
+                    onPressed: _submit,
+                    child: const Text('Entrar', style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
                 ),
               ],

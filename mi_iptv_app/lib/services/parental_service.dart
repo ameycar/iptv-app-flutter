@@ -10,22 +10,22 @@ class ParentalService {
     return await prefs.setString(_pinKey, pin);
   }
 
-  // Obtener el PIN actual (null si no se ha configurado)
-  static Future<String?> getPin() async {
+  // Obtener el PIN actual (devuelve '0000' si el usuario aún no configuró uno)
+  static Future<String> getPin() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_pinKey);
+    return prefs.getString(_pinKey) ?? '0000';
   }
 
-  // Verificar si el PIN ingresado es correcto
+  // Verificar si el PIN ingresado coincide con el guardado o el defecto '0000'
   static Future<bool> verifyPin(String inputPin) async {
     final currentPin = await getPin();
-    if (currentPin == null) return true; // Si no hay PIN configurado, permite acceso
-    return currentPin == inputPin;
+    return currentPin == inputPin.trim();
   }
 
-  // Saber si existe un PIN establecido
+  // Saber si existe un PIN establecido por el usuario
   static Future<bool> hasPin() async {
-    final pin = await getPin();
+    final prefs = await SharedPreferences.getInstance();
+    final pin = prefs.getString(_pinKey);
     return pin != null && pin.isNotEmpty;
   }
 
