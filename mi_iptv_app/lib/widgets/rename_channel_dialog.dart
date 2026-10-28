@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 import '../models/channel_model.dart';
+import '../services/user_customization_service.dart';
 
 class RenameChannelDialog extends StatefulWidget {
-  final ChannelModel channel;
-  final Function(String newName) onSave;
+  final String? channelId;
+  final String? currentName;
+  final ChannelModel? channel;
+  final Function(String newName)? onSave;
 
   const RenameChannelDialog({
     Key? key,
-    required this.channel,
-    required this.onSave,
+    this.channelId,
+    this.currentName,
+    this.channel,
+    this.onSave,
   }) : super(key: key);
 
   @override
@@ -18,16 +23,52 @@ class RenameChannelDialog extends StatefulWidget {
 class _RenameChannelDialogState extends State<RenameChannelDialog> {
   late final TextEditingController _nameController;
 
+  String get _initialName {
+    if (widget.currentName != null && widget.currentName!.isNotEmpty) {
+      return widget.currentName!;
+    }
+    if (widget.channel != null) {
+      return widget.channel!.displayName.isNotEmpty 
+          ? widget.channel!.displayName 
+          : widget.channel!.name;
+    }
+    return '';
+  }
+
+  String get _originalName {
+    if (widget.channel != null) {
+      return widget.channel!.name;
+    }
+    return widget.currentName ?? '';
+  }
+
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.channel.displayName);
+    _nameController = TextEditingController(text: _initialName);
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleSave() async {
+    final newName = _nameController.text.trim();
+    if (newName.isNotEmpty) {
+      if (widget.channelId != null && widget.channelId!.isNotEmpty) {
+        await UserCustomizationService.setChannelAlias(widget.channelId!, newName);
+      }
+      if (widget.onSave != null) {
+        widget.onSave!(newName);
+      }
+      if (mounted) {
+        Navigator.pop(context, newName);
+      }
+    } else {
+      Navigator.pop(context);
+    }
   }
 
   @override
@@ -61,17 +102,20 @@ class _RenameChannelDialogState extends State<RenameChannelDialog> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Original: ${widget.channel.name}',
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white60, fontSize: 12),
-            ),
+            if (_originalName.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Original: $_originalName',
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+            ],
             const SizedBox(height: 20),
             TextField(
               controller: _nameController,
+              autofocus: true,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 16,
@@ -114,13 +158,7 @@ class _RenameChannelDialogState extends State<RenameChannelDialog> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    onPressed: () {
-                      final newName = _nameController.text.trim();
-                      if (newName.isNotEmpty) {
-                        widget.onSave(newName);
-                      }
-                      Navigator.pop(context);
-                    },
+                    onPressed: _handleSave,
                     child: const Text('Guardar', style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
                 ),
