@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/parental_service.dart';
 
 class PinDialog extends StatefulWidget {
   final String title;
@@ -11,11 +12,37 @@ class PinDialog extends StatefulWidget {
 class _PinDialogState extends State<PinDialog> {
   final TextEditingController _pinController = TextEditingController();
   bool _hasError = false;
+  bool _isLoading = false;
 
   @override
   void dispose() {
     _pinController.dispose();
     super.dispose();
+  }
+
+  void _validateAndSubmit() async {
+    final pin = _pinController.text.trim();
+    if (pin.length < 4) {
+      setState(() => _hasError = true);
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _hasError = false;
+    });
+
+    final bool isCorrect = await ParentalService.verifyPin(pin);
+
+    if (!mounted) return;
+
+    setState(() => _isLoading = false);
+
+    if (isCorrect) {
+      Navigator.pop(context, true); // Devuelve true si el PIN es correcto
+    } else {
+      setState(() => _hasError = true);
+    }
   }
 
   @override
@@ -89,6 +116,7 @@ class _PinDialogState extends State<PinDialog> {
                   borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2),
                 ),
               ),
+              onSubmitted: (_) => _validateAndSubmit(),
             ),
             if (_hasError) ...[
               const SizedBox(height: 8),
@@ -102,7 +130,7 @@ class _PinDialogState extends State<PinDialog> {
               children: [
                 Expanded(
                   child: TextButton(
-                    onPressed: () => Navigator.pop(context, null),
+                    onPressed: () => Navigator.pop(context, false),
                     child: const Text('Cancelar', style: TextStyle(color: Colors.white60)),
                   ),
                 ),
@@ -115,14 +143,14 @@ class _PinDialogState extends State<PinDialog> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    onPressed: () {
-                      if (_pinController.text.length == 4) {
-                        Navigator.pop(context, _pinController.text);
-                      } else {
-                        setState(() => _hasError = true);
-                      }
-                    },
-                    child: const Text('Entrar', style: TextStyle(fontWeight: FontWeight.w900)),
+                    onPressed: _isLoading ? null : _validateAndSubmit,
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                          )
+                        : const Text('Entrar', style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
                 ),
               ],

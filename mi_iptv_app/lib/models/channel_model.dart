@@ -13,6 +13,7 @@ class ChannelModel {
   bool isFavorite;
   final String tvgId;
   final String countryFeed;
+  final String customName; // NUEVO: Para la personalización local de nombres
 
   ChannelModel({
     required this.id,
@@ -29,7 +30,11 @@ class ChannelModel {
     this.isFavorite = false,
     this.tvgId = '',
     this.countryFeed = '',
+    this.customName = '',
   });
+
+  // Retorna el nombre personalizado si existe, de lo contrario el original
+  String get displayName => customName.trim().isNotEmpty ? customName.trim() : name;
 
   bool get isMovie => contentType == 'movie';
   bool get isSeries => contentType == 'series';
@@ -50,6 +55,7 @@ class ChannelModel {
     bool? isFavorite,
     String? tvgId,
     String? countryFeed,
+    String? customName,
   }) {
     return ChannelModel(
       id: id ?? this.id,
@@ -66,6 +72,7 @@ class ChannelModel {
       isFavorite: isFavorite ?? this.isFavorite,
       tvgId: tvgId ?? this.tvgId,
       countryFeed: countryFeed ?? this.countryFeed,
+      customName: customName ?? this.customName,
     );
   }
 
@@ -84,6 +91,7 @@ class ChannelModel {
     'isFavorite': isFavorite,
     'tvgId': tvgId,
     'countryFeed': countryFeed,
+    'customName': customName,
   };
 
   factory ChannelModel.fromMap(Map<String, dynamic> map) {
@@ -102,6 +110,16 @@ class ChannelModel {
       isFavorite: map['isFavorite'] ?? false,
       tvgId: map['tvgId'] ?? '',
       countryFeed: map['countryFeed'] ?? '',
+      customName: map['customName'] ?? '',
     );
   }
 }
+```[cite: 3]
+
+---
+
+### ¿Cómo integramos la experiencia intuitiva de Control Parental en la interfaz?
+
+Para que sea totalmente intuitivo al tocar una categoría bloqueada (por ejemplo, "Adultos" o cualquier otra que el usuario decida bloquear con candado), crearemos un método de validación flotante que pida el PIN de 4 dígitos antes de permitir el acceso.
+
+**¿Quieres que te proporcione el código del diálogo de PIN (`PinDialog`) y la función integrada para que la añadamos directamente a los chips de categoría y al menú de ajustes?** ¡Dímelo y te paso el bloque listo para ensamblar! 🚀
