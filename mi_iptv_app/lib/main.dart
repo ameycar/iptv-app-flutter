@@ -1723,7 +1723,129 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     return null;
   }
+void _openParentalManagerDialog() async {
+    final categories = _channels
+        .map((c) => c.groupCategory.isEmpty ? 'General' : c.groupCategory)
+        .toSet()
+        .toList();
 
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161F36),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setParentalState) {
+            return FutureBuilder<List<String>>(
+              future: ParentalService.getLockedCategories(),
+              builder: (context, snapshot) {
+                final lockedCats = snapshot.data ?? [];
+                return Padding(
+                  padding: EdgeInsets.only(
+                    top: 20,
+                    left: 20,
+                    right: 20,
+                    bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.shield, color: Colors.amberAccent, size: 26),
+                              SizedBox(width: 10),
+                              Text(
+                                'Categorías Bloqueadas',
+                                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.white60),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Activa el candado en las categorías que requieran PIN para acceder.',
+                        style: TextStyle(color: Colors.white60, fontSize: 12),
+                      ),
+                      const SizedBox(height: 14),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 260),
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: categories.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (ctx, i) {
+                            final cat = categories[i];
+                            final isLocked = lockedCats.contains(cat);
+                            return Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1E293B),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: isLocked ? Colors.amberAccent : Colors.white10),
+                              ),
+                              child: ListTile(
+                                leading: Icon(
+                                  isLocked ? Icons.lock : Icons.lock_open,
+                                  color: isLocked ? Colors.amberAccent : Colors.white38,
+                                ),
+                                title: Text(cat, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                                trailing: Switch(
+                                  value: isLocked,
+                                  activeColor: Colors.amberAccent,
+                                  onChanged: (val) async {
+                                    await ParentalService.toggleCategoryLock(cat);
+                                    setParentalState(() {});
+                                    setState(() {});
+                                  },
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.pin, color: Colors.black),
+                        label: const Text('Cambiar o Crear PIN Parental', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.amberAccent,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () async {
+                          final pin = await showDialog<String>(
+                            context: context,
+                            builder: (_) => const PinDialog(title: 'Establecer Nuevo PIN (4 dígitos)'),
+                          );
+                          if (pin != null && pin.length == 4) {
+                            await ParentalService.setPin(pin);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('¡PIN Parental actualizado con éxito!')),
+                              );
+                            }
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
   void _showSettingsMenu() {
     final user = AuthService.currentActiveProfile ?? AuthService.currentUser;
     showModalBottomSheet(
@@ -1846,6 +1968,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 onTap: () {
                   Navigator.pop(ctx);
                   _showAccountProfileModal();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.lock_outline_rounded,
+                color: Colors.amberAccent,
+                title: 'Control Parental & PIN',
+                subtitle: 'Bloquear categorías y proteger contenido',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openParentalManagerDialog();
                 },
               ),
               _buildSettingsTile(
@@ -4597,6 +4729,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: InkWell(
             borderRadius: BorderRadius.circular(10),
             onTap: () => _changeChannel(channel),
+            onLongPress: () async {
+              final channelKey = channel.streamUrl.isNotEmpty ? channel.streamUrl : channel.id;
+              final currentDisplayName = _customChannelAliases[channelKey] ?? channel.name;
+
+              final newName = await showDialog<String>(
+                context: context,
+                builder: (_) => RenameChannelDialog(
+                  channelId: channelKey,
+                  currentName: currentDisplayName,
+                ),
+              );
+
+              if (newName != null && mounted) {
+                await _loadCustomizations();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Nombre actualizado: "$newName"'),
+                    backgroundColor: const Color(0xFF00E5FF),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
             child: Padding(
               padding: EdgeInsets.symmetric(
                 horizontal: compactLandscape ? 8 : 12,
@@ -4611,8 +4766,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          channel.name,
+                       
+                         Text(
+  _customChannelAliases[channel.streamUrl.isNotEmpty ? channel.streamUrl : channel.id] ?? channel.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
