@@ -63,7 +63,24 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   }
 
   void _applyEqualizer(String mode) {
-    // Adaptado para mantener compatibilidad web y nativa
+    String afValue = '';
+    switch (mode) {
+      case 'Cine (Surround)': 
+        afValue = 'surround'; 
+        break;
+      case 'Voz Clara': 
+        afValue = 'equalizer=f=1000:width_type=q:width=1:g=5'; 
+        break;
+      case 'Graves Profundos': 
+        afValue = 'equalizer=f=100:width_type=q:width=1:g=10'; 
+        break;
+      case 'Música': 
+        afValue = 'equalizer=f=500:width_type=q:width=1:g=3'; 
+        break;
+      default: 
+        afValue = 'anull'; // Sonido plano original
+    }
+    player.setProperty('af', afValue);
   }
 
   void _onAudioTrackChanged() {
