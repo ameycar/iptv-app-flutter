@@ -344,7 +344,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String? _userAvatarUrl;
 
   Future<void> _loadCustomizations() async {
-    ParentalService.setCurrentUser(widget.user?.username ?? 'admin');
+    ParentalService.setCurrentUser(AuthService.currentUser?.username ?? AuthService.currentUser?.id ?? 'admin');
     try {
       final aliases = await UserCustomizationService.getChannelAliases();
       final color = await UserCustomizationService.getAccentColor();
@@ -539,12 +539,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => RemoteControlScreen(
-          channels: _channels,
-          favoriteUrls: _favoriteChannelUrls,
-          initialChannel: activeCh,
+          builder: (_) => RemoteControlScreen(
+            channels: _channels,
+            favoriteUrls: _favoriteChannelUrls,
+            initialChannel: activeCh,
+          ),
         ),
-      ),
     );
   }
 
@@ -1581,8 +1581,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
  void _changeChannel(ChannelModel ch) async {
   // --- VERIFICACIÓN DE HORA DE SUEÑO / APAGADO AUTOMÁTICO ---
-  
-    final isAdmin = widget.user?.username.toLowerCase() == 'admin' || _activeUser?.username.toLowerCase() == 'admin';
+
+    final currentUsername = AuthService.currentUser?.username?.toLowerCase() ?? '';
+    final isAdmin = currentUsername == 'admin' || AuthService.currentUser?.isAdmin == true;
     if (!isAdmin) {
       final isBedtime = await ParentalService.isSleepTimeActive();
       if (isBedtime) {

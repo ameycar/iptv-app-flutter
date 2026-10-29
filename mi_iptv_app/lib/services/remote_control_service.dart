@@ -1,9 +1,3 @@
-<<<<<<< HEAD
-import 'dart:async';
-import 'package:flutter/foundation.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'auth_service.dart';
-=======
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
@@ -156,4 +150,3 @@ class RemoteControlService {
   }
 }
 
->>>>>>> 0ac95e4df7259a8c11dbc343b80496516ec56114
