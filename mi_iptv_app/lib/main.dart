@@ -3750,17 +3750,35 @@ void _openParentalManagerDialog() async {
                       _buildSideMenuItem(Icons.live_tv, 'En Vivo', () => setState(() => _selectedSection = 'En Vivo')),
                       _buildSideMenuItem(Icons.movie, 'Películas', () => setState(() => _selectedSection = 'Películas')),
                       _buildSideMenuItem(Icons.tv, 'Series', () => setState(() => _selectedSection = 'Series')),
-                      _buildSideMenuItem(Icons.settings_remote, 'Mando TV & Cast', _openRemoteControlModalScreen),
+                if (!ParentalService.isMenuItemHiddenSync('remote'))
+                        _buildSideMenuItem(Icons.settings_remote, 'Mando TV & Cast', _openRemoteControlModalScreen),
+
                       if (!kIsWeb)
                         _buildSideMenuItem(Icons.fiber_smart_record, 'Grabaciones DVR (${DvrRecordingService.recordings.length})', _openDvrRecordingsVaultModal),
+
                       _buildSideMenuItem(Icons.alarm_on, 'Alarmas (${_activeAlarms.length})', _openActiveAlarmsManagerModal),
-                      _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
+
+                      if (AuthService.currentUser?.isVip == true && !ParentalService.isMenuItemHiddenSync('pip'))
+                        _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
+
                       _buildSideMenuItem(Icons.forum_outlined, 'Chat / Emojis Vivo', () => setState(() => _showLiveChat = !_showLiveChat)),
-                      _buildSideMenuItem(Icons.playlist_add, 'Mis Listas (${_savedPlaylists.length}/5)', _openM3uDialog),
+
+                      if (!ParentalService.isMenuItemHiddenSync('m3u'))
+                        _buildSideMenuItem(Icons.playlist_add, 'Mis Listas (${_savedPlaylists.length}/5)', _openM3uDialog),
+
                       const Divider(color: Colors.white12),
+
                       _buildSideMenuItem(Icons.confirmation_number_outlined, 'Renovar / Pagos', _showRenewSubscriptionModal),
-                      _buildSideMenuItem(Icons.card_giftcard, 'Gana +15 Días', _showReferralClubModal),
-                      _buildSideMenuItem(Icons.headset_mic, 'Soporte / CEO', _openSupportMenu),
+
+                      if (!ParentalService.isMenuItemHiddenSync('referral'))
+                        _buildSideMenuItem(Icons.card_giftcard, 'Gana +15 Días', _showReferralClubModal),
+
+                      if (!ParentalService.isMenuItemHiddenSync('support'))
+                        _buildSideMenuItem(Icons.headset_mic, 'Soporte / CEO', _openSupportMenu),
+
+                      if (!ParentalService.isMenuItemHiddenSync('parental'))
+                        _buildSideMenuItem(Icons.lock_outline_rounded, 'Control Parental', _openParentalManagerDialog),
+
                       _buildSideMenuItem(Icons.settings, 'Configuración', _showSettingsMenu),
                     ],
                   ),
