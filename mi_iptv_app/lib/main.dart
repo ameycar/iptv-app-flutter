@@ -346,6 +346,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _loadCustomizations() async {
     ParentalService.setCurrentUser(AuthService.currentUser?.username ?? AuthService.currentUser?.id ?? 'admin');
     try {
+      // Carga inmediata en el arranque para que no reaparezcan al refrescar
+      await ParentalService.getHiddenMenuItems();
+
       final aliases = await UserCustomizationService.getChannelAliases();
       final color = await UserCustomizationService.getAccentColor();
       final avatar = await UserCustomizationService.getUserAvatar();
@@ -443,7 +446,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _startAccountHardwareGuard();
     _listenToAlarmNotificationTaps();
     _startListeningRemoteTvCommands();
-    _loadCustomizations();
+   _loadCustomizations();
+    ParentalService.getHiddenMenuItems().then((_) {
+      if (mounted) setState(() {});
+    });
     _loadFavorites();
     _loadSavedChannels();
     _startCloudPlaylistsRealtimeListener();
@@ -3502,10 +3508,14 @@ void _openParentalManagerDialog() async {
         final parsed = M3USanitizerService.parseAndSanitize(res.body);
         if (parsed.isNotEmpty) {
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('saved_m3u_content', res.body);
-          await prefs.setString('saved_m3u_url', url);
-          if (playlistId != null) {
-            await prefs.setString('m3u_cache_$playlistId', res.body);
+          try {
+            await prefs.setString('saved_m3u_url', url);
+            await prefs.setString('saved_m3u_content', res.body);
+            if (playlistId != null) {
+              await prefs.setString('m3u_cache_$playlistId', res.body);
+            }
+          } catch (storageError) {
+            debugPrint('Aviso: Cuota de almacenamiento web alcanzada: $storageError');
           }
           await prefs.setInt('last_played_channel_index', 0);
 
