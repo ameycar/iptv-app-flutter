@@ -39,6 +39,7 @@ import 'services/user_customization_service.dart';
 import 'widgets/pin_dialog.dart';
 import 'widgets/rename_channel_dialog.dart';
 import 'widgets/profile_customization_sheet.dart';
+import 'services/player_settings_service.dart';
 
 // SERVICIO NATIVO PARA ALARMAS CON AUTO-SINTONIZACIÓN Y SOPORTE DVR
 class NotificationService {
@@ -348,6 +349,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       // Carga inmediata en el arranque para que no reaparezcan al refrescar
       await ParentalService.getHiddenMenuItems();
+      await PlayerSettingsService.initialize();
 
       final aliases = await UserCustomizationService.getChannelAliases();
       final color = await UserCustomizationService.getAccentColor();
@@ -1440,9 +1442,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     try {
       final targetUri = _parseStreamUri(url);
+
+      // --- INICIO INYECCIÓN DE BÚFER POR PERFIL ---
+      // Leemos el tamaño de buffer del perfil y lo pasamos a Bytes
+      final customBufferMb = PlayerSettingsService.bufferSizeNotifier.value;
+      final bufferBytes = (customBufferMb * 1024 * 1024).toInt().toString();
+
+      // Inyectamos el buffer personalizado a ExoPlayer
+      final Map<String, String> injectedHeaders = Map.from(kIsWeb ? {} : _fastStreamHeaders);
+      if (!kIsWeb) {
+        injectedHeaders['ExoPlayer-Buffer-Size'] = bufferBytes;
+        injectedHeaders['Icy-MetaData'] = '1';
+      }
+      // --- FIN INYECCIÓN ---
+
       final controller = VideoPlayerController.networkUrl(
         targetUri,
-        httpHeaders: kIsWeb ? const {} : _fastStreamHeaders,
+        httpHeaders: injectedHeaders,
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
       );
 
