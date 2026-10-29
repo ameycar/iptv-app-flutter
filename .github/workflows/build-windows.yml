@@ -1,0 +1,32 @@
+name: Compilar Windows EXE
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar entorno de Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.x' # O la versión estable que estés usando
+          channel: 'stable'
+          cache: true
+
+      - name: Instalar dependencias
+        run: flutter pub get
+
+      - name: Compilar aplicación para Windows (Release)
+        run: flutter build windows --release
+
+      - name: Subir artefacto EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: AmeycarTV-Windows-EXE
+          path: build/windows/x64/runner/Release/
