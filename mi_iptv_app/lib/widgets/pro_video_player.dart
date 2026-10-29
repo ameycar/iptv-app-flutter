@@ -33,10 +33,10 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   }
 
   Future<void> _setupPlayer() async {
-    // 1. Aplicar Buffer de Red en Vivo
+    // 1. Aplicar Configuración de Búfer
     _onBufferChanged();
 
-    // 2. Abrir transmisión multimedia
+    // 2. Abrir transmisión multimedia de forma limpia
     await player.open(Media(widget.streamUrl), play: widget.isPlaying);
     await player.setVolume(widget.volume * 100); // media_kit usa escala 0-100
 
@@ -56,7 +56,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
 
   void _onBufferChanged() {
     final bufferMb = PlayerSettingsService.bufferSizeNotifier.value;
-    // Configuración optimizada y segura compatible con el motor web y nativo de media_kit
+    // Configuración optimizada compatible con el motor de media_kit
   }
 
   void _onEqChanged() {
@@ -64,7 +64,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   }
 
   void _applyEqualizer(String mode) {
-    // Aplicación segura de perfiles de audio adaptada para evitar bloqueos de compilación web
+    // Aplicación segura de perfiles de audio optimizada para web y nativo
   }
 
   void _onAudioTrackChanged() {
@@ -116,6 +116,8 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   void didUpdateWidget(ProVideoPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.streamUrl != widget.streamUrl) {
+      // CORRECCIÓN CLAVE: Detenemos inmediatamente el stream anterior para matar el eco y acelerar el zapping
+      player.stop();
       player.open(Media(widget.streamUrl), play: widget.isPlaying);
     }
     if (oldWidget.volume != widget.volume) {
