@@ -1,9 +1,67 @@
+<<<<<<< HEAD
+import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'auth_service.dart';
+=======
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'auth_service.dart';
+class RemoteControlService {
+  static StreamSubscription? _tvCommandSub;
 
+  /// Envía un comando desde el celular hacia la TV/Chromecast
+  static Future<void> sendCommandToTv({
+    required String command,
+    Map<String, dynamic>? extraData,
+  }) async {
+    if (!AuthService.isFirebaseAvailable) return;
+    final userId = AuthService.currentUser?.id;
+    if (userId == null) return;
+
+    try {
+      await FirebaseFirestore.instance.collection('remote_sessions').doc(userId).set({
+        'command': command,
+        'extraData': extraData ?? {},
+        'timestamp': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Error enviando comando remoto a TV: $e');
+    }
+  }
+
+  /// La TV o reproductor principal se suscribe aquí para escuchar comandos del celular en tiempo real
+  static void listenToCommands({
+    required Function(String command, Map<String, dynamic> extraData) onCommandReceived,
+  }) {
+    if (!AuthService.isFirebaseAvailable) return;
+    final userId = AuthService.currentUser?.id;
+    if (userId == null) return;
+
+    _tvCommandSub?.cancel();
+    _tvCommandSub = FirebaseFirestore.instance
+        .collection('remote_sessions')
+        .doc(userId)
+        .snapshots()
+        .listen((snapshot) {
+      if (!snapshot.exists) return;
+      final data = snapshot.data() ?? {};
+      final cmd = (data['command'] ?? '').toString();
+      final extra = Map<String, dynamic>.from(data['extraData'] ?? {});
+      
+      if (cmd.isNotEmpty) {
+        onCommandReceived(cmd, extra);
+      }
+    });
+  }
+
+  static void dispose() {
+    _tvCommandSub?.cancel();
+  }
+}
+=======
 class RemoteControlService {
   static StreamSubscription? _tvCommandSub;
 
@@ -97,3 +155,5 @@ class RemoteControlService {
     _tvCommandSub = null;
   }
 }
+
+>>>>>>> 0ac95e4df7259a8c11dbc343b80496516ec56114

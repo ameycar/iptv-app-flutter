@@ -344,6 +344,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String? _userAvatarUrl;
 
   Future<void> _loadCustomizations() async {
+    ParentalService.setCurrentUser(widget.user?.username ?? 'admin');
     try {
       final aliases = await UserCustomizationService.getChannelAliases();
       final color = await UserCustomizationService.getAccentColor();
@@ -1578,7 +1579,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _changeChannel(currentList[prevIdx]);
   }
 
-  void _changeChannel(ChannelModel ch) {
+ void _changeChannel(ChannelModel ch) async {
+  // --- VERIFICACIÓN DE HORA DE SUEÑO / APAGADO AUTOMÁTICO ---
+  
+    final isAdmin = widget.user?.username.toLowerCase() == 'admin' || _activeUser?.username.toLowerCase() == 'admin';
+    if (!isAdmin) {
+      final isBedtime = await ParentalService.isSleepTimeActive();
+      if (isBedtime) {
+        if (mounted) {
+          _videoPlayerController?.pause();
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: const Color(0xFF0D1324),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: const BorderSide(color: Color(0xFF00E5FF)),
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.bedtime_rounded, color: Color(0xFF00E5FF)),
+                  SizedBox(width: 10),
+                  Text('Hora de Dormir', style: TextStyle(color: Colors.white)),
+                ],
+              ),
+              content: const Text(
+                'El horario de descanso nocturno está activo en esta cuenta. La reproducción permanecerá bloqueada hasta la mañana.',
+                style: TextStyle(color: Colors.white70),
+              ),
+              actions: [
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E5FF)),
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Entendido', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
+    }
     int realIndex = _channels.indexOf(ch);
     if (realIndex == -1) {
       realIndex = _channels.indexWhere((c) =>
@@ -1790,10 +1832,23 @@ void _openParentalManagerDialog() async {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setParentalState) {
-            return FutureBuilder<List<String>>(
-              future: ParentalService.getLockedCategories(),
-              builder: (context, snapshot) {
-                final lockedCats = snapshot.data ?? [];
+            return FutureBuilder(
+              future: Future.wait([
+                ParentalService.getLockedCategories(),
+                ParentalService.getSleepSchedule(),
+              ]),
+              builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
+                final lockedCats = (snapshot.data?[0] as List<String>?) ?? [];
+                final sleepData = (snapshot.data?[1] as Map<String, dynamic>?) ?? {
+                  'enabled': false, 'startH': 22, 'startM': 0, 'endH': 6, 'endM': 0
+                };
+
+                final sleepEnabled = sleepData['enabled'] as bool;
+                final startH = (sleepData['startH'] as int).toString().padLeft(2, '0');
+                final startM = (sleepData['startM'] as int).toString().padLeft(2, '0');
+                final endH = (sleepData['endH'] as int).toString().padLeft(2, '0');
+                final endM = (sleepData['endM'] as int).toString().padLeft(2, '0');
+
                 return Padding(
                   padding: EdgeInsets.only(
                     top: 20,
@@ -1801,95 +1856,182 @@ void _openParentalManagerDialog() async {
                     right: 20,
                     bottom: MediaQuery.of(context).viewInsets.bottom + 24,
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Row(
-                            children: [
-                              Icon(Icons.shield, color: Colors.amberAccent, size: 26),
-                              SizedBox(width: 10),
-                              Text(
-                                'Categorías Bloqueadas',
-                                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close, color: Colors.white60),
-                            onPressed: () => Navigator.pop(context),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Activa el candado en las categorías que requieran PIN para acceder.',
-                        style: TextStyle(color: Colors.white60, fontSize: 12),
-                      ),
-                      const SizedBox(height: 14),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 260),
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          itemCount: categories.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 8),
-                          itemBuilder: (ctx, i) {
-                            final cat = categories[i];
-                            final isLocked = lockedCats.contains(cat);
-                            return Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF1E293B),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: isLocked ? Colors.amberAccent : Colors.white10),
-                              ),
-                              child: ListTile(
-                                leading: Icon(
-                                  isLocked ? Icons.lock : Icons.lock_open,
-                                  color: isLocked ? Colors.amberAccent : Colors.white38,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.shield, color: Colors.amberAccent, size: 26),
+                                SizedBox(width: 10),
+                                Text(
+                                  'Control Parental en Nube',
+                                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                                 ),
-                                title: Text(cat, style: const TextStyle(color: Colors.white, fontSize: 14)),
-                                trailing: Switch(
-                                  value: isLocked,
-                                  activeColor: Colors.amberAccent,
-                                  onChanged: (val) async {
-                                    await ParentalService.toggleCategoryLock(cat);
-                                    setParentalState(() {});
-                                    setState(() {});
+                              ],
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close, color: Colors.white60),
+                              onPressed: () => Navigator.pop(context),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+
+                        // --- MÓDULO HORA DE SUEÑO / APAGADO PROGRAMADO ---
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E293B),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: sleepEnabled ? const Color(0xFF00E5FF) : Colors.white10),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(Icons.bedtime_rounded, color: sleepEnabled ? const Color(0xFF00E5FF) : Colors.white38),
+                                      const SizedBox(width: 8),
+                                      const Text(
+                                        'Hora de Sueño (Apagado)',
+                                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                                      ),
+                                    ],
+                                  ),
+                                  Switch(
+                                    value: sleepEnabled,
+                                    activeColor: const Color(0xFF00E5FF),
+                                    onChanged: (val) async {
+                                      await ParentalService.setSleepSchedule(
+                                        enabled: val,
+                                        startHour: sleepData['startH'],
+                                        startMinute: sleepData['startM'],
+                                        endHour: sleepData['endH'],
+                                        endMinute: sleepData['endM'],
+                                      );
+                                      setParentalState(() {});
+                                    },
+                                  ),
+                                ],
+                              ),
+                              Text(
+                                sleepEnabled 
+                                    ? 'Bloqueo activo de $startH:$startM a $endH:$endM.'
+                                    : 'Desactiva la reproducción automáticamente por la noche.',
+                                style: const TextStyle(color: Colors.white60, fontSize: 12),
+                              ),
+                              if (sleepEnabled) ...[
+                                const SizedBox(height: 10),
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.access_time_filled, size: 16, color: Color(0xFF00E5FF)),
+                                  label: Text(
+                                    'Configurar Horario ($startH:$startM - $endH:$endM)',
+                                    style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 12),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(color: Color(0xFF00E5FF)),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                  onPressed: () async {
+                                    final picked = await showTimePicker(
+                                      context: context,
+                                      initialTime: TimeOfDay(hour: sleepData['startH'], minute: sleepData['startM']),
+                                      helpText: 'HORA DE INICIO DEL APAGADO',
+                                    );
+                                    if (picked != null) {
+                                      await ParentalService.setSleepSchedule(
+                                        enabled: true,
+                                        startHour: picked.hour,
+                                        startMinute: picked.minute,
+                                        endHour: sleepData['endH'],
+                                        endMinute: sleepData['endM'],
+                                      );
+                                      setParentalState(() {});
+                                    }
                                   },
                                 ),
-                              ),
+                              ],
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Categorías Bloqueadas (Requieren PIN):',
+                          style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 8),
+
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 200),
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: categories.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 8),
+                            itemBuilder: (ctx, i) {
+                              final cat = categories[i];
+                              final isLocked = lockedCats.contains(cat);
+                              return Container(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF1E293B),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: isLocked ? Colors.amberAccent : Colors.white10),
+                                ),
+                                child: ListTile(
+                                  dense: true,
+                                  leading: Icon(
+                                    isLocked ? Icons.lock : Icons.lock_open,
+                                    color: isLocked ? Colors.amberAccent : Colors.white38,
+                                  ),
+                                  title: Text(cat, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                                  trailing: Switch(
+                                    value: isLocked,
+                                    activeColor: Colors.amberAccent,
+                                    onChanged: (val) async {
+                                      await ParentalService.toggleCategoryLock(cat);
+                                      setParentalState(() {});
+                                      setState(() {});
+                                    },
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.pin, color: Colors.black),
+                          label: const Text('Cambiar PIN Maestro en la Nube', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.amberAccent,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () async {
+                            final pin = await showDialog<String>(
+                              context: context,
+                              builder: (_) => const PinDialog(title: 'Nuevo PIN Parental (4 dígitos)'),
                             );
+                            if (pin != null && pin.length == 4) {
+                              await ParentalService.setPin(pin);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('PIN guardado en el perfil de la nube.')),
+                                );
+                              }
+                            }
                           },
                         ),
-                      ),
-                      const SizedBox(height: 14),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.pin, color: Colors.black),
-                        label: const Text('Cambiar o Crear PIN Parental', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.amberAccent,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        onPressed: () async {
-                          final pin = await showDialog<String>(
-                            context: context,
-                            builder: (_) => const PinDialog(title: 'Establecer Nuevo PIN (4 dígitos)'),
-                          );
-                          if (pin != null && pin.length == 4) {
-                            await ParentalService.setPin(pin);
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('¡PIN Parental actualizado con éxito!')),
-                              );
-                            }
-                          }
-                        },
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 );
               },
