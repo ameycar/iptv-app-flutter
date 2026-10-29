@@ -16,6 +16,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'models/channel_model.dart';
 import 'models/user_model.dart';
@@ -39,6 +40,7 @@ import 'services/user_customization_service.dart';
 import 'widgets/pin_dialog.dart';
 import 'widgets/rename_channel_dialog.dart';
 import 'widgets/profile_customization_sheet.dart';
+import 'widgets/pro_video_player.dart';
 import 'services/player_settings_service.dart';
 
 // SERVICIO NATIVO PARA ALARMAS CON AUTO-SINTONIZACIÓN Y SOPORTE DVR
@@ -173,6 +175,7 @@ class NotificationService {
 void main() async {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
+    MediaKit.ensureInitialized();
     try {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
@@ -3597,10 +3600,7 @@ void _openParentalManagerDialog() async {
         backgroundColor: Colors.black,
         body: Center(
           child: (_videoPlayerController != null && _videoPlayerController!.value.isInitialized)
-              ? AspectRatio(
-                  aspectRatio: _videoPlayerController!.value.aspectRatio,
-                  child: VideoPlayer(_videoPlayerController!),
-                )
+              ? ProVideoPlayer(streamUrl: _channels.isNotEmpty ? _channels[_selectedChannelIndex].streamUrl : '', volume: _currentVolume, isPlaying: _videoPlayerController?.value.isPlaying ?? false)
               : const CircularProgressIndicator(color: Color(0xFF00E5FF)),
         ),
       );
@@ -4839,10 +4839,7 @@ void _openParentalManagerDialog() async {
                             ? (_activeDvrTitle ?? 'dvr')
                             : (activeChannel?.streamUrl ?? 'video'),
                       ),
-                      child: AspectRatio(
-                        aspectRatio: _videoPlayerController!.value.aspectRatio,
-                        child: VideoPlayer(_videoPlayerController!),
-                      ),
+                      child: ProVideoPlayer(streamUrl: activeChannel?.streamUrl ?? '', volume: _currentVolume, isPlaying: _videoPlayerController?.value.isPlaying ?? false),
                     )
                   : _hasVideoError
                       ? Center(
@@ -5239,10 +5236,7 @@ void _openParentalManagerDialog() async {
                             ? (_activeDvrTitle ?? 'immersive_dvr')
                             : (activeChannel?.streamUrl ?? 'immersive_video'),
                       ),
-                      child: AspectRatio(
-                        aspectRatio: _videoPlayerController!.value.aspectRatio,
-                        child: VideoPlayer(_videoPlayerController!),
-                      ),
+                     child: ProVideoPlayer(streamUrl: activeChannel?.streamUrl ?? '', volume: _currentVolume, isPlaying: _videoPlayerController?.value.isPlaying ?? false),
                     )
                   : _buildSmoothTuningTransition(activeChannel),
             ),
