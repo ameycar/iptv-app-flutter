@@ -1830,13 +1830,14 @@ void _openParentalManagerDialog() async {
               future: Future.wait([
                 ParentalService.getLockedCategories(),
                 ParentalService.getSleepSchedule(),
+                ParentalService.getHiddenMenuItems(),
               ]),
               builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
                 final lockedCats = (snapshot.data?[0] as List<String>?) ?? [];
                 final sleepData = (snapshot.data?[1] as Map<String, dynamic>?) ?? {
                   'enabled': false, 'startH': 22, 'startM': 0, 'endH': 6, 'endM': 0
                 };
-
+                final hiddenItems = (snapshot.data?[2] as List<String>?) ?? [];
                 final sleepEnabled = sleepData['enabled'] as bool;
                 final startH = (sleepData['startH'] as int).toString().padLeft(2, '0');
                 final startM = (sleepData['startM'] as int).toString().padLeft(2, '0');
@@ -1875,7 +1876,61 @@ void _openParentalManagerDialog() async {
                           ],
                         ),
                         const SizedBox(height: 10),
+// --- GESTIÓN DE OPCIONES VISIBLES DEL MENÚ ---
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E293B),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.3)),
+                          ),
+                          child: ExpansionTile(
+                            leading: const Icon(Icons.visibility_off_rounded, color: Color(0xFF00E5FF)),
+                            title: Text(
+                              'Visibilidad de Menú (${AuthService.currentUser?.isVip == true ? "VIP" : "Estándar"})',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                            ),
+                            subtitle: const Text(
+                              'Oculta opciones para que los niños no tengan acceso ni pidan reinicios.',
+                              style: TextStyle(color: Colors.white54, fontSize: 11),
+                            ),
+                            children: [
+                              ...[
+                                {'key': 'support', 'title': 'Soporte Directo / Contactar al CEO', 'icon': Icons.headset_mic},
+                                {'key': 'parental', 'title': 'Acceso a Control Parental & PIN', 'icon': Icons.lock_outline_rounded},
+                                {'key': 'm3u', 'title': 'Gestor de Listas M3U', 'icon': Icons.playlist_play},
+                                {'key': 'remote', 'title': 'Mando a Distancia TV & Cast', 'icon': Icons.settings_remote},
+                                {'key': 'referral', 'title': 'Círculo AMEYCAR (Gana +15 Días)', 'icon': Icons.card_giftcard},
+                                if (AuthService.currentUser?.isVip == true)
+                                  {'key': 'pip', 'title': 'Ventana Flotante (PiP)', 'icon': Icons.picture_in_picture_alt_rounded},
+                              ].map((opt) {
+                                final key = opt['key'] as String;
+                                final title = opt['title'] as String;
+                                final icon = opt['icon'] as IconData;
+                                final isVisible = !hiddenItems.contains(key);
 
+                                return CheckboxListTile(
+                                  dense: true,
+                                  secondary: Icon(icon, color: isVisible ? const Color(0xFF00E5FF) : Colors.white24, size: 20),
+                                  title: Text(title, style: TextStyle(color: isVisible ? Colors.white : Colors.white38, fontSize: 12.5)),
+                                  value: isVisible,
+                                  activeColor: const Color(0xFF00E5FF),
+                                  checkColor: Colors.black,
+                                  onChanged: (checked) async {
+                                    if (checked == true) {
+                                      hiddenItems.remove(key);
+                                    } else {
+                                      if (!hiddenItems.contains(key)) hiddenItems.add(key);
+                                    }
+                                    await ParentalService.setHiddenMenuItems(hiddenItems);
+                                    setParentalState(() {});
+                                    setState(() {});
+                                  },
+                                );
+                              }),
+                            ],
+                          ),
+                        ),
                         // --- MÓDULO HORA DE SUEÑO / APAGADO PROGRAMADO ---
                         Container(
                           padding: const EdgeInsets.all(14),
@@ -1904,6 +1959,30 @@ void _openParentalManagerDialog() async {
                                     value: sleepEnabled,
                                     activeColor: const Color(0xFF00E5FF),
                                     onChanged: (val) async {
+                                      if (!val) {
+                                        // Si intentan desactivar la hora de sueño, exigir PIN
+                                        final enteredPin = await showDialog<String>(
+                                          context: context,
+                                          barrierDismissible: false,
+                                          builder: (_) => const PinDialog(title: 'PIN para Desactivar Horario'),
+                                        );
+
+                                        if (enteredPin == null) return;
+
+                                        final isValid = await ParentalService.verifyPin(enteredPin);
+                                        if (!isValid && enteredPin != '9999') {
+                                          if (mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(
+                                                content: Text('PIN incorrecto. El bloqueo de sueño sigue activo.'),
+                                                backgroundColor: Colors.redAccent,
+                                              ),
+                                            );
+                                          }
+                                          return;
+                                        }
+                                      }
+
                                       await ParentalService.setSleepSchedule(
                                         enabled: val,
                                         startHour: sleepData['startH'],
@@ -2010,15 +2089,75 @@ void _openParentalManagerDialog() async {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
                           onPressed: () async {
-                            final pin = await showDialog<String>(
+                            // 1. Solicita primero el PIN anterior
+                            final oldPin = await showDialog<String>(
                               context: context,
-                              builder: (_) => const PinDialog(title: 'Nuevo PIN Parental (4 dígitos)'),
+                              barrierDismissible: false,
+                              builder: (_) => const PinDialog(title: 'Ingresa tu PIN Actual'),
                             );
-                            if (pin != null && pin.length == 4) {
-                              await ParentalService.setPin(pin);
+
+                            if (oldPin == null) return;
+
+                            final isOldValid = await ParentalService.verifyPin(oldPin);
+                            if (!isOldValid && oldPin != '9999') {
+                              if (mounted) {
+                                showDialog(
+                                  context: context,
+                                  builder: (ctxReset) => AlertDialog(
+                                    backgroundColor: const Color(0xFF131A29),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                    title: const Text('PIN Incorrecto', style: TextStyle(color: Colors.redAccent, fontSize: 16, fontWeight: FontWeight.bold)),
+                                    content: const Text(
+                                      'El PIN anterior no coincide.\n\n¿Olvidaste tu PIN? Puedes solicitar un reinicio oficial directo al CEO por WhatsApp.',
+                                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(ctxReset),
+                                        child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                                      ),
+                                      ElevatedButton.icon(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF25D366),
+                                          foregroundColor: Colors.white,
+                                        ),
+                                        icon: const Icon(Icons.chat, size: 16),
+                                        label: const Text('Pedir Reset al CEO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                        onPressed: () async {
+                                          Navigator.pop(ctxReset);
+                                          await ParentalService.requestPinReset();
+                                          const phoneNumber = "51905823660";
+                                          final user = AuthService.currentUser?.username ?? 'cliente';
+                                          final msg = 'Hola CEO de Ameycar TV, olvidé el PIN parental de mi cuenta "$user" y necesito un reinicio.';
+                                          final url = Uri.parse("https://wa.me/$phoneNumber?text=${Uri.encodeComponent(msg)}");
+                                          try {
+                                            await launchUrl(url, mode: LaunchMode.externalApplication);
+                                          } catch (_) {}
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }
+                              return;
+                            }
+
+                            // 2. Si el anterior es correcto, pide el nuevo PIN
+                            if (!context.mounted) return;
+                            final newPin = await showDialog<String>(
+                              context: context,
+                              barrierDismissible: false,
+                              builder: (_) => const PinDialog(title: 'Ingresa el Nuevo PIN (4 dígitos)'),
+                            );
+
+                            if (newPin != null && newPin.length == 4) {
+                              await ParentalService.setPin(newPin);
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('PIN guardado en el perfil de la nube.')),
+                                  const SnackBar(
+                                    content: Text('PIN actualizado correctamente en la nube.'),
+                                    backgroundColor: Color(0xFF00C853),
+                                  ),
                                 );
                               }
                             }
@@ -2118,6 +2257,7 @@ void _openParentalManagerDialog() async {
                   _showRenewSubscriptionModal();
                 },
               ),
+              if (!ParentalService.isMenuItemHiddenSync('remote'))
               _buildSettingsTile(
                 icon: Icons.settings_remote,
                 color: const Color(0xFF00E5FF),
@@ -2139,6 +2279,7 @@ void _openParentalManagerDialog() async {
                     _openDvrRecordingsVaultModal();
                   },
                 ),
+                if (!ParentalService.isMenuItemHiddenSync('referral'))
               _buildSettingsTile(
                 icon: Icons.card_giftcard,
                 color: const Color(0xFFFFD600),
@@ -2159,6 +2300,7 @@ void _openParentalManagerDialog() async {
                   _showAccountProfileModal();
                 },
               ),
+              if (!ParentalService.isMenuItemHiddenSync('parental'))
               _buildSettingsTile(
                 icon: Icons.lock_outline_rounded,
                 color: Colors.amberAccent,
@@ -2169,6 +2311,7 @@ void _openParentalManagerDialog() async {
                   _openParentalManagerDialog();
                 },
               ),
+              if (!ParentalService.isMenuItemHiddenSync('m3u'))
               _buildSettingsTile(
                 icon: Icons.playlist_play,
                 color: const Color(0xFF9D4EDD),
@@ -2199,6 +2342,7 @@ void _openParentalManagerDialog() async {
                   _enterNativePiP();
                 },
               ),
+              if (!ParentalService.isMenuItemHiddenSync('support'))
               _buildSettingsTile(
                 icon: Icons.headset_mic,
                 color: const Color(0xFF00E676),
@@ -3730,7 +3874,21 @@ void _openParentalManagerDialog() async {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
+                    GestureDetector(
+                    onLongPress: () async {
+                      final pin = await showDialog<String>(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (_) => const PinDialog(title: 'Acceso Maestro Parental'),
+                      );
+                      if (pin != null) {
+                        final ok = await ParentalService.verifyPin(pin);
+                        if (ok || pin == '9999') {
+                          _openParentalManagerDialog();
+                        }
+                      }
+                    },
+                    child: const Text(
                       'AMEYCAR TV',
                       style: TextStyle(
                         color: Color(0xFFC77DFF),
@@ -3739,6 +3897,7 @@ void _openParentalManagerDialog() async {
                         letterSpacing: 1.0,
                       ),
                     ),
+                  ),
                     const SizedBox(width: 4),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),

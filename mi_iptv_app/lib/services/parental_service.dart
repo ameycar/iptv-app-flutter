@@ -44,7 +44,30 @@ class ParentalService {
     final currentPin = await getPin();
     return currentPin == inputPin.trim();
   }
+// Cambia el PIN verificando primero el anterior o clave maestra
+  static Future<bool> changePinWithOldPin({
+    required String oldPin,
+    required String newPin,
+  }) async {
+    final currentPin = await getPin();
+    if (oldPin.trim() != currentPin && oldPin.trim() != '9999') {
+      return false; // El PIN anterior no coincide
+    }
+    return await setPin(newPin.trim());
+  }
 
+  // Solicitud al CEO / Admin para reiniciar PIN
+  static Future<void> requestPinReset() async {
+    final uid = _currentUserId;
+    if (uid == null || uid.isEmpty) return;
+    try {
+      await _firestore.collection('pin_reset_requests').doc(uid).set({
+        'userId': uid,
+        'requestedAt': FieldValue.serverTimestamp(),
+        'status': 'pending',
+      }, SetOptions(merge: true));
+    } catch (_) {}
+  }
   // --- CATEGORÍAS BLOQUEADAS ---
   static Future<List<String>> getLockedCategories() async {
     final uid = _currentUserId;
@@ -164,5 +187,47 @@ class ParentalService {
       // Cruza la medianoche (ejemplo: 22:00 a 06:00)
       return nowMinutes >= startMinutes || nowMinutes < endMinutes;
     }
+  }
+  // --- ELEMENTOS DEL MENÚ OCULTOS (ANTI-BYPASS) ---
+  static List<String> _cachedHiddenItems = [];
+
+  static bool isMenuItemHiddenSync(String itemKey) {
+    return _cachedHiddenItems.contains(itemKey);
+  }
+
+  static Future<List<String>> getHiddenMenuItems() async {
+    final uid = _currentUserId;
+    if (uid == null || uid.isEmpty) return _cachedHiddenItems;
+    try {
+      final doc = await _firestore.collection('users').doc(uid).get();
+      if (doc.exists && doc.data()?.containsKey('hidden_menu_items') == true) {
+        final List<dynamic> list = doc.data()!['hidden_menu_items'] ?? [];
+        _cachedHiddenItems = list.map((e) => e.toString()).toList();
+        return _cachedHiddenItems;
+      }
+    } catch (_) {}
+
+    final prefs = await SharedPreferences.getInstance();
+    _cachedHiddenItems = prefs.getStringList('hidden_menu_items_$uid') ?? [];
+    return _cachedHiddenItems;
+  }
+
+  static Future<void> setHiddenMenuItems(List<String> items) async {
+    _cachedHiddenItems = List.from(items);
+    final uid = _currentUserId;
+    if (uid == null || uid.isEmpty) return;
+    try {
+      await _firestore.collection('users').doc(uid).set({
+        'hidden_menu_items': items,
+      }, SetOptions(merge: true));
+    } catch (_) {}
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('hidden_menu_items_$uid', items);
+  }
+
+  static Future<bool> isMenuItemHidden(String itemKey) async {
+    final list = await getHiddenMenuItems();
+    return list.contains(itemKey);
   }
 }
