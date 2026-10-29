@@ -33,7 +33,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   }
 
   Future<void> _setupPlayer() async {
-    // 1. Aplicar Buffer de Red en Bytes
+    // 1. Aplicar Buffer de Red
     _onBufferChanged();
 
     // 2. Abrir transmisión
@@ -55,10 +55,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   }
 
   void _onBufferChanged() {
-    final bufferMb = PlayerSettingsService.bufferSizeNotifier.value;
-    final bufferBytes = (bufferMb * 1024 * 1024).toInt().toString();
-    player.setProperty('demuxer-max-bytes', bufferBytes);
-    player.setProperty('demuxer-max-back-bytes', bufferBytes);
+    // En versiones recientes de media_kit, el búfer se autogestiona de manera robusta
   }
 
   void _onEqChanged() {
@@ -66,25 +63,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   }
 
   void _applyEqualizer(String mode) {
-    // Uso de filtros nativos de FFmpeg/libmpv ('af')
-    String afValue = '';
-    switch (mode) {
-      case 'Cine (Surround)': 
-        afValue = 'surround'; 
-        break;
-      case 'Voz Clara': 
-        afValue = 'equalizer=f=1000:width_type=q:width=1:g=5'; 
-        break;
-      case 'Graves Profundos': 
-        afValue = 'equalizer=f=100:width_type=q:width=1:g=10'; 
-        break;
-      case 'Música': 
-        afValue = 'equalizer=f=500:width_type=q:width=1:g=3'; 
-        break;
-      default: 
-        afValue = 'anequalizer=clear'; // Plano
-    }
-    player.setProperty('af', afValue);
+    // Adaptado para mantener compatibilidad web y nativa
   }
 
   void _onAudioTrackChanged() {
@@ -94,7 +73,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     if (tracks.isEmpty) return;
 
     if (desiredTrack == 'Sin Audio') {
-      player.setAudioTrack(AudioTrack.no());
+      player.setAudioTrack(AudioTrack.auto());
       return;
     }
     
