@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/epg_service.dart';
 import '../services/dvr_recording_service.dart';
+import 'advanced_player_settings_sheet.dart';
 
 class ZappingChannelOverlay extends StatefulWidget {
   final dynamic channel;
@@ -430,6 +431,23 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                         ),
                         const SizedBox(width: 5),
                       ],
+_buildCompactControlChip(
+                     icon: Icons.settings_input_component,
+                     label: 'ADV',
+                     borderColor: const Color(0xFF00E5FF).withValues(alpha: 0.6),
+                     bgColor: const Color(0xFF00E5FF).withValues(alpha: 0.2),
+                     iconColor: const Color(0xFF00E5FF),
+                     onTap: () {
+                       showModalBottomSheet(
+                         context: context,
+                         backgroundColor: Colors.transparent,
+                         isScrollControlled: true,
+                         builder: (context) => const AdvancedPlayerSettingsSheet(),
+                       );
+                     },
+                   ),
+                   const SizedBox(width: 5),
+                      
                       _buildCompactControlChip(
                         icon: Icons.skip_previous,
                         label: 'CH-',
