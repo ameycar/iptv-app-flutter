@@ -64,4 +64,3 @@ class RemoteControlScreen extends StatelessWidget {
       ),
     );
   }
-}

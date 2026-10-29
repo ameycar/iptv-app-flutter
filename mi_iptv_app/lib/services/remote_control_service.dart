@@ -55,8 +55,7 @@ class RemoteControlService {
     _tvCommandSub?.cancel();
   }
 }
-=======
-class RemoteControlService {
+
   static StreamSubscription? _tvCommandSub;
 
   // Identificador único de esta instancia/pantalla para no auto-ejecutar comandos propios
@@ -148,5 +147,5 @@ class RemoteControlService {
     _tvCommandSub?.cancel();
     _tvCommandSub = null;
   }
-}
+
 

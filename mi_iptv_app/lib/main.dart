@@ -533,17 +533,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _openRemoteControlModalScreen() {
-    final activeCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
-        ? _channels[_selectedChannelIndex]
-        : null;
-    Navigator.push(
+        Navigator.push(
       context,
-      MaterialPageRoute(
-          builder: (_) => RemoteControlScreen(
-            channels: _channels,
-            favoriteUrls: _favoriteChannelUrls,
-            initialChannel: activeCh,
-          ),
+     MaterialPageRoute(
+          builder: (_) => const RemoteControlScreen(),
         ),
     );
   }
