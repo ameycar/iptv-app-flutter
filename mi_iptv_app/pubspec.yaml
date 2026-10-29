@@ -25,7 +25,9 @@ dependencies:
   # --- NUEVAS LIBRERÍAS AGREGADAS ---
   wakelock_plus: ^1.1.4
   url_launcher: ^6.2.5
- 
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.4
+  media_kit_libs_video: ^1.3.1 
 
 dev_dependencies:
   flutter_test:
