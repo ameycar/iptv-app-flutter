@@ -67,24 +67,31 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     try {
       var platform = player.platform;
       if (platform.runtimeType.toString().contains('NativePlayer')) {
-        // Aceleración de hardware optimizada para evitar micro-tirones
+        // 1. Perfil base de ultra baja latencia nativo de libmpv (Modo TVExpress/UniTV)
+        (platform as dynamic).setProperty('profile', 'low-latency');
+
+        // 2. Aceleración máxima y multi-hilo para forzar el primer fotograma sin tirones
         (platform as dynamic).setProperty('hwdec', 'mediacodec-copy');
+        (platform as dynamic).setProperty('vd-lavc-threads', '4');
+
+        // 3. Ignorar por completo el análisis previo del stream (Arranca a ciegas)
         (platform as dynamic).setProperty('demuxer-lavf-analyzeduration', '0');
-        (platform as dynamic).setProperty('demuxer-lavf-probesize', '32768');
-        (platform as dynamic).setProperty('demuxer-lavf-o', 'fflags=+nobuffer+fastseek+flush_packets');
-        
-        // Habilitación de caché Timeshift en RAM para retroceder 15s en señales en vivo
+        (platform as dynamic).setProperty('demuxer-lavf-probesize', '8192'); // 8KB para disparo instantáneo
+
+        // 4. Habilitación de caché Timeshift en RAM para retroceder 15s en señales en vivo sin pausas iniciales
         (platform as dynamic).setProperty('cache', 'yes');
         (platform as dynamic).setProperty('cache-secs', '300'); // Hasta 5 min en memoria para timeshift
         (platform as dynamic).setProperty('cache-pause', 'no');
         (platform as dynamic).setProperty('cache-pause-initial', 'no');
-        
-        // Bloqueo de pistas ADV / audiodescripción secundaria
+        (platform as dynamic).setProperty('stream-buffer-size', '4k'); // Búfer de red microscópico
+
+        // 5. Bloqueo de pistas ADV / audiodescripción secundaria y configuración de red agresiva
+        (platform as dynamic).setProperty('network-timeout', '3');
         (platform as dynamic).setProperty('aid', '1');
         (platform as dynamic).setProperty('sid', 'no');
         (platform as dynamic).setProperty(
           'stream-lavf-o',
-          'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2',
+          'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,fflags=+nobuffer+fastseek+flush_packets',
         );
       }
     } catch (e) {
