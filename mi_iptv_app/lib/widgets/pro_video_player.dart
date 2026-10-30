@@ -31,7 +31,6 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   void initState() {
     super.initState();
     
-    // 1. Motor persistente con búfer dinámico
     final initialBufferMb = PlayerSettingsService.bufferSizeNotifier.value;
     player = Player(
       configuration: PlayerConfiguration(
@@ -55,7 +54,6 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     PlayerSettingsService.eqModeNotifier.addListener(_onEqChanged);
     PlayerSettingsService.audioTrackNotifier.addListener(_onAudioTrackChanged);
 
-    // Escucha pasiva: solo actúa si el usuario eligió un idioma específico en el menú
     _tracksSub = player.stream.tracks.listen((tracks) {
       final desired = PlayerSettingsService.audioTrackNotifier.value;
       if (desired != 'Español (Predeterminado)' && desired.isNotEmpty) {
@@ -64,32 +62,23 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     });
   }
 
-  /// Configuración de bajo nivel estilo Decodificador / TiviMate
   Future<void> _configureLowLatencyDecoder() async {
-    if (kIsWeb) return; // Protege la compilación Web de Netlify
+    if (kIsWeb) return; // Evita que Web intente compilar propiedades nativas de libmpv
     try {
-      if (player.platform is NativePlayer) {
-        final native = player.platform as NativePlayer;
-
-        // Decodificación por hardware pura (MediaCodec en Android / D3D11 en Windows)
-        await native.setProperty('hwdec', 'auto-safe');
-        
-        // CERO espera de análisis: muestra el primer fotograma apenas llega el primer paquete
-        await native.setProperty('demuxer-lavf-analyzeduration', '0');
-        await native.setProperty('demuxer-lavf-probesize', '32768');
-        await native.setProperty('demuxer-lavf-o', 'fflags=+nobuffer+fastseek+flush_packets');
-        
-        // Arranque instantáneo sin esperar a llenar todo el caché
-        await native.setProperty('cache', 'yes');
-        await native.setProperty('cache-pause', 'no');
-        await native.setProperty('cache-pause-initial', 'no');
-        
-        // Bloqueo de pistas ADV / secundarias automáticas: fija siempre la pista #1 por defecto
-        await native.setProperty('aid', '1');
-        await native.setProperty('sid', 'no');
-
-        // Reconexión automática ultrarrápida ante micro-cortes de IPTV
-        await native.setProperty(
+      // Usamos dart:io o verificación dinámica segura para evitar conflictos de stub
+      var platform = player.platform;
+      if (platform.runtimeType.toString().contains('NativePlayer')) {
+        // Inyección dinámica segura de propiedades para libmpv
+        (platform as dynamic).setProperty('hwdec', 'auto-safe');
+        (platform as dynamic).setProperty('demuxer-lavf-analyzeduration', '0');
+        (platform as dynamic).setProperty('demuxer-lavf-probesize', '32768');
+        (platform as dynamic).setProperty('demuxer-lavf-o', 'fflags=+nobuffer+fastseek+flush_packets');
+        (platform as dynamic).setProperty('cache', 'yes');
+        (platform as dynamic).setProperty('cache-pause', 'no');
+        (platform as dynamic).setProperty('cache-pause-initial', 'no');
+        (platform as dynamic).setProperty('aid', '1');
+        (platform as dynamic).setProperty('sid', 'no');
+        (platform as dynamic).setProperty(
           'stream-lavf-o',
           'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2',
         );
@@ -108,8 +97,6 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       await player.setVolume(widget.volume * 100);
       if (token != _switchToken || !mounted) return;
 
-      // En libmpv, llamar a open() sobre el mismo Player corta el stream viejo en 0ms
-      // y reutiliza el decodificador de hardware sin destruir la vista
       await player.open(
         Media(
           url,
@@ -130,10 +117,11 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   void _onBufferChanged() async {
     if (kIsWeb) return;
     try {
-      if (player.platform is NativePlayer) {
+      var platform = player.platform;
+      if (platform.runtimeType.toString().contains('NativePlayer')) {
         final mb = PlayerSettingsService.bufferSizeNotifier.value;
         final bytes = (mb * 1024 * 1024).toInt();
-        await (player.platform as NativePlayer).setProperty('demuxer-max-bytes', '$bytes');
+        await (platform as dynamic).setProperty('demuxer-max-bytes', '$bytes');
       }
     } catch (_) {}
   }
@@ -145,25 +133,27 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   void _applyEqualizer(String mode) async {
     if (kIsWeb) return;
     try {
-      if (player.platform is NativePlayer) {
-        final native = player.platform as NativePlayer;
+      var platform = player.platform;
+      if (platform.runtimeType.toString().contains('NativePlayer')) {
+        String afValue = '';
         switch (mode) {
           case 'Cine (Surround)':
-            await native.setProperty('af', 'extrastereo=m=1.8');
+            afValue = 'extrastereo=m=1.8';
             break;
           case 'Voz Clara':
-            await native.setProperty('af', 'speechnorm=e=4:r=0.0001:l=1');
+            afValue = 'speechnorm=e=4:r=0.0001:l=1';
             break;
           case 'Graves Profundos':
-            await native.setProperty('af', 'bass=g=6:f=110:w=0.6');
+            afValue = 'bass=g=6:f=110:w=0.6';
             break;
           case 'Música':
-            await native.setProperty('af', 'anequalizer');
+            afValue = 'anequalizer';
             break;
-          default: // Plano
-            await native.setProperty('af', '');
+          default:
+            afValue = '';
             break;
         }
+        await (platform as dynamic).setProperty('af', afValue);
       }
     } catch (_) {}
   }
@@ -182,7 +172,6 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       final lang = (track.language ?? '').toLowerCase();
       final title = (track.title ?? '').toLowerCase();
 
-      // Ignorar pistas de descripción visual (ADV) a menos que no haya otra
       if (title.contains('adv') || title.contains('descript')) continue;
 
       if (desiredTrack.contains('Inglés') &&
