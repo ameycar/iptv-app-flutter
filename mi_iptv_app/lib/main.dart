@@ -319,6 +319,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  // Añade esta línea con tus variables de estado en _HomeScreenState:
+final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>();
   static const MethodChannel _pipChannel = MethodChannel('ameycar.tv/pip');
 
   List<ChannelModel> _channels = [];
@@ -553,52 +555,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _seekRelativeSeconds(int deltaSeconds) async {
-    final ctrl = _videoPlayerController;
-    if (ctrl == null || !ctrl.value.isInitialized) return;
+    // Enviamos la orden de retroceso/avance directo al ProVideoPlayer activo mediante la llave
+    _playerKey.currentState?.seekRelative(deltaSeconds);
     _triggerOsdTimer();
 
-    try {
-      final currentPos = ctrl.value.position;
-      final duration = ctrl.value.duration;
-      Duration target = currentPos + Duration(seconds: deltaSeconds);
-      if (target < Duration.zero) target = Duration.zero;
-      if (duration > Duration.zero && target > duration) {
-        target = duration;
-      }
+    if (mounted) {
+      setState(() {
+        if (deltaSeconds < 0) {
+          _isBehindLive = true;
+        }
+      });
 
-      await ctrl.seekTo(target);
-      if (!ctrl.value.isPlaying) {
-        await ctrl.play();
-      }
-
-      if (mounted) {
-        setState(() {
-          if (deltaSeconds < 0) {
-            _isBehindLive = true;
-          } else if (duration > Duration.zero &&
-              (duration - target).inSeconds <= 3 &&
-              !_isPlayingDvrRecording) {
-            _isBehindLive = false;
-          }
-        });
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              deltaSeconds < 0
-                  ? '⏪ Retrocediendo ${deltaSeconds.abs()}s en el búfer...'
-                  : '⏩ Adelantando +${deltaSeconds}s...',
-            ),
-            duration: const Duration(milliseconds: 1100),
-            backgroundColor: const Color(0xFF1E293B),
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            deltaSeconds < 0
+                ? '⏪ Retrocediendo ${deltaSeconds.abs()}s...'
+                : '⏩ Adelantando +${deltaSeconds}s...',
           ),
-        );
-      }
-    } catch (e) {
-      debugPrint('Aviso Timeshift seek: $e');
+          duration: const Duration(milliseconds: 1100),
+          backgroundColor: const Color(0xFF1E293B),
+        ),
+      );
     }
   }
 
