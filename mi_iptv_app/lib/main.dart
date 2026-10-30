@@ -4675,6 +4675,7 @@ void _openParentalManagerDialog() async {
                 // Key estática: Mantiene el decodificador vivo al cambiar de canal (Zapping 0ms)
                 key: const ValueKey<String>('persistent_live_decoder'),
                 child: ProVideoPlayer(
+                  key: _playerKey,
                   streamUrl: activeChannel.streamUrl,
                   volume: _currentVolume,
                   isPlaying: !_isBehindLive,
@@ -5061,6 +5062,7 @@ void _openParentalManagerDialog() async {
               Center(
                 key: const ValueKey<String>('persistent_immersive_decoder'),
                 child: ProVideoPlayer(
+                  key: _playerKey,
                   streamUrl: activeChannel.streamUrl,
                   volume: _currentVolume,
                   isPlaying: !_isBehindLive,
