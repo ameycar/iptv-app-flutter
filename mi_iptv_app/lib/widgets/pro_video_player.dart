@@ -65,17 +65,21 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   Future<void> _configureLowLatencyDecoder() async {
     if (kIsWeb) return; // Evita que Web intente compilar propiedades nativas de libmpv
     try {
-      // Usamos dart:io o verificación dinámica segura para evitar conflictos de stub
       var platform = player.platform;
       if (platform.runtimeType.toString().contains('NativePlayer')) {
-        // Inyección dinámica segura de propiedades para libmpv
-        (platform as dynamic).setProperty('hwdec', 'auto-safe');
+        // Aceleración de hardware optimizada para evitar micro-tirones
+        (platform as dynamic).setProperty('hwdec', 'mediacodec-copy');
         (platform as dynamic).setProperty('demuxer-lavf-analyzeduration', '0');
         (platform as dynamic).setProperty('demuxer-lavf-probesize', '32768');
         (platform as dynamic).setProperty('demuxer-lavf-o', 'fflags=+nobuffer+fastseek+flush_packets');
+        
+        // Habilitación de caché Timeshift en RAM para retroceder 15s en señales en vivo
         (platform as dynamic).setProperty('cache', 'yes');
+        (platform as dynamic).setProperty('cache-secs', '300'); // Hasta 5 min en memoria para timeshift
         (platform as dynamic).setProperty('cache-pause', 'no');
         (platform as dynamic).setProperty('cache-pause-initial', 'no');
+        
+        // Bloqueo de pistas ADV / audiodescripción secundaria
         (platform as dynamic).setProperty('aid', '1');
         (platform as dynamic).setProperty('sid', 'no');
         (platform as dynamic).setProperty(
@@ -188,9 +192,12 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
 
   void play() => player.play();
   void pause() => player.pause();
+
+  // Control de avance y retroceso en vivo con resguardo de posición cero
   void seekRelative(int seconds) {
-    final target = player.state.position + Duration(seconds: seconds);
-    player.seek(target);
+    final currentPos = player.state.position;
+    final target = currentPos + Duration(seconds: seconds);
+    player.seek(target < Duration.zero ? Duration.zero : target);
   }
 
   @override
