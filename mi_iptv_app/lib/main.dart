@@ -1393,10 +1393,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return targetUri;
   }
 
-  void _initializeVideo(String rawUrl) async {
+ void _initializeVideo(String rawUrl) async {
     if (!mounted) return;
     final url = rawUrl.trim();
-    final currentToken = ++_zappingToken;
+    ++_zappingToken;
+
+    // 1. Destruimos cualquier controlador viejo para que NUNCA suene en segundo plano
+    final oldController = _videoPlayerController;
+    _videoPlayerController = null;
+    _disposeControllerInBackground(oldController);
+
+    // 2. Vaciamos el pool antiguo para liberar el 100% del ancho de banda al canal actual
+    if (_prebufferedPool.isNotEmpty) {
+      for (final pre in _prebufferedPool.values) {
+        _disposeControllerInBackground(pre);
+      }
+      _prebufferedPool.clear();
+    }
+    _prebufferingInProgress.clear();
 
     if (url.isEmpty) {
       setState(() {
@@ -1406,171 +1420,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final preloaded = _prebufferedPool.remove(url);
-    if (preloaded != null && preloaded.value.isInitialized) {
-      final oldController = _videoPlayerController;
-      _videoPlayerController = preloaded;
-      setState(() {
-        _isVideoLoading = false;
-        _hasVideoError = false;
-        _isBehindLive = false;
-        _isPlayingDvrRecording = false;
-        _activeDvrTitle = null;
-      });
-
-      _disposeControllerInBackground(oldController);
-
-      try {
-        await preloaded.setVolume(_currentVolume);
-        await preloaded.play();
-      } catch (_) {}
-
-      _warmUpAdjacentChannels();
-      return;
-    } else if (preloaded != null) {
-      _disposeControllerInBackground(preloaded);
-    }
-
+    // 3. Pase directo e instantáneo en 0ms a ProVideoPlayer (estilo TiviMate)
     setState(() {
-      _isVideoLoading = true;
+      _isVideoLoading = false;
       _hasVideoError = false;
       _isBehindLive = false;
       _isPlayingDvrRecording = false;
       _activeDvrTitle = null;
     });
-
-    final oldController = _videoPlayerController;
-    _videoPlayerController = null;
-    _disposeControllerInBackground(oldController);
-
-    try {
-      final targetUri = _parseStreamUri(url);
-
-      // --- INICIO INYECCIÓN DE BÚFER POR PERFIL ---
-      // Leemos el tamaño de buffer del perfil y lo pasamos a Bytes
-      final customBufferMb = PlayerSettingsService.bufferSizeNotifier.value;
-      final bufferBytes = (customBufferMb * 1024 * 1024).toInt().toString();
-
-      // Inyectamos el buffer personalizado a ExoPlayer
-      final Map<String, String> injectedHeaders = Map.from(kIsWeb ? {} : _fastStreamHeaders);
-      if (!kIsWeb) {
-        injectedHeaders['ExoPlayer-Buffer-Size'] = bufferBytes;
-        injectedHeaders['Icy-MetaData'] = '1';
-      }
-      // --- FIN INYECCIÓN ---
-
-      final controller = VideoPlayerController.networkUrl(
-        targetUri,
-        httpHeaders: injectedHeaders,
-        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-      );
-
-      await controller.initialize();
-
-      if (!mounted || currentToken != _zappingToken) {
-        _disposeControllerInBackground(controller);
-        return;
-      }
-
-      _videoPlayerController = controller;
-      await _videoPlayerController!.setVolume(_currentVolume);
-      await _videoPlayerController!.play();
-      await _videoPlayerController!.setLooping(true);
-
-      if (mounted && currentToken == _zappingToken) {
-        setState(() {
-          _isVideoLoading = false;
-          _hasVideoError = false;
-        });
-        _warmUpAdjacentChannels();
-      }
-    } catch (e) {
-      debugPrint('Error reproduciendo stream ($url): $e');
-      if (mounted && currentToken == _zappingToken) {
-        setState(() {
-          _isVideoLoading = false;
-          _hasVideoError = true;
-        });
-      }
-    }
   }
 
   void _warmUpAdjacentChannels() {
-    if (!mounted || kIsWeb) return;
-    final list = _filteredChannels;
-    if (list.length <= 1) return;
-
-    final activeCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
-        ? _channels[_selectedChannelIndex]
-        : null;
-    if (activeCh == null) return;
-
-    final curIdx = list.indexOf(activeCh);
-    if (curIdx == -1) return;
-
-    final nextIdx = (curIdx + 1) % list.length;
-    final prevIdx = (curIdx - 1 < 0) ? list.length - 1 : curIdx - 1;
-
-    final nextUrl = list[nextIdx].streamUrl.trim();
-    final prevUrl = list[prevIdx].streamUrl.trim();
-    final activeUrl = activeCh.streamUrl.trim();
-
-    final desiredUrls = <String>{
-      if (nextUrl.isNotEmpty && nextUrl != activeUrl) nextUrl,
-      if (prevUrl.isNotEmpty && prevUrl != activeUrl) prevUrl,
-    };
-
-    final existingKeys = _prebufferedPool.keys.toList();
-    for (final key in existingKeys) {
-      if (!desiredUrls.contains(key)) {
-        final oldPre = _prebufferedPool.remove(key);
-        _disposeControllerInBackground(oldPre);
-      }
-    }
-
-    for (final targetUrl in desiredUrls) {
-      if (_prebufferedPool.containsKey(targetUrl) ||
-          _prebufferingInProgress.contains(targetUrl)) {
-        continue;
-      }
-
-      _prebufferingInProgress.add(targetUrl);
-      Future.microtask(() async {
-        try {
-          final uri = _parseStreamUri(targetUrl);
-          final preController = VideoPlayerController.networkUrl(
-            uri,
-            httpHeaders: _fastStreamHeaders,
-            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-          );
-          await preController.initialize();
-          await preController.setVolume(0.0);
-          await preController.setLooping(true);
-          await preController.play();
-          await Future.delayed(const Duration(milliseconds: 100));
-          await preController.pause();
-
-          _prebufferingInProgress.remove(targetUrl);
-
-          if (!mounted) {
-            _disposeControllerInBackground(preController);
-            return;
-          }
-
-          final currentActive = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
-              ? _channels[_selectedChannelIndex].streamUrl.trim()
-              : '';
-          if (targetUrl == currentActive) {
-            _disposeControllerInBackground(preController);
-            return;
-          }
-
-          _prebufferedPool[targetUrl] = preController;
-        } catch (_) {
-          _prebufferingInProgress.remove(targetUrl);
-        }
-      });
-    }
+    // Desactivado: ProVideoPlayer maneja su propio caché nativo en anillo de baja latencia
   }
 
   void _nextChannel() {
@@ -1597,9 +1458,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _changeChannel(currentList[prevIdx]);
   }
 
- void _changeChannel(ChannelModel ch) async {
-  // --- VERIFICACIÓN DE HORA DE SUEÑO / APAGADO AUTOMÁTICO ---
-
+  void _changeChannel(ChannelModel ch) async {
+    // --- VERIFICACIÓN DE HORA DE SUEÑO / APAGADO AUTOMÁTICO ---
     final currentUsername = AuthService.currentUser?.username?.toLowerCase() ?? '';
     final isAdmin = currentUsername == 'admin' || AuthService.currentUser?.isAdmin == true;
     if (!isAdmin) {
@@ -1640,6 +1500,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return;
       }
     }
+
     int realIndex = _channels.indexOf(ch);
     if (realIndex == -1) {
       realIndex = _channels.indexWhere((c) =>
@@ -1652,19 +1513,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     final targetUrl = ch.streamUrl.trim();
-    final isReadyInPool = _prebufferedPool.containsKey(targetUrl) &&
-        (_prebufferedPool[targetUrl]?.value.isInitialized ?? false);
 
+    // Cambio en caliente sin bloquear la pantalla con _isVideoLoading = true
     setState(() {
       _selectedChannelIndex = realIndex;
       _showOsd = true;
+      _isVideoLoading = false;
       _hasVideoError = false;
       _isBehindLive = false;
       _isPlayingDvrRecording = false;
       _activeDvrTitle = null;
-      if (!isReadyInPool) {
-        _isVideoLoading = true;
-      }
     });
 
     _triggerOsdTimer();
@@ -3599,8 +3457,12 @@ void _openParentalManagerDialog() async {
       return Scaffold(
         backgroundColor: Colors.black,
         body: Center(
-          child: (_videoPlayerController != null && _videoPlayerController!.value.isInitialized)
-              ? ProVideoPlayer(streamUrl: _channels.isNotEmpty ? _channels[_selectedChannelIndex].streamUrl : '', volume: _currentVolume, isPlaying: _videoPlayerController?.value.isPlaying ?? false)
+          child: (_channels.isNotEmpty)
+              ? ProVideoPlayer(
+                  streamUrl: _channels[_selectedChannelIndex].streamUrl,
+                  volume: _currentVolume,
+                  isPlaying: !_isBehindLive,
+                )
               : const CircularProgressIndicator(color: Color(0xFF00E5FF)),
         ),
       );
@@ -4810,8 +4672,7 @@ void _openParentalManagerDialog() async {
   Widget _buildVideoPlayerSection(ChannelModel? activeChannel, {bool fillAvailableHeight = false}) {
     final isReady = !_isVideoLoading &&
         !_hasVideoError &&
-        _videoPlayerController != null &&
-        _videoPlayerController!.value.isInitialized;
+        (activeChannel != null && activeChannel.streamUrl.trim().isNotEmpty);
 
     final safeChannelId = (activeChannel?.name ?? 'general').replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
 
@@ -4830,40 +4691,39 @@ void _openParentalManagerDialog() async {
         color: const Color(0xFF070A10),
         child: Stack(
           children: [
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 140),
-              child: isReady
-                  ? Center(
-                      key: ValueKey<String>(
-                        _isPlayingDvrRecording
-                            ? (_activeDvrTitle ?? 'dvr')
-                            : (activeChannel?.streamUrl ?? 'video'),
-                      ),
-                      child: ProVideoPlayer(streamUrl: activeChannel?.streamUrl ?? '', volume: _currentVolume, isPlaying: _videoPlayerController?.value.isPlaying ?? false),
-                    )
-                  : _hasVideoError
-                      ? Center(
-                          key: const ValueKey<String>('error'),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(Icons.cloud_off, color: Colors.white38, size: 36),
-                              const SizedBox(height: 6),
-                              const Text('Señal no disponible temporalmente', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                              const SizedBox(height: 8),
-                              ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
-                                onPressed: () {
-                                  if (activeChannel != null) _initializeVideo(activeChannel.streamUrl);
-                                },
-                                icon: const Icon(Icons.refresh, size: 16, color: Colors.white),
-                                label: const Text('Reintentar', style: TextStyle(color: Colors.white, fontSize: 11)),
-                              ),
-                            ],
-                          ),
-                        )
-                      : _buildSmoothTuningTransition(activeChannel),
-            ),
+            if (isReady)
+              Center(
+                // Key estática: Mantiene el decodificador vivo al cambiar de canal (Zapping 0ms)
+                key: const ValueKey<String>('persistent_live_decoder'),
+                child: ProVideoPlayer(
+                  streamUrl: activeChannel.streamUrl,
+                  volume: _currentVolume,
+                  isPlaying: !_isBehindLive,
+                ),
+              )
+            else if (_hasVideoError)
+              Center(
+                key: const ValueKey<String>('error'),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.cloud_off, color: Colors.white38, size: 36),
+                    const SizedBox(height: 6),
+                    const Text('Señal no disponible temporalmente', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    const SizedBox(height: 8),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B2CBF)),
+                      onPressed: () {
+                        if (activeChannel != null) _initializeVideo(activeChannel.streamUrl);
+                      },
+                      icon: const Icon(Icons.refresh, size: 16, color: Colors.white),
+                      label: const Text('Reintentar', style: TextStyle(color: Colors.white, fontSize: 11)),
+                    ),
+                  ],
+                ),
+              )
+            else
+              _buildSmoothTuningTransition(activeChannel),
 
             _buildActiveRecordingTopBadge(),
 
@@ -4880,21 +4740,14 @@ void _openParentalManagerDialog() async {
                 channel: activeChannel,
                 channelIndex: _selectedChannelIndex,
                 totalChannels: _channels.length,
-                isPlaying: _videoPlayerController != null && _videoPlayerController!.value.isPlaying,
+                isPlaying: !_isBehindLive,
                 isBehindLive: _isBehindLive,
                 isPlayingDvrRecording: _isPlayingDvrRecording,
                 dvrRecordingTitle: _activeDvrTitle,
                 onPlayPause: () {
-                  if (_videoPlayerController != null) {
-                    setState(() {
-                      if (_videoPlayerController!.value.isPlaying) {
-                        _videoPlayerController!.pause();
-                        _isBehindLive = true;
-                      } else {
-                        _videoPlayerController!.play();
-                      }
-                    });
-                  }
+                  setState(() {
+                    _isBehindLive = !_isBehindLive;
+                  });
                 },
                 onNext: _nextChannel,
                 onPrevious: _previousChannel,
@@ -4936,7 +4789,6 @@ void _openParentalManagerDialog() async {
       ),
     );
   }
-
   Widget _buildMiniPlayerPillButton({
     required IconData icon,
     required String label,
@@ -5210,8 +5062,7 @@ void _openParentalManagerDialog() async {
   Widget _buildImmersivePlayer(ChannelModel? activeChannel) {
     final isReady = !_isVideoLoading &&
         !_hasVideoError &&
-        _videoPlayerController != null &&
-        _videoPlayerController!.value.isInitialized;
+        (activeChannel != null && activeChannel.streamUrl.trim().isNotEmpty);
 
     final safeChannelId = (activeChannel?.name ?? 'general').replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
 
@@ -5227,19 +5078,17 @@ void _openParentalManagerDialog() async {
         backgroundColor: const Color(0xFF070A10),
         body: Stack(
           children: [
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 140),
-              child: isReady
-                  ? Center(
-                      key: ValueKey<String>(
-                        _isPlayingDvrRecording
-                            ? (_activeDvrTitle ?? 'immersive_dvr')
-                            : (activeChannel?.streamUrl ?? 'immersive_video'),
-                      ),
-                     child: ProVideoPlayer(streamUrl: activeChannel?.streamUrl ?? '', volume: _currentVolume, isPlaying: _videoPlayerController?.value.isPlaying ?? false),
-                    )
-                  : _buildSmoothTuningTransition(activeChannel),
-            ),
+            if (isReady)
+              Center(
+                key: const ValueKey<String>('persistent_immersive_decoder'),
+                child: ProVideoPlayer(
+                  streamUrl: activeChannel.streamUrl,
+                  volume: _currentVolume,
+                  isPlaying: !_isBehindLive,
+                ),
+              )
+            else
+              _buildSmoothTuningTransition(activeChannel),
 
             const Positioned(
               top: 0,
@@ -5268,21 +5117,14 @@ void _openParentalManagerDialog() async {
                   channelIndex: _selectedChannelIndex,
                   totalChannels: _channels.length,
                   isFullScreen: true,
-                  isPlaying: _videoPlayerController != null && _videoPlayerController!.value.isPlaying,
+                  isPlaying: !_isBehindLive,
                   isBehindLive: _isBehindLive,
                   isPlayingDvrRecording: _isPlayingDvrRecording,
                   dvrRecordingTitle: _activeDvrTitle,
                   onPlayPause: () {
-                    if (_videoPlayerController != null) {
-                      setState(() {
-                        if (_videoPlayerController!.value.isPlaying) {
-                          _videoPlayerController!.pause();
-                          _isBehindLive = true;
-                        } else {
-                          _videoPlayerController!.play();
-                        }
-                      });
-                    }
+                    setState(() {
+                      _isBehindLive = !_isBehindLive;
+                    });
                   },
                   onNext: _nextChannel,
                   onPrevious: _previousChannel,
