@@ -20,33 +20,37 @@ class ProVideoPlayer extends StatefulWidget {
 }
 
 class ProVideoPlayerState extends State<ProVideoPlayer> {
-  late final Player player;
-  late final VideoController controller;
+  late Player player;
+  late VideoController controller;
 
   @override
   void initState() {
     super.initState();
-    // Configuración de bajo nivel optimizada para Zapping sin retrasos
+    _initNewPlayer(widget.streamUrl);
+  }
+
+  void _initNewPlayer(String url) {
+    // Instancia limpia con búfer optimizado para arranque inmediato sin eco
     player = Player(
       configuration: const PlayerConfiguration(
-        bufferSize: 4 * 1024 * 1024, // Búfer ligero de 4MB para arranque inmediato
+        bufferSize: 2 * 1024 * 1024, // Búfer compacto de 2MB para evitar retardo
         vo: 'gpu',
       ),
     );
     controller = VideoController(player);
-    
-    _setupPlayer();
-  }
 
-  Future<void> _setupPlayer() async {
-    await player.open(Media(widget.streamUrl), play: widget.isPlaying);
-    await player.setVolume(widget.volume * 100);
+    player.open(Media(url), play: widget.isPlaying);
+    player.setVolume(widget.volume * 100);
 
     _applyEqualizer(PlayerSettingsService.eqModeNotifier.value);
     
     PlayerSettingsService.bufferSizeNotifier.addListener(_onBufferChanged);
     PlayerSettingsService.eqModeNotifier.addListener(_onEqChanged);
     PlayerSettingsService.audioTrackNotifier.addListener(_onAudioTrackChanged);
+    
+    player.stream.tracks.listen((tracks) {
+      _onAudioTrackChanged();
+    });
   }
 
   void _onBufferChanged() {}
@@ -56,7 +60,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   }
 
   void _applyEqualizer(String mode) {
-    // Aplicación limpia de perfiles
+    // Perfiles de audio limpios
   }
 
   void _onAudioTrackChanged() {
@@ -101,18 +105,28 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   void didUpdateWidget(ProVideoPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.streamUrl != widget.streamUrl) {
-      // CORRECCIÓN CRÍTICA: Destrucción total y asíncrona del stream previo antes de abrir el nuevo
-      player.stop().then((_) {
-        if (mounted) {
-          player.open(Media(widget.streamUrl), play: widget.isPlaying);
-        }
+      // DESTRUCCIÓN Y RECONSTRUCCIÓN TOTAL: Mata cualquier residuo de audio anterior al instante
+      PlayerSettingsService.bufferSizeNotifier.removeListener(_onBufferChanged);
+      PlayerSettingsService.eqModeNotifier.removeListener(_onEqChanged);
+      PlayerSettingsService.audioTrackNotifier.removeListener(_onAudioTrackChanged);
+      
+      final oldPlayer = player;
+      _initNewPlayer(widget.streamUrl);
+      setState(() {});
+
+      Future.microtask(() async {
+        try {
+          await oldPlayer.stop();
+          await oldPlayer.dispose();
+        } catch (_) {}
       });
-    }
-    if (oldWidget.volume != widget.volume) {
-      player.setVolume(widget.volume * 100);
-    }
-    if (oldWidget.isPlaying != widget.isPlaying) {
-      widget.isPlaying ? player.play() : player.pause();
+    } else {
+      if (oldWidget.volume != widget.volume) {
+        player.setVolume(widget.volume * 100);
+      }
+      if (oldWidget.isPlaying != widget.isPlaying) {
+        widget.isPlaying ? player.play() : player.pause();
+      }
     }
   }
 
