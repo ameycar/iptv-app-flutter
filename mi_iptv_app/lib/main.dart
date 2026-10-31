@@ -3129,236 +3129,285 @@ void _openParentalManagerDialog() async {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => StatefulBuilder(
-        builder: (modalCtx, setModalState) => Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.playlist_play_rounded, color: Color(0xFF00E5FF), size: 28),
-                        const SizedBox(width: 10),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Gestor AMEYCAR: Listas M3U & EPG',
-                              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
-                            ),
-                            Text(
-                              'Sincronizado en la Nube • ${_savedPlaylists.length} / 5 listas',
-                              style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11.5, fontWeight: FontWeight.bold),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white54),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
+        builder: (modalCtx, setModalState) {
+          // EVALUACIÓN PREMIUM EN TIEMPO REAL
+          final isPremium = PremiumManager.isPremium;
+          final maxLists = isPremium ? 5 : 1; // 5 Listas para VIP, 1 Lista para Gratis
 
-                if (_savedPlaylists.isNotEmpty) ...[
-                  const Text(
-                    'Tus Listas Guardadas (Se reflejan en tu Celular, PC y TV):',
-                    style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  ..._savedPlaylists.map((pl) {
-                    final bool isActive = pl['isActive'] == true;
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      decoration: BoxDecoration(
-                        color: isActive ? const Color(0xFF7B2CBF).withOpacity(0.25) : const Color(0xFF1E293B),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: isActive ? const Color(0xFF00E5FF) : Colors.white10,
-                          width: isActive ? 1.5 : 1,
-                        ),
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.playlist_play_rounded, color: Color(0xFF00E5FF), size: 28),
+                          const SizedBox(width: 10),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Gestor AMEYCAR: Listas M3U',
+                                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+                              ),
+                              Text(
+                                'Sincronizado en la Nube • ${_savedPlaylists.length} / $maxLists listas',
+                                style: const TextStyle(color: Color(0xFFC77DFF), fontSize: 11.5, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                      child: ListTile(
-                        dense: true,
-                        leading: Icon(
-                          isActive ? Icons.radio_button_checked : Icons.radio_button_off,
-                          color: isActive ? const Color(0xFF00E5FF) : Colors.white38,
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white54),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  if (_savedPlaylists.isNotEmpty) ...[
+                    const Text(
+                      'Tus Listas Guardadas (Se reflejan en Celular, PC y TV):',
+                      style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    ..._savedPlaylists.map((pl) {
+                      final bool isActive = pl['isActive'] == true;
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(
+                          color: isActive ? const Color(0xFF7B2CBF).withOpacity(0.25) : const Color(0xFF1E293B),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isActive ? const Color(0xFF00E5FF) : Colors.white10,
+                            width: isActive ? 1.5 : 1,
+                          ),
                         ),
-                        title: Text(
-                          pl['name'] ?? 'Lista M3U',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                        ),
-                        subtitle: Text(
-                          pl['url'] ?? '',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white54, fontSize: 10.5),
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 19),
-                          onPressed: () async {
-                            _savedPlaylists.removeWhere((item) => item['id'] == pl['id']);
-                            if (_savedPlaylists.isNotEmpty && !_savedPlaylists.any((x) => x['isActive'] == true)) {
-                              _savedPlaylists.first['isActive'] = true;
+                        child: ListTile(
+                          dense: true,
+                          leading: Icon(
+                            isActive ? Icons.radio_button_checked : Icons.radio_button_off,
+                            color: isActive ? const Color(0xFF00E5FF) : Colors.white38,
+                          ),
+                          title: Text(
+                            pl['name'] ?? 'Lista M3U',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          subtitle: Text(
+                            pl['url'] ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white54, fontSize: 10.5),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 19),
+                            onPressed: () async {
+                              _savedPlaylists.removeWhere((item) => item['id'] == pl['id']);
+                              if (_savedPlaylists.isNotEmpty && !_savedPlaylists.any((x) => x['isActive'] == true)) {
+                                _savedPlaylists.first['isActive'] = true;
+                              }
+                              await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+                              await prefs.remove('m3u_cache_${pl['id']}');
+                              await _syncPlaylistsToCloud();
+                              setModalState(() {});
+                              _loadSavedChannels();
+                            },
+                          ),
+                          onTap: () async {
+                            for (var item in _savedPlaylists) {
+                              item['isActive'] = (item['id'] == pl['id']);
                             }
                             await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
-                            await prefs.remove('m3u_cache_${pl['id']}');
                             await _syncPlaylistsToCloud();
-                            setModalState(() {});
-                            _loadSavedChannels();
+                            if (ctx.mounted) Navigator.pop(ctx);
+                            _downloadAndSanitizeM3u(pl['url'], playlistId: pl['id'], playlistName: pl['name']);
                           },
                         ),
-                        onTap: () async {
-                          for (var item in _savedPlaylists) {
-                            item['isActive'] = (item['id'] == pl['id']);
-                          }
-                          await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
-                          await _syncPlaylistsToCloud();
-                          if (ctx.mounted) Navigator.pop(ctx);
-                          _downloadAndSanitizeM3u(pl['url'], playlistId: pl['id'], playlistName: pl['name']);
-                        },
+                      );
+                    }),
+                    const Divider(color: Colors.white12, height: 22),
+                  ],
+
+                  if (_savedPlaylists.length < maxLists) ...[
+                    Text(
+                      'Agregar Nueva Lista (${_savedPlaylists.length + 1} de $maxLists):',
+                      style: const TextStyle(color: Color(0xFF00E676), fontSize: 12.5, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: listNameCtrl,
+                      style: const TextStyle(color: Colors.white, fontSize: 12.5),
+                      decoration: InputDecoration(
+                        labelText: 'Nombre de la Lista (Ej: Deportes Premium, Cine 4K)',
+                        labelStyle: const TextStyle(color: Colors.white60, fontSize: 11.5),
+                        filled: true,
+                        fillColor: const Color(0xFF1E293B),
+                        isDense: true,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                       ),
-                    );
-                  }),
-                  const Divider(color: Colors.white12, height: 22),
-                ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: m3uController,
+                      style: const TextStyle(color: Colors.white, fontSize: 12.5),
+                      decoration: InputDecoration(
+                        labelText: 'Enlace M3U / M3U8 (http://...)',
+                        labelStyle: const TextStyle(color: Colors.white60, fontSize: 11.5),
+                        filled: true,
+                        fillColor: const Color(0xFF1E293B),
+                        isDense: true,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ] else if (!isPremium) ...[
+                    // AQUI INYECTAMOS EL CANDADO DORADO PARA LOS GRATUITOS QUE YA TIENEN 1 LISTA
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [Color(0xFF2C220B), Color(0xFF1A1608)]),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.3)),
+                      ),
+                      child: Column(
+                        children: [
+                          const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.workspace_premium, color: Color(0xFFFFD700), size: 24),
+                              SizedBox(width: 8),
+                              Text('Límite Gratuito Alcanzado', style: TextStyle(color: Color(0xFFFFD700), fontSize: 15, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'La versión gratuita permite 1 lista M3U. Hazte Premium para tener hasta 5 listas sincronizadas en la nube.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                          const SizedBox(height: 12),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFFFD700),
+                              foregroundColor: Colors.black,
+                              minimumSize: const Size(double.infinity, 36),
+                            ),
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              PremiumManager.runIfPremium(context, action: () {}); // Esto disparará la ventana principal de pago
+                            },
+                            child: const Text('Hacerse Premium', style: TextStyle(fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Text(
+                        'Has alcanzado el máximo de 5 listas guardadas. Elimina alguna arriba si deseas agregar otra.',
+                        style: TextStyle(color: Colors.amber, fontSize: 11.5),
+                      ),
+                    ),
+                  ],
 
-                if (_savedPlaylists.length < 5) ...[
-                  Text(
-                    'Agregar Nueva Lista (${_savedPlaylists.length + 1} de 5):',
-                    style: const TextStyle(color: Color(0xFF00E676), fontSize: 12.5, fontWeight: FontWeight.bold),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Guía EPG XMLTV (Opcional):',
+                    style: TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   TextField(
-                    controller: listNameCtrl,
-                    style: const TextStyle(color: Colors.white, fontSize: 12.5),
+                    controller: epgController,
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
                     decoration: InputDecoration(
-                      labelText: 'Nombre de la Lista (Ej: Deportes Premium, Cine 4K)',
-                      labelStyle: const TextStyle(color: Colors.white60, fontSize: 11.5),
+                      hintText: 'https://proveedor.com/xmltv.xml.gz',
+                      hintStyle: const TextStyle(color: Colors.white30, fontSize: 11.5),
                       filled: true,
                       fillColor: const Color(0xFF1E293B),
                       isDense: true,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: m3uController,
-                    style: const TextStyle(color: Colors.white, fontSize: 12.5),
-                    decoration: InputDecoration(
-                      labelText: 'Enlace M3U / M3U8 (http://...)',
-                      labelStyle: const TextStyle(color: Colors.white60, fontSize: 11.5),
-                      filled: true,
-                      fillColor: const Color(0xFF1E293B),
-                      isDense: true,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    activeColor: const Color(0xFF00E5FF),
+                    title: const Text(
+                      'Conector Satelital EPG Automático',
+                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
                     ),
-                  ),
-                ] else
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Text(
-                      'Has alcanzado el máximo de 5 listas guardadas. Elimina alguna arriba si deseas agregar otra.',
-                      style: TextStyle(color: Colors.amber, fontSize: 11.5),
-                    ),
-                  ),
-
-                const SizedBox(height: 14),
-                const Text(
-                  'Guía EPG XMLTV (Opcional):',
-                  style: TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: epgController,
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                  decoration: InputDecoration(
-                    hintText: 'https://proveedor.com/xmltv.xml.gz',
-                    hintStyle: const TextStyle(color: Colors.white30, fontSize: 11.5),
-                    filled: true,
-                    fillColor: const Color(0xFF1E293B),
-                    isDense: true,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  activeColor: const Color(0xFF00E5FF),
-                  title: const Text(
-                    'Conector Satelital EPG Automático',
-                    style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                  value: usePublicSatellite,
-                  onChanged: (val) async {
-                    setModalState(() => usePublicSatellite = val);
-                    await EpgService.setUsePublicSatelliteConnector(val);
-                  },
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  height: 46,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00E5FF),
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    icon: const Icon(Icons.cloud_download),
-                    label: const Text('GUARDAR Y SINCRONIZAR EN NUBE', style: TextStyle(fontWeight: FontWeight.w900)),
-                    onPressed: () async {
-                      final url = m3uController.text.trim();
-                      final name = listNameCtrl.text.trim().isEmpty
-                          ? 'Lista ${_savedPlaylists.length + 1}'
-                          : listNameCtrl.text.trim();
-                      final customEpg = epgController.text.trim();
-
-                      await EpgService.setCustomEpgUrl(customEpg, syncImmediately: true);
-
-                      if (url.isNotEmpty && _savedPlaylists.length < 5) {
-                        final newId = 'pl_${DateTime.now().millisecondsSinceEpoch}';
-                        for (var item in _savedPlaylists) {
-                          item['isActive'] = false;
-                        }
-                        _savedPlaylists.add({
-                          'id': newId,
-                          'name': name,
-                          'url': url,
-                          'isActive': true,
-                        });
-                        await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
-                        await prefs.setString('saved_m3u_url', url);
-                        await _syncPlaylistsToCloud();
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        _downloadAndSanitizeM3u(url, playlistId: newId, playlistName: name);
-                      } else {
-                        await _syncPlaylistsToCloud();
-                        if (ctx.mounted) Navigator.pop(ctx);
-                      }
+                    value: usePublicSatellite,
+                    onChanged: (val) async {
+                      setModalState(() => usePublicSatellite = val);
+                      await EpgService.setUsePublicSatelliteConnector(val);
                     },
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 46,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00E5FF),
+                        foregroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: const Icon(Icons.cloud_download),
+                      label: const Text('GUARDAR Y SINCRONIZAR EN NUBE', style: TextStyle(fontWeight: FontWeight.w900)),
+                      onPressed: () async {
+                        final url = m3uController.text.trim();
+                        final name = listNameCtrl.text.trim().isEmpty
+                            ? 'Lista ${_savedPlaylists.length + 1}'
+                            : listNameCtrl.text.trim();
+                        final customEpg = epgController.text.trim();
+
+                        await EpgService.setCustomEpgUrl(customEpg, syncImmediately: true);
+
+                        if (url.isNotEmpty && _savedPlaylists.length < maxLists) {
+                          final newId = 'pl_${DateTime.now().millisecondsSinceEpoch}';
+                          for (var item in _savedPlaylists) {
+                            item['isActive'] = false;
+                          }
+                          _savedPlaylists.add({
+                            'id': newId,
+                            'name': name,
+                            'url': url,
+                            'isActive': true,
+                          });
+                          await prefs.setString('m3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+                          await prefs.setString('saved_m3u_url', url);
+                          await _syncPlaylistsToCloud();
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          _downloadAndSanitizeM3u(url, playlistId: newId, playlistName: name);
+                        } else {
+                          await _syncPlaylistsToCloud();
+                          if (ctx.mounted) Navigator.pop(ctx);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
