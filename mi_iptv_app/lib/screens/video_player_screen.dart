@@ -94,11 +94,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       // Controlador optimizado para Fast-Zapping IPTV
       _videoPlayerController = VideoPlayerController.networkUrl(
         Uri.parse(_currentItem.url),
-        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: true,
+          allowBackgroundPlayback: false, // <-- ESTO LIBERA LA MEMORIA Y QUITA LA PIXELACIÓN
+        ),
       );
 
       await _videoPlayerController!.initialize();
 
+// NUEVO: OYENTE PARA EL BUG DE RETROCESO Y ESTADO EN VIVO
+      _videoPlayerController!.addListener(() {
+        if (_videoPlayerController!.value.isInitialized) {
+          final position = _videoPlayerController!.value.position;
+          final duration = _videoPlayerController!.value.duration;
+          
+          // Fuerza el play si el reproductor se pausó al retroceder
+          if (!_videoPlayerController!.value.isPlaying && 
+              position > Duration.zero && 
+              position < duration) {
+            _videoPlayerController!.play();
+          }
+        }
+      });
       // Si venía desde el botón "Seguir Viendo", saltamos directo a la posición
       if (widget.startAtSeconds != null && widget.startAtSeconds! > 0 && !_currentItem.isLive) {
         await _videoPlayerController!.seekTo(Duration(seconds: widget.startAtSeconds!));
