@@ -12,7 +12,7 @@ class VideoPlayerScreen extends StatefulWidget {
   final PlaylistItem item;
   final List<PlaylistItem>? channels;
   final Function(PlaylistItem)? onMinimizeToPiP;
-  final int? startAtSeconds; // Soporte para saltar directo al minuto guardado
+  final int? startAtSeconds;
 
   const VideoPlayerScreen({
     super.key,
@@ -44,13 +44,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void initState() {
     super.initState();
-    WakelockPlus.enable(); // Mantiene la pantalla encendida
+    WakelockPlus.enable(); 
     _currentItem = widget.item;
     _initializePlayer();
     _startHistoryTracker();
   }
 
-  // RASTREADOR PERIÓDICO DE PROGRESO (SEGUIR VIENDO)
   void _startHistoryTracker() {
     _historyTimer?.cancel();
     _historyTimer = Timer.periodic(const Duration(seconds: 15), (_) {
@@ -60,7 +59,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _saveCurrentProgress() async {
     if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) return;
-    if (_currentItem.isLive) return; // Las señales en vivo no se guardan en el carrusel
+    if (_currentItem.isLive) return; 
 
     final position = _videoPlayerController!.value.position.inSeconds;
     final total = _videoPlayerController!.value.duration.inSeconds;
@@ -91,24 +90,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       _chewieController?.dispose();
       await _videoPlayerController?.dispose();
 
-      // Controlador optimizado para Fast-Zapping IPTV
+      // 🚀 COMBO 1: TURBO ZAPPING + ANTI-PIXELACIÓN
       _videoPlayerController = VideoPlayerController.networkUrl(
         Uri.parse(_currentItem.url),
+        // Acelerador: Si es m3u8, no pierde tiempo adivinando el formato
+        formatHint: _currentItem.url.toLowerCase().contains('.m3u8') ? VideoFormat.hls : null,
         videoPlayerOptions: VideoPlayerOptions(
           mixWithOthers: true,
-          allowBackgroundPlayback: false, // <-- ESTO LIBERA LA MEMORIA Y QUITA LA PIXELACIÓN
+          allowBackgroundPlayback: false, // Libera memoria para evitar cuadros verdes
         ),
       );
 
       await _videoPlayerController!.initialize();
 
-// NUEVO: OYENTE PARA EL BUG DE RETROCESO Y ESTADO EN VIVO
+      // 🛡️ COMBO 2: OYENTE ANTI-CONGELAMIENTO (-15s Y BARRA DE TIEMPO)
       _videoPlayerController!.addListener(() {
         if (_videoPlayerController!.value.isInitialized) {
           final position = _videoPlayerController!.value.position;
           final duration = _videoPlayerController!.value.duration;
           
-          // Fuerza el play si el reproductor se pausó al retroceder
+          // Fuerza el play si el reproductor se pausó accidentalmente al retroceder
           if (!_videoPlayerController!.value.isPlaying && 
               position > Duration.zero && 
               position < duration) {
@@ -116,16 +117,33 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           }
         }
       });
-      // Si venía desde el botón "Seguir Viendo", saltamos directo a la posición
+
       if (widget.startAtSeconds != null && widget.startAtSeconds! > 0 && !_currentItem.isLive) {
         await _videoPlayerController!.seekTo(Duration(seconds: widget.startAtSeconds!));
       }
 
+      // 🔠 COMBO 3: REPRODUCTOR CON INCLUSIÓN (SUBTÍTULOS CC)
       _chewieController = ChewieController(
         videoPlayerController: _videoPlayerController!,
         autoPlay: true,
         isLive: _currentItem.isLive,
         looping: !_currentItem.isLive,
+        
+        // Motor de subtítulos
+        subtitleBuilder: (context, dynamic subtitle) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          margin: const EdgeInsets.only(bottom: 24),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.75),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            subtitle.toString(),
+            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+        ),
+
         aspectRatio: _videoPlayerController!.value.aspectRatio > 0
             ? _videoPlayerController!.value.aspectRatio
             : 16 / 9,
@@ -149,7 +167,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         setState(() {
           _isLoading = false;
           _hasError = true;
-          _errorMessage = "No se pudo conectar con la transmisión de ${_currentItem.name}.";
+          _errorMessage = "Señal inestable. No se pudo sintonizar ${_currentItem.name}.";
         });
       }
     }
@@ -248,7 +266,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   void dispose() {
     _saveCurrentProgress();
     _historyTimer?.cancel();
-    WakelockPlus.disable(); // Permite que la pantalla vuelva a apagarse normalmente
+    WakelockPlus.disable(); 
     _chewieController?.dispose();
     _videoPlayerController?.dispose();
     SystemChrome.setPreferredOrientations([
@@ -290,7 +308,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             ],
           ),
           actions: [
-            // Botón de Chromecast
             IconButton(
               icon: Icon(
                 _isCasting ? Icons.cast_connected : Icons.cast,
@@ -299,7 +316,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               tooltip: "Enviar a Smart TV / Chromecast",
               onPressed: _showCastDialog,
             ),
-            // Botón de Multitarea / Miniatura (PiP)
             IconButton(
               icon: const Icon(Icons.picture_in_picture_alt_rounded, color: Colors.white),
               tooltip: "Pantalla miniatura / Multitarea",
@@ -316,7 +332,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         body: Stack(
           alignment: Alignment.center,
           children: [
-            // Reproductor central
             Center(
               child: _isLoading
                   ? Column(
@@ -358,7 +373,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                           : const SizedBox(),
             ),
 
-            // Controles de Zapping Rápido (Canal Anterior / Siguiente)
             if (widget.channels != null && widget.channels!.length > 1)
               Positioned(
                 bottom: 24,
