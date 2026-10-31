@@ -1155,7 +1155,7 @@ class AuthService {
       if (res.statusCode == 200 && res.body.isNotEmpty && res.body != 'null') {
         final decoded = jsonDecode(res.body);
         if (decoded is List) {
-          return decoded.whereType<Map>().map((m) {
+          return decoded.whereType().map((m) {
             final map = Map<String, dynamic>.from(m);
             return UserModel.fromMap(map['id'] ?? '', map);
           }).toList();
@@ -1194,14 +1194,16 @@ class AuthService {
       if (res.statusCode == 200 && res.body.isNotEmpty && res.body != 'null') {
         final decoded = jsonDecode(res.body);
         if (decoded is List) {
-          return decoded.whereType<Map>().map((m) {
+          return decoded.whereType().map((m) {
             return ActivationPinModel.fromMap(Map<String, dynamic>.from(m));
           }).toList();
         }
       }
     } catch (_) {}
     return [];
-    // ============================================================
+  }
+
+  // ============================================================
   // REGISTRO CORPORATIVO CON ANTI-ABUSO (NOMBRE + APELLIDO)
   // ============================================================
   static Future<AuthResponse> registerUser(String firstName, String lastName, String password) async {
@@ -1291,5 +1293,5 @@ class AuthService {
       return AuthResponse(status: AuthStatus.error, message: 'Error creando cuenta: $e');
     }
   }
-  }
+
 }
