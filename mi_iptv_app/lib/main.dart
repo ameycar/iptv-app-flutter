@@ -623,7 +623,7 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
             SnackBar(
               content: Text(
                 savedItem != null
-                    ? '✅ Grabación guardada: "${savedItem.programTitle}" (${savedItem.sizeMB.toStringAsFixed(1)} MB)'
+                    ? '✅ Grabación guardada: "${savedItem.programTitle}" (${savedItem.sizeMb.toStringAsFixed(1)} MB)'
                     : '⚠️ Grabación detenida (duración muy corta para guardar).',
               ),
               backgroundColor: const Color(0xFF1B2C0F),
