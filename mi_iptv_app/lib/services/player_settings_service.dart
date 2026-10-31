@@ -7,6 +7,10 @@ class PlayerSettingsService {
   static final ValueNotifier<double> bufferSizeNotifier = ValueNotifier(10.0);
   static final ValueNotifier<String> eqModeNotifier = ValueNotifier('Plano');
   static final ValueNotifier<String> audioTrackNotifier = ValueNotifier('Español (Predeterminado)');
+  
+  // --- NUEVAS VARIABLES DE INCLUSIÓN ---
+  static final ValueNotifier<String> subtitleTrackNotifier = ValueNotifier('Desactivado');
+  static final ValueNotifier<String> colorFilterNotifier = ValueNotifier('Normal');
 
   // Obtiene el perfil específico de la familia (o el usuario principal)
   static String get _profileId => AuthService.currentActiveProfile?.id ?? AuthService.currentUser?.id ?? 'default';
@@ -28,11 +32,17 @@ class PlayerSettingsService {
             bufferSizeNotifier.value = (settings['buffer_size'] ?? 10.0).toDouble();
             eqModeNotifier.value = settings['eq_mode'] ?? 'Plano';
             audioTrackNotifier.value = settings['audio_track'] ?? 'Español (Predeterminado)';
+            
+            // Cargar datos de inclusión desde la nube
+            subtitleTrackNotifier.value = settings['subtitle_track'] ?? 'Desactivado';
+            colorFilterNotifier.value = settings['color_filter'] ?? 'Normal';
 
             // Guardar copia local
             await prefs.setDouble('adv_buffer_size_$pId', bufferSizeNotifier.value);
             await prefs.setString('adv_eq_mode_$pId', eqModeNotifier.value);
             await prefs.setString('adv_audio_track_$pId', audioTrackNotifier.value);
+            await prefs.setString('adv_subtitle_track_$pId', subtitleTrackNotifier.value);
+            await prefs.setString('adv_color_filter_$pId', colorFilterNotifier.value);
             loadedFromCloud = true;
           }
         }
@@ -44,6 +54,8 @@ class PlayerSettingsService {
       bufferSizeNotifier.value = prefs.getDouble('adv_buffer_size_$pId') ?? 10.0;
       eqModeNotifier.value = prefs.getString('adv_eq_mode_$pId') ?? 'Plano';
       audioTrackNotifier.value = prefs.getString('adv_audio_track_$pId') ?? 'Español (Predeterminado)';
+      subtitleTrackNotifier.value = prefs.getString('adv_subtitle_track_$pId') ?? 'Desactivado';
+      colorFilterNotifier.value = prefs.getString('adv_color_filter_$pId') ?? 'Normal';
     }
   }
 
@@ -56,6 +68,8 @@ class PlayerSettingsService {
           'buffer_size': bufferSizeNotifier.value,
           'eq_mode': eqModeNotifier.value,
           'audio_track': audioTrackNotifier.value,
+          'subtitle_track': subtitleTrackNotifier.value,
+          'color_filter': colorFilterNotifier.value,
         }
       }, SetOptions(merge: true));
     } catch (_) {}
@@ -79,6 +93,21 @@ class PlayerSettingsService {
     audioTrackNotifier.value = track;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('adv_audio_track_$_profileId', track);
+    _syncToCloud();
+  }
+
+  // --- NUEVOS SETTERS DE INCLUSIÓN ---
+  static Future<void> setSubtitleTrack(String track) async {
+    subtitleTrackNotifier.value = track;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('adv_subtitle_track_$_profileId', track);
+    _syncToCloud();
+  }
+
+  static Future<void> setColorFilter(String filter) async {
+    colorFilterNotifier.value = filter;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('adv_color_filter_$_profileId', filter);
     _syncToCloud();
   }
 }

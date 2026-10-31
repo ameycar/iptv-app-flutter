@@ -42,6 +42,7 @@ import 'widgets/rename_channel_dialog.dart';
 import 'widgets/profile_customization_sheet.dart';
 import 'widgets/pro_video_player.dart';
 import 'services/player_settings_service.dart';
+import 'utils/premium_manager.dart'; // Ajusta la ruta si lo pusiste en otra carpeta
 
 // SERVICIO NATIVO PARA ALARMAS CON AUTO-SINTONIZACIÓN Y SOPORTE DVR
 class NotificationService {
@@ -555,30 +556,35 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
   }
 
   Future<void> _seekRelativeSeconds(int deltaSeconds) async {
-    // Enviamos la orden de retroceso/avance directo al ProVideoPlayer activo mediante la llave
-    _playerKey.currentState?.seekRelative(deltaSeconds);
-    _triggerOsdTimer();
+    // EL GUARDIÁN EN ACCIÓN
+    PremiumManager.runIfPremium(context, action: () {
+      
+      // Si es Premium, hace esto normalmente:
+      _playerKey.currentState?.seekRelative(deltaSeconds);
+      _triggerOsdTimer();
 
-    if (mounted) {
-      setState(() {
-        if (deltaSeconds < 0) {
-          _isBehindLive = true;
-        }
-      });
+      if (mounted) {
+        setState(() {
+          if (deltaSeconds < 0) {
+            _isBehindLive = true;
+          }
+        });
 
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            deltaSeconds < 0
-                ? '⏪ Retrocediendo ${deltaSeconds.abs()}s...'
-                : '⏩ Adelantando +${deltaSeconds}s...',
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              deltaSeconds < 0
+                  ? '⏪ Retrocediendo ${deltaSeconds.abs()}s...'
+                  : '⏩ Adelantando +${deltaSeconds}s...',
+            ),
+            duration: const Duration(milliseconds: 1100),
+            backgroundColor: const Color(0xFF1E293B),
           ),
-          duration: const Duration(milliseconds: 1100),
-          backgroundColor: const Color(0xFF1E293B),
-        ),
-      );
-    }
+        );
+      }
+
+    });
   }
 
   void _jumpBackToLiveStream() {
@@ -604,55 +610,58 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
   }
 
   Future<void> _toggleManualDvrRecording(ChannelModel? activeChannel) async {
-    if (activeChannel == null || kIsWeb) return;
+    // EL GUARDIÁN EN ACCIÓN (Bloquea la función si es Free)
+    PremiumManager.runIfPremium(context, action: () async {
+      
+      if (activeChannel == null || kIsWeb) return;
 
-    if (DvrRecordingService.isRecordingNotifier.value) {
-      final savedItem = await DvrRecordingService.stopRecording();
-      if (mounted) {
-        setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              savedItem != null
-                  ? '✅ Grabación guardada: "${savedItem.programTitle}" (${savedItem.sizeMb.toStringAsFixed(1)} MB)'
-                  : '⏹ Grabación detenida (duración muy corta para guardar).',
+      if (DvrRecordingService.isRecordingNotifier.value) {
+        final savedItem = await DvrRecordingService.stopRecording();
+        if (mounted) {
+          setState(() {});
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                savedItem != null
+                    ? '✅ Grabación guardada: "${savedItem.programTitle}" (${savedItem.sizeMB.toStringAsFixed(1)} MB)'
+                    : '⚠️ Grabación detenida (duración muy corta para guardar).',
+              ),
+              backgroundColor: const Color(0xFF1B2C0F),
+              action: savedItem != null
+                  ? SnackBarAction(
+                      label: 'VER AHORA',
+                      textColor: const Color(0xFF80E5FF),
+                      onPressed: () => _playDvrRecordingFile(savedItem),
+                    )
+                  : null,
             ),
-            backgroundColor: const Color(0xFF7B2CBF),
-            action: savedItem != null
-                ? SnackBarAction(
-                    label: 'VER AHORA',
-                    textColor: const Color(0xFF00E5FF),
-                    onPressed: () => _playDvrRecordingFile(savedItem),
-                  )
-                : null,
-          ),
+          );
+        }
+      } else {
+        final currentProg = EpgService.getCurrentProgram(activeChannel.name, activeChannel.groupCategory);
+        final started = await DvrRecordingService.startRecording(
+          channelName: activeChannel.name,
+          programTitle: currentProg.title,
+          streamUrl: activeChannel.streamUrl,
+          maxMinutes: 60,
         );
-      }
-    } else {
-      final currentProg =
-          EpgService.getCurrentProgram(activeChannel.name, activeChannel.groupCategory);
-      final started = await DvrRecordingService.startRecording(
-        channelName: activeChannel.name,
-        programTitle: currentProg.title,
-        streamUrl: activeChannel.streamUrl,
-        maxMinutes: 60,
-      );
 
-      if (mounted) {
-        setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              started
-                  ? '🔴 Grabando "${currentProg.title}" en segundo plano...'
-                  : 'No se pudo iniciar la grabación de esta señal.',
+        if (mounted) {
+          setState(() {});
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                started
+                    ? '🔴 Grabando "${currentProg.title}" (Máx 60m)...'
+                    : '❌ Error al iniciar grabación.',
+              ),
+              backgroundColor: started ? const Color(0xFF4A0E0E) : Colors.red,
             ),
-            backgroundColor: started ? const Color(0xFFFF1744) : Colors.redAccent,
-            duration: const Duration(seconds: 3),
-          ),
-        );
+          );
+        }
       }
-    }
+      
+    });
   }
 
   Future<void> _playDvrRecordingFile(DvrRecordingItem item) async {
@@ -1112,30 +1121,35 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
   }
 
   Future<void> _enterNativePiP() async {
-    if (kIsWeb) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('En PC puedes usar clic derecho sobre el video > "Pantalla en pantalla" del navegador.'),
-          backgroundColor: Color(0xFF7B2CBF),
-        ),
-      );
-      return;
-    }
-    try {
-      final bool? entered = await _pipChannel.invokeMethod<bool>('enterPip');
-      if (entered == true && mounted) {
-        setState(() => _isInPipMode = true);
-      } else if (mounted) {
+    // EL GUARDIÁN EN ACCIÓN PARA EL PIP (Ventana Flotante)
+    PremiumManager.runIfPremium(context, action: () async {
+      
+      if (kIsWeb) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Activa "Imagen en imagen" en los ajustes de tu teléfono para flotar el video.'),
+            content: Text('En PC puedes usar clic derecho sobre el video > "Pantalla en pantalla" del navegador.'),
             backgroundColor: Color(0xFF7B2CBF),
           ),
         );
+        return;
       }
-    } catch (e) {
-      debugPrint('Aviso PiP nativo: $e');
-    }
+      try {
+        final bool? entered = await _pipChannel.invokeMethod<bool>('enterPip');
+        if (entered == true && mounted) {
+          setState(() => _isInPipMode = true);
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Activa "Imagen en imagen" en los ajustes de tu teléfono para flotar el video.'),
+              backgroundColor: Color(0xFF7B2CBF),
+            ),
+          );
+        }
+      } catch (e) {
+        debugPrint('Aviso PiP nativo: $e');
+      }
+      
+    });
   }
 
   void _startAccountHardwareGuard() async {
