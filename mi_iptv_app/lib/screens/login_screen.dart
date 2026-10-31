@@ -216,6 +216,148 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+// MÉTODO NUEVO: Modal de Auto-Registro para Clientes Nuevos (Con 3 Días VIP)
+ // MÉTODO NUEVO: Modal de Auto-Registro Corporativo (Nombre + Apellido)
+  void _showRegisterModal() {
+    final nameCtrl = TextEditingController();
+    final lastNameCtrl = TextEditingController();
+    final passCtrl = TextEditingController();
+    bool isRegistering = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0F172A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) => Padding(
+          padding: EdgeInsets.only(
+            left: 20, right: 20, top: 20,
+            bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.badge, color: Color(0xFF00E5FF), size: 40),
+              const SizedBox(height: 10),
+              const Text(
+                'Registro de Cliente',
+                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Ingresa tus datos. El sistema generará tu usuario de acceso automáticamente.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: nameCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: 'Nombre',
+                        labelStyle: const TextStyle(color: Colors.white54),
+                        prefixIcon: const Icon(Icons.person, color: Color(0xFFC77DFF)),
+                        filled: true,
+                        fillColor: const Color(0xFF1E293B),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: lastNameCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: 'Apellido',
+                        labelStyle: const TextStyle(color: Colors.white54),
+                        filled: true,
+                        fillColor: const Color(0xFF1E293B),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: passCtrl,
+                obscureText: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Crea una Contraseña (mínimo 4 dígitos)',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  prefixIcon: const Icon(Icons.lock, color: Color(0xFF00E5FF)),
+                  filled: true,
+                  fillColor: const Color(0xFF1E293B),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00E5FF),
+                    foregroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: isRegistering
+                      ? null
+                      : () async {
+                          if (nameCtrl.text.trim().isEmpty || lastNameCtrl.text.trim().isEmpty || passCtrl.text.trim().isEmpty) return;
+                          
+                          setModalState(() => isRegistering = true);
+                          
+                          // Llamamos a la nueva función que recibe Nombre y Apellido
+                          final res = await AuthService.registerUser(
+                            nameCtrl.text.trim(),
+                            lastNameCtrl.text.trim(),
+                            passCtrl.text.trim(),
+                          );
+                          
+                          setModalState(() => isRegistering = false);
+                          
+                          if (mounted) {
+                            Navigator.pop(ctx);
+                            
+                            // Mostrarle su nuevo usuario autogenerado en un cartel
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(res.message, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                backgroundColor: res.isSuccess ? const Color(0xFF00C853) : Colors.redAccent,
+                                duration: const Duration(seconds: 6), // Más tiempo para que alcance a leerlo
+                              ),
+                            );
+                            
+                            // Autocompletamos las cajas del login para que solo tenga que presionar entrar
+                            if (res.isSuccess && res.user != null) {
+                              setState(() {
+                                _usernameController.text = res.user!.username;
+                                _passwordController.text = passCtrl.text.trim();
+                              });
+                            }
+                          }
+                        },
+                  child: isRegistering
+                      ? const CircularProgressIndicator(color: Colors.black)
+                      : const Text('GENERAR MI ACCESO', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showAdminChoiceDialog() {
     showDialog(
       context: context,
@@ -728,6 +870,38 @@ class _LoginScreenState extends State<LoginScreen> {
                                 
                                 const SizedBox(height: 16),
                                 
+                                // NUEVO BOTÓN DE CREAR CUENTA
+Center(
+  child: InkWell(
+    onTap: _showRegisterModal,
+    borderRadius: BorderRadius.circular(12),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF00E5FF).withOpacity(0.1),
+        border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.person_add_alt_1_rounded, color: Color(0xFF00E5FF), size: 20),
+          SizedBox(width: 10),
+          Text(
+            '¿No tienes cuenta? Crea una Gratis',
+            style: TextStyle(
+              color: Color(0xFF00E5FF),
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    ),
+  ),
+),
+const SizedBox(height: 16), // Espacio antes del botón de soporte
+
                                 // NUEVO BOTÓN DE SOPORTE BAJO EL LOGIN
                                 Center(
                                   child: TextButton.icon(

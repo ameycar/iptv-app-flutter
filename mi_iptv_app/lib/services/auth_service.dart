@@ -1201,5 +1201,95 @@ class AuthService {
       }
     } catch (_) {}
     return [];
+    // ============================================================
+  // REGISTRO CORPORATIVO CON ANTI-ABUSO (NOMBRE + APELLIDO)
+  // ============================================================
+  static Future<AuthResponse> registerUser(String firstName, String lastName, String password) async {
+    try {
+      // Función interna para limpiar acentos y espacios
+      String cleanText(String text) {
+        return text.trim().toLowerCase()
+            .replaceAll('á', 'a').replaceAll('é', 'e').replaceAll('í', 'i')
+            .replaceAll('ó', 'o').replaceAll('ú', 'u').replaceAll('ñ', 'n')
+            .replaceAll(RegExp(r'[^a-z0-9]'), '');
+      }
+
+      final cleanFirst = cleanText(firstName);
+      final cleanLast = cleanText(lastName);
+      final cleanPassword = password.trim();
+
+      if (cleanFirst.isEmpty || cleanLast.isEmpty || cleanPassword.isEmpty) {
+        return AuthResponse(
+          status: AuthStatus.invalidCredentials,
+          message: 'Por favor, llena todos los campos.',
+        );
+      }
+
+      // 1. Generamos el usuario base (Ej: c + acosta = cacosta)
+      String baseUsername = '${cleanFirst[0]}$cleanLast';
+      String finalUsername = baseUsername;
+      bool userExists = true;
+      int counter = 0;
+
+      // 2. Bucle para asegurar que el usuario no exista (cacosta, cacosta1, cacosta2...)
+      while (userExists) {
+        finalUsername = counter == 0 ? baseUsername : '$baseUsername$counter';
+        userExists = false;
+
+        if (isFirebaseAvailable) {
+          final uCheck = await FirebaseFirestore.instance.collection(_usersCollection).where('username', isEqualTo: finalUsername).get();
+          if (uCheck.docs.isNotEmpty) userExists = true;
+        } else {
+          final localUsers = await _getLocalUsers();
+          if (localUsers.any((u) => u.username.toLowerCase() == finalUsername)) userExists = true;
+        }
+        if (userExists) counter++;
+      }
+
+      // 3. Obtenemos el Hardware ID para el anti-abuso
+      final hwId = await getDeviceHardwareId();
+      bool hasUsedTrial = false;
+
+      if (isFirebaseAvailable) {
+        final hwCheck = await FirebaseFirestore.instance.collection(_usersCollection).where('registeredHardwareId', isEqualTo: hwId).limit(1).get();
+        if (hwCheck.docs.isNotEmpty) hasUsedTrial = true;
+      } else {
+        final localUsers = await _getLocalUsers();
+        if (localUsers.any((u) => u.registeredHardwareId == hwId)) hasUsedTrial = true;
+      }
+
+      // 4. Veredicto: 3 días VIP si es equipo nuevo
+      final int grantedDays = hasUsedTrial ? 0 : 3;
+      final expirationDate = DateTime.now().add(Duration(days: grantedDays));
+
+      final newUser = UserModel(
+        id: isFirebaseAvailable ? FirebaseFirestore.instance.collection(_usersCollection).doc().id : 'user_${DateTime.now().millisecondsSinceEpoch}',
+        username: finalUsername, // ¡Aquí guardamos el usuario autogenerado!
+        password: cleanPassword,
+        role: 'user',
+        isActive: true,
+        isVip: grantedDays > 0,
+        expirationDate: expirationDate,
+        registeredHardwareId: hwId,
+        deviceName: '$firstName $lastName',
+        maxScreens: 1,
+        createdAt: DateTime.now(),
+        lastActiveAt: DateTime.now(),
+      );
+
+      await createClientUser(newUser);
+
+      // Enviamos el usuario autogenerado de vuelta para mostrarlo en pantalla
+      return AuthResponse(
+        status: AuthStatus.success,
+        user: newUser,
+        message: hasUsedTrial
+            ? 'Cuenta Free creada. Tu usuario es: $finalUsername'
+            : '¡Felicidades! Tu usuario es: $finalUsername. Tienes 3 días VIP.',
+      );
+    } catch (e) {
+      return AuthResponse(status: AuthStatus.error, message: 'Error creando cuenta: $e');
+    }
+  }
   }
 }
