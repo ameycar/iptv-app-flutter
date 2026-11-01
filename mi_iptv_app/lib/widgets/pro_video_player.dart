@@ -63,29 +63,20 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   }
 
   Future<void> _configureLowLatencyDecoder() async {
-    if (kIsWeb) return; // Evita que Web intente compilar propiedades nativas de libmpv
+    if (kIsWeb) return; 
     try {
       var platform = player.platform;
       if (platform.runtimeType.toString().contains('NativePlayer')) {
-        // 1. Perfil base de ultra baja latencia nativo de libmpv (Modo TVExpress/UniTV)
         (platform as dynamic).setProperty('profile', 'low-latency');
-
-        // 2. Aceleración máxima y multi-hilo para forzar el primer fotograma sin tirones
         (platform as dynamic).setProperty('hwdec', 'mediacodec-copy');
         (platform as dynamic).setProperty('vd-lavc-threads', '4');
-
-        // 3. Ignorar por completo el análisis previo del stream (Arranca a ciegas)
         (platform as dynamic).setProperty('demuxer-lavf-analyzeduration', '0');
-        (platform as dynamic).setProperty('demuxer-lavf-probesize', '8192'); // 8KB para disparo instantáneo
-
-        // 4. Habilitación de caché Timeshift en RAM para retroceder 15s en señales en vivo sin pausas iniciales
+        (platform as dynamic).setProperty('demuxer-lavf-probesize', '8192'); 
         (platform as dynamic).setProperty('cache', 'yes');
-        (platform as dynamic).setProperty('cache-secs', '300'); // Hasta 5 min en memoria para timeshift
+        (platform as dynamic).setProperty('cache-secs', '300'); 
         (platform as dynamic).setProperty('cache-pause', 'no');
         (platform as dynamic).setProperty('cache-pause-initial', 'no');
-        (platform as dynamic).setProperty('stream-buffer-size', '4k'); // Búfer de red microscópico
-
-        // 5. Bloqueo de pistas ADV / audiodescripción secundaria y configuración de red agresiva
+        (platform as dynamic).setProperty('stream-buffer-size', '4k'); 
         (platform as dynamic).setProperty('network-timeout', '3');
         (platform as dynamic).setProperty('aid', '1');
         (platform as dynamic).setProperty('sid', 'no');
@@ -200,11 +191,26 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   void play() => player.play();
   void pause() => player.pause();
 
-  // Control de avance y retroceso en vivo con resguardo de posición cero
+  // 🛠️ FIX 1: Obligar al motor a arrancar después del retroceso
   void seekRelative(int seconds) {
     final currentPos = player.state.position;
     final target = currentPos + Duration(seconds: seconds);
-    player.seek(target < Duration.zero ? Duration.zero : target);
+    
+    player.seek(target < Duration.zero ? Duration.zero : target).then((_) {
+      // Fuerza la reproducción inmediata para que no se quede pausado en el pasado
+      if (widget.isPlaying) {
+        player.play();
+      }
+    });
+  }
+
+  // 🚀 FIX 2: Crear el puente directo para volver al "En Vivo" real
+  void jumpToLiveEdge() {
+    // La forma más perfecta y sin lag de volver al vivo en IPTV es limpiar el buffer y resintonizar
+    _tuneChannelFast(widget.streamUrl);
+    if (widget.isPlaying) {
+      player.play();
+    }
   }
 
   @override
