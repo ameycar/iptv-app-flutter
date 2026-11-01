@@ -567,6 +567,7 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
         setState(() {
           if (deltaSeconds < 0) {
             _isBehindLive = true;
+            _isPlayerPaused = false; // Forzamos a que nunca se pause al retroceder
           }
         });
 
@@ -575,10 +576,10 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
           SnackBar(
             content: Text(
               deltaSeconds < 0
-                  ? '⏪ Retrocediendo ${deltaSeconds.abs()}s en el búfer...'
+                  ? '⏪ Retrocediendo ${deltaSeconds.abs()}s...'
                   : '⏩ Adelantando +${deltaSeconds}s...',
             ),
-            duration: const Duration(milliseconds: 1100),
+            duration: const Duration(milliseconds: 900),
             backgroundColor: const Color(0xFF1E293B),
           ),
         );
@@ -588,7 +589,7 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
     }
   }
 
-  void _jumpBackToLiveStream() {
+ void _jumpBackToLiveStream() {
     final activeCh = _channels.isNotEmpty && _selectedChannelIndex < _channels.length
         ? _channels[_selectedChannelIndex]
         : null;
@@ -598,7 +599,10 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
       _isBehindLive = false;
       _isPlayingDvrRecording = false;
       _activeDvrTitle = null;
+      _activeDvrFilePath = null;
+      _isPlayerPaused = false;
     });
+    
     _initializeVideo(activeCh.streamUrl);
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -4706,13 +4710,12 @@ void _openParentalManagerDialog() async {
           children: [
             if (isReady)
               Center(
-                // Key estática: Mantiene el decodificador vivo al cambiar de canal (Zapping 0ms)
                 key: const ValueKey<String>('persistent_live_decoder'),
                 child: ProVideoPlayer(
                   key: _playerKey,
-                  streamUrl: activeChannel.streamUrl,
+                  streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null) ? _activeDvrFilePath! : activeChannel.streamUrl,
                   volume: _currentVolume,
-                  isPlaying: !_isBehindLive,
+                  isPlaying: !_isPlayerPaused,
                 ),
               )
             else if (_hasVideoError)
@@ -5093,13 +5096,14 @@ void _openParentalManagerDialog() async {
         body: Stack(
           children: [
             if (isReady)
+              if (isReady)
               Center(
                 key: const ValueKey<String>('persistent_immersive_decoder'),
                 child: ProVideoPlayer(
                   key: _playerKey,
-                  streamUrl: activeChannel.streamUrl,
+                  streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null) ? _activeDvrFilePath! : activeChannel.streamUrl,
                   volume: _currentVolume,
-                  isPlaying: !_isBehindLive,
+                  isPlaying: !_isPlayerPaused,
                 ),
               )
             else
