@@ -338,8 +338,10 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
   double _volumeBeforeMute = 1.0;
 
   bool _isBehindLive = false;
+  bool _isPlayerPaused = false;
   bool _isPlayingDvrRecording = false;
   String? _activeDvrTitle;
+  String? _activeDvrFilePath;
 
   bool _isInPipMode = false;
   bool _showLiveChat = false;
@@ -556,12 +558,10 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
   }
 
   Future<void> _seekRelativeSeconds(int deltaSeconds) async {
-    // EL GUARDIÁN EN ACCIÓN
-    PremiumManager.runIfPremium(context, action: () {
-      
-      // Si es Premium, hace esto normalmente:
+    _triggerOsdTimer();
+
+    try {
       _playerKey.currentState?.seekRelative(deltaSeconds);
-      _triggerOsdTimer();
 
       if (mounted) {
         setState(() {
@@ -575,7 +575,7 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
           SnackBar(
             content: Text(
               deltaSeconds < 0
-                  ? '⏪ Retrocediendo ${deltaSeconds.abs()}s...'
+                  ? '⏪ Retrocediendo ${deltaSeconds.abs()}s en el búfer...'
                   : '⏩ Adelantando +${deltaSeconds}s...',
             ),
             duration: const Duration(milliseconds: 1100),
@@ -583,8 +583,9 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
           ),
         );
       }
-
-    });
+    } catch (e) {
+      debugPrint('Aviso Timeshift seek: $e');
+    }
   }
 
   void _jumpBackToLiveStream() {
@@ -668,68 +669,38 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
     if (kIsWeb) return;
     final file = File(item.filePath);
     if (!file.existsSync()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('El archivo de grabación ya no existe en el dispositivo.'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('El archivo de grabación ya no existe en el dispositivo.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
       return;
     }
 
-    final currentToken = ++_zappingToken;
     setState(() {
       _selectedSection = 'En Vivo';
-      _isVideoLoading = true;
+      _isVideoLoading = false;
       _hasVideoError = false;
       _isPlayingDvrRecording = true;
       _isBehindLive = true;
       _activeDvrTitle = '🔴 DVR: ${item.programTitle}';
+      _activeDvrFilePath = item.filePath;
       _showOsd = true;
     });
 
-    final oldCtrl = _videoPlayerController;
-    _videoPlayerController = null;
-    _disposeControllerInBackground(oldCtrl);
+    _triggerOsdTimer();
 
-    try {
-      final fileCtrl = VideoPlayerController.file(
-        file,
-        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-      );
-      await fileCtrl.initialize();
-
-      if (!mounted || currentToken != _zappingToken) {
-        _disposeControllerInBackground(fileCtrl);
-        return;
-      }
-
-      _videoPlayerController = fileCtrl;
-      await _videoPlayerController!.setVolume(_currentVolume);
-      await _videoPlayerController!.play();
-
-      setState(() {
-        _isVideoLoading = false;
-        _hasVideoError = false;
-      });
-      _triggerOsdTimer();
-
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('▶️ Reproduciendo desde el inicio: ${item.programTitle}'),
+          content: Text('▶️ Reproduciendo grabación: ${item.programTitle}'),
           backgroundColor: const Color(0xFF7B2CBF),
           duration: const Duration(seconds: 3),
         ),
       );
-    } catch (e) {
-      debugPrint('Error abriendo archivo DVR local: $e');
-      if (mounted) {
-        setState(() {
-          _isVideoLoading = false;
-          _hasVideoError = true;
-          _isPlayingDvrRecording = false;
-        });
-      }
     }
   }
 
@@ -4787,9 +4758,9 @@ void _openParentalManagerDialog() async {
                 isBehindLive: _isBehindLive,
                 isPlayingDvrRecording: _isPlayingDvrRecording,
                 dvrRecordingTitle: _activeDvrTitle,
-                onPlayPause: () {
+               onPlayPause: () {
                   setState(() {
-                    _isBehindLive = !_isBehindLive;
+                    _isPlayerPaused = !_isPlayerPaused;
                   });
                 },
                 onNext: _nextChannel,
@@ -5166,10 +5137,10 @@ void _openParentalManagerDialog() async {
                   isPlayingDvrRecording: _isPlayingDvrRecording,
                   dvrRecordingTitle: _activeDvrTitle,
                   onPlayPause: () {
-                    setState(() {
-                      _isBehindLive = !_isBehindLive;
-                    });
-                  },
+                  setState(() {
+                    _isPlayerPaused = !_isPlayerPaused;
+                  });
+                },
                   onNext: _nextChannel,
                   onPrevious: _previousChannel,
                   onRewind15s: () => _seekRelativeSeconds(-15),
