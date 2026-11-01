@@ -50,6 +50,9 @@ class ZappingChannelOverlay extends StatefulWidget {
 class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseController;
+  
+  // NUEVO: Memoria interna para saber si el usuario retrocedió manualmente
+  bool _isManuallyBehindLive = false;
 
   @override
   void initState() {
@@ -225,23 +228,32 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                     AnimatedBuilder(
                       animation: _pulseController,
                       builder: (context, child) {
+                        // Modificado para responder a _isManuallyBehindLive
                         final Color badgeColor = widget.isPlayingDvrRecording
                             ? const Color(0xFF9D4EDD)
-                            : widget.isBehindLive
+                            : (widget.isBehindLive || _isManuallyBehindLive)
                                 ? const Color(0xFFFFB703)
                                 : (isSyncing
                                     ? const Color(0xFFFFB703)
                                     : const Color(0xFFFF1744));
 
+                        // Modificado para responder a _isManuallyBehindLive
                         final String badgeLabel = widget.isPlayingDvrRecording
                             ? 'GRABACIÓN'
-                            : widget.isBehindLive
+                            : (widget.isBehindLive || _isManuallyBehindLive)
                                 ? 'DIFERIDO'
                                 : (isSyncing ? 'SINCRONIZANDO...' : 'EN VIVO');
 
                         return GestureDetector(
-                          onTap: (widget.isBehindLive || widget.isPlayingDvrRecording)
-                              ? widget.onJumpToLive
+                          onTap: (widget.isBehindLive || widget.isPlayingDvrRecording || _isManuallyBehindLive)
+                              ? () {
+                                  if (widget.onJumpToLive != null) {
+                                    widget.onJumpToLive!();
+                                    setState(() {
+                                      _isManuallyBehindLive = false;
+                                    });
+                                  }
+                                }
                               : null,
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -370,13 +382,19 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
+                      // Modificado para activar estado Diferido al retroceder
                       if (widget.onRewind15s != null) ...[
                         _buildCompactControlChip(
                           icon: Icons.replay_10,
                           label: '-15s',
                           borderColor: Colors.white24,
                           bgColor: Colors.white10,
-                          onTap: widget.onRewind15s!,
+                          onTap: () {
+                            widget.onRewind15s!();
+                            setState(() {
+                              _isManuallyBehindLive = true;
+                            });
+                          },
                         ),
                         const SizedBox(width: 5),
                       ],
@@ -386,11 +404,14 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                           label: '+15s',
                           borderColor: Colors.white24,
                           bgColor: Colors.white10,
-                          onTap: widget.onForward15s!,
+                          onTap: () {
+                            widget.onForward15s!();
+                          },
                         ),
                         const SizedBox(width: 5),
                       ],
-                      if ((widget.isBehindLive || widget.isPlayingDvrRecording) &&
+                      // Modificado para mostrarse si se activó _isManuallyBehindLive
+                      if ((widget.isBehindLive || widget.isPlayingDvrRecording || _isManuallyBehindLive) &&
                           widget.onJumpToLive != null) ...[
                         _buildCompactControlChip(
                           icon: Icons.bolt,
@@ -398,7 +419,12 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                           borderColor: const Color(0xFF00E5FF),
                           bgColor: const Color(0xFF00E5FF).withValues(alpha: 0.22),
                           iconColor: const Color(0xFF00E5FF),
-                          onTap: widget.onJumpToLive!,
+                          onTap: () {
+                            widget.onJumpToLive!();
+                            setState(() {
+                              _isManuallyBehindLive = false;
+                            });
+                          },
                         ),
                         const SizedBox(width: 5),
                       ],
@@ -431,29 +457,31 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                         ),
                         const SizedBox(width: 5),
                       ],
-_buildCompactControlChip(
-                     icon: Icons.settings_input_component,
-                     label: 'ADV',
-                     borderColor: const Color(0xFF00E5FF).withValues(alpha: 0.6),
-                     bgColor: const Color(0xFF00E5FF).withValues(alpha: 0.2),
-                     iconColor: const Color(0xFF00E5FF),
-                     onTap: () {
-                       showModalBottomSheet(
-                         context: context,
-                         backgroundColor: Colors.transparent,
-                         isScrollControlled: true,
-                         builder: (context) => const AdvancedPlayerSettingsSheet(),
-                       );
-                     },
-                   ),
-                   const SizedBox(width: 5),
-                      
+                      _buildCompactControlChip(
+                        icon: Icons.settings_input_component,
+                        label: 'ADV',
+                        borderColor: const Color(0xFF00E5FF).withValues(alpha: 0.6),
+                        bgColor: const Color(0xFF00E5FF).withValues(alpha: 0.2),
+                        iconColor: const Color(0xFF00E5FF),
+                        onTap: () {
+                          showModalBottomSheet(
+                            context: context,
+                            backgroundColor: Colors.transparent,
+                            isScrollControlled: true,
+                            builder: (context) => const AdvancedPlayerSettingsSheet(),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 5),
                       _buildCompactControlChip(
                         icon: Icons.skip_previous,
                         label: 'CH-',
                         borderColor: Colors.white12,
                         bgColor: Colors.white10,
-                        onTap: widget.onPrevious,
+                        onTap: () {
+                          widget.onPrevious();
+                          setState(() { _isManuallyBehindLive = false; }); // Reset visual
+                        },
                       ),
                       const SizedBox(width: 5),
                       _buildCompactControlChip(
@@ -461,7 +489,10 @@ _buildCompactControlChip(
                         label: 'CH+',
                         borderColor: Colors.white12,
                         bgColor: Colors.white10,
-                        onTap: widget.onNext,
+                        onTap: () {
+                          widget.onNext();
+                          setState(() { _isManuallyBehindLive = false; }); // Reset visual
+                        },
                       ),
                       const SizedBox(width: 8),
                       Text(
