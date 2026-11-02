@@ -2143,6 +2143,16 @@ void _openParentalManagerDialog() async {
                 },
               ),
               _buildSettingsTile(
+                icon: Icons.remove_red_eye_rounded,
+                color: const Color(0xFF00E5FF),
+                title: 'Accesibilidad e Inclusión (Daltonismo)',
+                subtitle: 'Modo actual: $_selectedColorBlindMode',
+                onTap: () {
+                  Navigator.pop(ctx);
+                 _showColorBlindSelectorDialog();
+                },
+               ),
+              _buildSettingsTile(
                 icon: Icons.person_outline,
                 color: const Color(0xFF00E5FF),
                 title: 'Editar Perfil, Avatar y Hardware',
@@ -2267,7 +2277,45 @@ void _openParentalManagerDialog() async {
       ),
     );
   }
+void _showColorBlindSelectorDialog() {
+    final modes = [
+      'Normal',
+      'Protanopía (Ceguera al rojo)',
+      'Deuteranopía (Ceguera al verde)',
+      'Tritanopía (Ceguera al azul)',
+    ];
 
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF131A29),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Filtros de Inclusión (Daltonismo)',
+          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: modes.map((m) {
+            final sel = _selectedColorBlindMode == m;
+            return ListTile(
+              leading: Icon(
+                sel ? Icons.radio_button_checked : Icons.radio_button_off,
+                color: const Color(0xFF00E5FF),
+              ),
+              title: Text(m, style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+              onTap: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('color_blind_mode', m);
+                setState(() => _selectedColorBlindMode = m);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
   Widget _buildSettingsTile({
     required IconData icon,
     required Color color,

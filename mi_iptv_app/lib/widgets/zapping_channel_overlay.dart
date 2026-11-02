@@ -457,6 +457,24 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                         ),
                         const SizedBox(width: 5),
                       ],
+
+                      // Botón CC (Subtítulos)
+                        _buildCompactControlChip(
+                          icon: Icons.closed_caption,
+                          label: 'CC',
+                          borderColor: Colors.white24,
+                          bgColor: Colors.white10,
+                          onTap: () {
+                         // Acción rápida para subtítulos o aviso
+                          ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                         content: Text('CC: Los subtítulos automáticos se activarán si el canal los incluye.'),
+                         duration: Duration(seconds: 2),
+                             ),
+                           );
+                         },
+                        ),
+                         const SizedBox(width: 5),
                       _buildCompactControlChip(
                         icon: Icons.settings_input_component,
                         label: 'ADV',
