@@ -9,12 +9,14 @@ class ProVideoPlayer extends StatefulWidget {
   final String streamUrl;
   final double volume;
   final bool isPlaying;
+  final String colorBlindMode; // Nuevo parámetro para daltonismo ('Normal', 'Protanopía', 'Deuteranopía', 'Tritanopía')
 
   const ProVideoPlayer({
     super.key,
     required this.streamUrl,
     this.volume = 1.0,
     this.isPlaying = true,
+    this.colorBlindMode = 'Normal',
   });
 
   @override
@@ -59,6 +61,17 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       if (desired != 'Español (Predeterminado)' && desired.isNotEmpty) {
         _onAudioTrackChanged();
       }
+      
+      // Auto-activar subtítulos si están disponibles y se detectan
+      if (tracks.subtitle.isNotEmpty && player.state.track.subtitle.id == '-1') {
+        for (var sub in tracks.subtitle) {
+          final lang = (sub.language ?? '').toLowerCase();
+          if (lang.contains('es') || lang.contains('spa')) {
+            player.setSubtitleTrack(sub);
+            break;
+          }
+        }
+      }
     });
   }
 
@@ -79,7 +92,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
         (platform as dynamic).setProperty('stream-buffer-size', '4k'); 
         (platform as dynamic).setProperty('network-timeout', '3');
         (platform as dynamic).setProperty('aid', '1');
-        (platform as dynamic).setProperty('sid', 'no');
+        // (platform as dynamic).setProperty('sid', 'no'); // COMENTADO: Permite subtítulos automáticos nativos
         (platform as dynamic).setProperty(
           'stream-lavf-o',
           'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,fflags=+nobuffer+fastseek+flush_packets',
@@ -191,25 +204,55 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   void play() => player.play();
   void pause() => player.pause();
 
-  // 🛠️ FIX 1: Obligar al motor a arrancar después del retroceso
   void seekRelative(int seconds) {
     final currentPos = player.state.position;
     final target = currentPos + Duration(seconds: seconds);
     
     player.seek(target < Duration.zero ? Duration.zero : target).then((_) {
-      // Fuerza la reproducción inmediata para que no se quede pausado en el pasado
       if (widget.isPlaying) {
         player.play();
       }
     });
   }
 
-  // 🚀 FIX 2: Crear el puente directo para volver al "En Vivo" real
   void jumpToLiveEdge() {
-    // La forma más perfecta y sin lag de volver al vivo en IPTV es limpiar el buffer y resintonizar
     _tuneChannelFast(widget.streamUrl);
     if (widget.isPlaying) {
       player.play();
+    }
+  }
+
+  // 🎨 Filtros de matriz de color para Daltonismo
+  ColorFilter _getColorBlindFilter(String mode) {
+    switch (mode) {
+      case 'Protanopía (Ceguera al rojo)':
+        return const ColorFilter.matrix(<double>[
+          0.567, 0.433, 0.0, 0.0, 0.0,
+          0.558, 0.442, 0.0, 0.0, 0.0,
+          0.0, 0.242, 0.758, 0.0, 0.0,
+          0.0, 0.0, 0.0, 1.0, 0.0,
+        ]);
+      case 'Deuteranopía (Ceguera al verde)':
+        return const ColorFilter.matrix(<double>[
+          0.625, 0.375, 0.0, 0.0, 0.0,
+          0.7, 0.3, 0.0, 0.0, 0.0,
+          0.0, 0.3, 0.7, 0.0, 0.0,
+          0.0, 0.0, 0.0, 1.0, 0.0,
+        ]);
+      case 'Tritanopía (Ceguera al azul)':
+        return const ColorFilter.matrix(<double>[
+          0.95, 0.05, 0.0, 0.0, 0.0,
+          0.0, 0.433, 0.567, 0.0, 0.0,
+          0.0, 0.475, 0.525, 0.0, 0.0,
+          0.0, 0.0, 0.0, 1.0, 0.0,
+        ]);
+      default:
+        return const ColorFilter.matrix(<double>[
+          1, 0, 0, 0, 0,
+          0, 1, 0, 0, 0,
+          0, 0, 1, 0, 0,
+          0, 0, 0, 1, 0,
+        ]);
     }
   }
 
@@ -241,10 +284,14 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    return Video(
-      controller: controller,
-      controls: NoVideoControls,
-      fill: Colors.black,
+    // Aplicamos el filtro de daltonismo al componente de video en tiempo real
+    return ColorFiltered(
+      colorFilter: _getColorBlindFilter(widget.colorBlindMode),
+      child: Video(
+        controller: controller,
+        controls: NoVideoControls,
+        fill: Colors.black,
+      ),
     );
   }
 }

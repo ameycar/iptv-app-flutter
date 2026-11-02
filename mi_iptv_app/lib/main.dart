@@ -347,6 +347,7 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
   bool _showLiveChat = false;
   bool _isPremiumToolsExpanded = false;
   String _selectedLanguage = 'Español (Latinoamérica)';
+  String _selectedColorBlindMode = 'Normal';
   int _customAvatarIdx = 0;
   Map<String, String> _customChannelAliases = {};
   Color _accentColor = const Color(0xFF00E5FF);
@@ -1388,7 +1389,7 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
       return;
     }
 
-    // 3. Pase directo e instantáneo en 0ms a ProVideoPlayer (estilo TiviMate)
+    // 3. Pase directo e instantáneo en 0ms a ProVideoPlayer (estilo streemer)
     setState(() {
       _isVideoLoading = false;
       _hasVideoError = false;
@@ -3478,7 +3479,8 @@ void _openParentalManagerDialog() async {
               ? ProVideoPlayer(
                   streamUrl: _channels[_selectedChannelIndex].streamUrl,
                   volume: _currentVolume,
-                  isPlaying: !_isBehindLive,
+                  isPlaying: !_isPlayerPaused,
+                  colorBlindMode: _selectedColorBlindMode, // <--- Agrégalo aquí
                 )
               : const CircularProgressIndicator(color: Color(0xFF00E5FF)),
         ),
@@ -4716,6 +4718,7 @@ void _openParentalManagerDialog() async {
                   streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null) ? _activeDvrFilePath! : activeChannel.streamUrl,
                   volume: _currentVolume,
                   isPlaying: !_isPlayerPaused,
+                  colorBlindMode: _selectedColorBlindMode, // <--- Agrégalo aquí
                 ),
               )
             else if (_hasVideoError)
@@ -5096,7 +5099,7 @@ void _openParentalManagerDialog() async {
         body: Stack(
           children: [
             if (isReady)
-              if (isReady)
+             if (isReady)
               Center(
                 key: const ValueKey<String>('persistent_immersive_decoder'),
                 child: ProVideoPlayer(
@@ -5104,6 +5107,7 @@ void _openParentalManagerDialog() async {
                   streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null) ? _activeDvrFilePath! : activeChannel.streamUrl,
                   volume: _currentVolume,
                   isPlaying: !_isPlayerPaused,
+                  colorBlindMode: _selectedColorBlindMode, // <--- Agrégalo aquí
                 ),
               )
             else
