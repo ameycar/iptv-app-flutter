@@ -4326,8 +4326,8 @@ void _showColorBlindSelectorDialog() {
                     icon: Icons.phone_android,
                     color: const Color(0xFF7B2CBF),
                     title: 'Yape',
-                    subtitle: '931573805 • Titular: CARLOS ACOSTA',
-                    copyText: '931573805',
+                    subtitle: '905823660 • Titular: CARLOS ACOSTA',
+                    copyText: '905823660',
                   ),
                   const SizedBox(height: 8),
                   _buildPaymentTile(
