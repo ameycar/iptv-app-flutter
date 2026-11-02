@@ -17,6 +17,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 import 'models/channel_model.dart';
 import 'models/user_model.dart';
