@@ -177,6 +177,8 @@ void main() async {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
     MediaKit.ensureInitialized();
+    await Hive.initFlutter();
+    await Hive.openBox('watch_progress_box');
     try {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
@@ -323,7 +325,51 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Añade esta línea con tus variables de estado en _HomeScreenState:
 final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>();
   static const MethodChannel _pipChannel = MethodChannel('ameycar.tv/pip');
+ Timer? _progressSyncTimer;
+  String? _currentStreamId;
+  int _currentPlaybackPosition = 0;
 
+  // Capa Local (Alta Frecuencia): Guarda el progreso en Hive cada 5 segundos
+  void _startProgressSync(String streamId) {
+    _currentStreamId = streamId;
+    _progressSyncTimer?.cancel();
+    
+    _progressSyncTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (_currentStreamId != null) {
+        try {
+          final box = Hive.box('watch_progress_box');
+          await box.put(_currentStreamId, {
+            'position': _currentPlaybackPosition,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          });
+        } catch (_) {}
+      }
+    });
+  }
+
+  // Capa Nube (Baja Frecuencia): Envía el último registro local hacia Firestore
+  Future<void> _syncProgressToCloud() async {
+    if (_currentStreamId == null) return;
+    try {
+      final box = Hive.box('watch_progress_box');
+      final localData = box.get(_currentStreamId);
+
+      if (localData != null) {
+        final user = AuthService.currentUser;
+        if (user != null && AuthService.isFirebaseAvailable) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.id)
+              .collection('watch_history')
+              .doc(_currentStreamId)
+              .set({
+            'position': localData['position'],
+            'last_updated': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+      }
+    } catch (_) {}
+  }
   List<ChannelModel> _channels = [];
   int _selectedChannelIndex = 0;
   String _selectedCategory = 'Favoritos (⭐)';
@@ -472,7 +518,13 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
       });
     }
   }
-
+ @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      _syncProgressToCloud(); // Sincroniza a Firestore cuando la app pasa a segundo plano o se cierra
+    }
+  }
   void _startListeningRemoteTvCommands() {
     RemoteControlService.listenToCommands(
       onCommandReceived: (command, extra) async {
@@ -5281,6 +5333,8 @@ void _showColorBlindSelectorDialog() {
 
   @override
   void dispose() {
+    _progressSyncTimer?.cancel();
+    _syncProgressToCloud();
     WidgetsBinding.instance.removeObserver(this);
     RemoteControlService.dispose();
     _syncAutoPipState(false);
