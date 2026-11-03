@@ -6,6 +6,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel_model.dart';
 import '../widgets/pro_video_player.dart';
 import '../widgets/focusable_tv_card.dart';
+import '../widgets/tv_content_row.dart'; // Importación de la Fase 6: Carruseles
 
 class TvDashboardScreen extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -19,13 +20,13 @@ class TvDashboardScreen extends StatefulWidget {
 class _TvDashboardScreenState extends State<TvDashboardScreen> {
   final FocusScopeNode _tvFocusScope = FocusScopeNode();
   final FocusNode _sidebarFocusNode = FocusNode();
-  final FocusNode _zappingFocusNode = FocusNode(); // Foco para el riel de canales
+  final FocusNode _zappingFocusNode = FocusNode();
   
   bool _isSidebarExpanded = false;
-  bool _isZappingOverlayVisible = false; // Estado del panel inferior
+  bool _isZappingOverlayVisible = false;
   Timer? _zappingHideTimer;
 
-  String _selectedSection = 'En Vivo';
+  String _selectedSection = 'Inicio VIP';
   List<ChannelModel> _channels = [];
   int _selectedChannelIndex = 0;
 
@@ -38,11 +39,10 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   Future<void> _loadChannels() async {
     try {
       final box = Hive.box('watch_progress_box');
-      // Lógica futura para cargar tus canales reales desde Firestore/Hive
+      // Lógica futura para cargar canales
     } catch (_) {}
   }
 
-  // Lógica para mostrar el panel de zapping y ocultarlo tras 5 segundos
   void _triggerZappingOverlay() {
     setState(() => _isZappingOverlayVisible = true);
     FocusScope.of(context).requestFocus(_zappingFocusNode);
@@ -77,11 +77,9 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         const SingleActivator(LogicalKeyboardKey.arrowRight): () {
           if (_isSidebarExpanded) {
             setState(() => _isSidebarExpanded = false);
-            // Si cerramos el menú, devolvemos el foco al área general
             FocusScope.of(context).requestFocus(_tvFocusScope);
           }
         },
-        // Al presionar Arriba o Abajo, activamos el Overlay de Zapping
         const SingleActivator(LogicalKeyboardKey.arrowUp): _triggerZappingOverlay,
         const SingleActivator(LogicalKeyboardKey.arrowDown): _triggerZappingOverlay,
       },
@@ -92,49 +90,37 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           backgroundColor: const Color(0xFF070A10),
           body: Stack(
             children: [
-              // 1. CAPA DE VIDEO: Reproductor de fondo activo
+              // 1. CAPA DE VIDEO (Fondo Absoluto)
               const Positioned.fill(
                 child: Center(
                   child: Text(
-                    'REPRODUCTOR DE FONDO ACTIVO\n(Presiona Arriba/Abajo para Zapping)',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white24, fontSize: 24, fontWeight: FontWeight.bold),
+                    'STREAMING DE FONDO',
+                    style: TextStyle(color: Colors.white10, fontSize: 32, fontWeight: FontWeight.w900),
                   ),
                 ),
               ),
 
-              // Superposición semi-transparente base
+              // Oscurecimiento base para resaltar la UI
               Positioned.fill(
-                child: Container(
-                  color: Colors.black.withOpacity(0.35),
-                ),
+                child: Container(color: Colors.black.withOpacity(0.4)),
               ),
 
-              // 2. CAPA ÁREA PRINCIPAL
+              // 2. CAPA ÁREA PRINCIPAL (VOD & Inteligencia Artificial)
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 300),
                 left: _isSidebarExpanded ? 260 : 90,
-                right: 20,
-                top: 20,
-                bottom: 20,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _selectedSection,
-                      style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                ),
+                right: 0, // Se extiende hasta el borde derecho
+                top: 0,
+                bottom: 0,
+                child: _buildMainVODContent(),
               ),
 
               // 3. CAPA ZAPPING OVERLAY (Riel inferior Translúcido)
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 300),
                 curve: Curves.easeOutCubic,
-                bottom: _isZappingOverlayVisible ? 0 : -200, // Se esconde debajo de la pantalla
-                left: _isSidebarExpanded ? 240 : 70, // Respeta el espacio del sidebar
+                bottom: _isZappingOverlayVisible ? 0 : -200,
+                left: _isSidebarExpanded ? 240 : 70,
                 right: 0,
                 height: 160,
                 child: ClipRRect(
@@ -144,46 +130,33 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.65),
-                        border: Border(
-                          top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1),
-                        ),
+                        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1)),
                       ),
                       padding: const EdgeInsets.only(top: 16, bottom: 16, left: 16),
                       child: Focus(
                         focusNode: _zappingFocusNode,
                         child: ListView.builder(
                           scrollDirection: Axis.horizontal,
-                          itemCount: 10, // Mock de 10 canales
+                          itemCount: 10,
                           itemBuilder: (context, index) {
                             return Padding(
                               padding: const EdgeInsets.only(right: 16),
                               child: FocusableTvCard(
                                 focusedScale: 1.1,
                                 focusedBorderColor: const Color(0xFF00E5FF),
-                                onTap: () {
-                                  // Al hacer clic (OK) en el control, reiniciamos el temporizador
-                                  _triggerZappingOverlay();
-                                  debugPrint('Cambiar al canal $index');
-                                },
+                                onTap: () => _triggerZappingOverlay(),
                                 child: Container(
                                   width: 180,
                                   decoration: BoxDecoration(
                                     gradient: LinearGradient(
                                       begin: Alignment.topCenter,
                                       end: Alignment.bottomCenter,
-                                      colors: [
-                                        const Color(0xFF1E2336),
-                                        Colors.black.withOpacity(0.8),
-                                      ],
+                                      colors: [const Color(0xFF1E2336), Colors.black.withOpacity(0.8)],
                                     ),
                                   ),
                                   child: Stack(
                                     children: [
-                                      // Imagen de fondo/logo del canal
-                                      const Center(
-                                        child: Icon(Icons.tv, color: Colors.white24, size: 48),
-                                      ),
-                                      // Textos EPG sobre la tarjeta
+                                      const Center(child: Icon(Icons.tv, color: Colors.white24, size: 48)),
                                       Positioned(
                                         bottom: 12,
                                         left: 12,
@@ -192,16 +165,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                           crossAxisAlignment: CrossAxisAlignment.start,
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            Text(
-                                              'CH ${index + 1}',
-                                              style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold),
-                                            ),
-                                            const Text(
-                                              'Programa en Vivo',
-                                              style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
+                                            Text('CH ${index + 1}', style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold)),
+                                            const Text('En Vivo Ahora', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
                                           ],
                                         ),
                                       ),
@@ -218,7 +183,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 ),
               ),
 
-              // 4. CAPA SIDEBAR TRANSLÚCIDO (Siempre por encima del zapping en el eje Z)
+              // 4. CAPA SIDEBAR TRANSLÚCIDO
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 300),
                 curve: Curves.easeInOut,
@@ -227,18 +192,13 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 bottom: 0,
                 width: _isSidebarExpanded ? 240 : 70,
                 child: ClipRRect(
-                  borderRadius: const BorderRadius.only(
-                    topRight: Radius.circular(16),
-                    bottomRight: Radius.circular(16),
-                  ),
+                  borderRadius: const BorderRadius.only(topRight: Radius.circular(16), bottomRight: Radius.circular(16)),
                   child: BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.55),
-                        border: Border(
-                          right: BorderSide(color: Colors.white.withOpacity(0.15), width: 1),
-                        ),
+                        border: Border(right: BorderSide(color: Colors.white.withOpacity(0.15), width: 1)),
                       ),
                       padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 8),
                       child: Focus(
@@ -249,18 +209,16 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                             _isSidebarExpanded
                                 ? const Padding(
                                     padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                    child: Text(
-                                      'AMEYCAR TV',
-                                      style: TextStyle(color: Color(0xFF00E5FF), fontSize: 18, fontWeight: FontWeight.black, letterSpacing: 1.2),
-                                    ),
+                                    child: Text('AMEYCAR TV', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 18, fontWeight: FontWeight.black, letterSpacing: 1.2)),
                                   )
                                 : const Icon(Icons.tv_rounded, color: Color(0xFF00E5FF), size: 28),
                             const SizedBox(height: 32),
                             Expanded(
                               child: ListView(
                                 children: [
-                                  _buildSidebarItem(Icons.live_tv, 'En Vivo', 'En Vivo'),
-                                  _buildSidebarItem(Icons.movie, 'Películas', 'Películas'),
+                                  _buildSidebarItem(Icons.home_filled, 'Inicio VIP', 'Inicio VIP'),
+                                  _buildSidebarItem(Icons.live_tv, 'Televisión', 'Televisión'),
+                                  _buildSidebarItem(Icons.movie, 'Cine IA', 'Cine IA'),
                                   _buildSidebarItem(Icons.tv, 'Series', 'Series'),
                                   _buildSidebarItem(Icons.settings, 'Ajustes', 'Ajustes'),
                                 ],
@@ -280,6 +238,178 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     );
   }
 
+  // --- NUEVA SECCIÓN MAGISTRAL: El Área de Contenido ---
+  Widget _buildMainVODContent() {
+    return SingleChildScrollView(
+      clipBehavior: Clip.none,
+      physics: const BouncingScrollPhysics(),
+      child: Padding(
+        padding: const EdgeInsets.only(top: 32.0, bottom: 80.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Título Dinámico
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+              child: Text(
+                _selectedSection,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 38,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.5,
+                  shadows: [Shadow(color: Colors.black87, blurRadius: 15, offset: Offset(0, 5))],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // El "Gancho": Hero Banner Inteligente
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+              child: _buildHeroBanner(),
+            ),
+            const SizedBox(height: 48),
+
+            // Los Carruseles Magnéticos
+            const TvContentRow(
+              title: '🔮 Selección de IA para Carlos',
+              items: ['El Creador', 'Dune: Parte 2', 'Oppenheimer', 'Interstellar', 'Blade Runner 2049', 'Matrix Resurrecciones'],
+              height: 240,
+              cardWidth: 160,
+            ),
+            const SizedBox(height: 32),
+            const TvContentRow(
+              title: '⏱️ Continuar Viendo',
+              items: ['The Last of Us - S1:E3', 'Gladiador', 'Succession - S4:E1'],
+              height: 160,
+              cardWidth: 280, // Aspect Ratio 16:9 para episodios
+            ),
+            const SizedBox(height: 32),
+            const TvContentRow(
+              title: '🔥 Estrenos Premium',
+              items: ['Spider-Man', 'John Wick 4', 'Barbie', 'Super Mario Bros', 'Fast X'],
+              height: 240,
+              cardWidth: 160,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- EL HERO BANNER (El diseño impactante superior) ---
+  Widget _buildHeroBanner() {
+    return FocusableTvCard(
+      focusedScale: 1.02, // Escala suave por ser un elemento tan grande
+      focusedBorderColor: const Color(0xFF00E5FF),
+      onTap: () => debugPrint('Reproducir Contenido Destacado'),
+      child: Container(
+        height: 340,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF131726), Color(0xFF0A0C14)],
+          ),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 25, offset: const Offset(0, 15)),
+          ],
+        ),
+        child: Stack(
+          children: [
+            // Patrón de fondo tecnológico (Sin imágenes de internet para que cargue ultra rápido)
+            Positioned(
+              right: -60,
+              top: -60,
+              child: Icon(Icons.hub_outlined, size: 400, color: const Color(0xFF00E5FF).withOpacity(0.04)),
+            ),
+            Positioned(
+              right: 60,
+              bottom: -40,
+              child: Icon(Icons.movie_filter_rounded, size: 250, color: Colors.deepPurpleAccent.withOpacity(0.05)),
+            ),
+            
+            // Textos y Botones
+            Padding(
+              padding: const EdgeInsets.all(40.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  // Etiqueta de IA
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00E5FF).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.auto_awesome, color: Color(0xFF00E5FF), size: 16),
+                        SizedBox(width: 8),
+                        Text('Recomendación IA: 98% Afinidad', style: TextStyle(color: Color(0xFF00E5FF), fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  
+                  // Título principal
+                  const Text(
+                    'AMEYCAR ORIGINALS',
+                    style: TextStyle(color: Colors.white, fontSize: 42, fontWeight: FontWeight.w900, letterSpacing: 2.5),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  // Descripción
+                  const Text(
+                    'Disfruta de la mejor experiencia cinematográfica en casa.\nUn catálogo infinito seleccionado inteligentemente para ti.',
+                    style: TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
+                  ),
+                  const SizedBox(height: 32),
+                  
+                  // Botones de acción
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.play_arrow_rounded, color: Colors.black, size: 26),
+                            SizedBox(width: 8),
+                            Text('Reproducir', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 17)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.white.withOpacity(0.2)),
+                        ),
+                        child: const Text('Más Información', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 17)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSidebarItem(IconData icon, String title, String section) {
     final isSelected = _selectedSection == section;
     return FocusableTvCard(
@@ -291,7 +421,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           _selectedSection = section;
           _isSidebarExpanded = false;
         });
-        // Retornamos el foco al área general al seleccionar
         FocusScope.of(context).requestFocus(_tvFocusScope);
       },
       child: AnimatedContainer(
