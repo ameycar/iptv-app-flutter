@@ -31,6 +31,7 @@ import 'screens/admin_panel_screen.dart';
 import 'screens/family_panel_screen.dart';
 import 'screens/profile_selector_screen.dart';
 import 'screens/remote_control_screen.dart';
+import 'screens/tv_dashboard_screen.dart';
 import 'widgets/alexa_voice_sheet.dart';
 import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
@@ -215,6 +216,12 @@ class AmeycarTVApp extends StatefulWidget {
 }
 
 class _AmeycarTVAppState extends State<AmeycarTVApp> {
+  bool _isTvDevice(BuildContext context) {
+    final media = MediaQuery.maybeOf(context);
+    if (media == null) return false;
+    // Si la pantalla es horizontal/panorámica y mayor a 900 de ancho, o ratio TV
+    return media.size.width >= 900 && media.size.aspectRatio > 1.3;
+  }
   bool _isCheckingAuth = true;
   bool _isAuthenticated = false;
   bool _hasSelectedProfile = false;
@@ -291,15 +298,27 @@ class _AmeycarTVAppState extends State<AmeycarTVApp> {
                             });
                           },
                         )
-                      : HomeScreen(
-                          onLogout: () {
-                            setState(() {
-                              _isAuthenticated = false;
-                              _hasSelectedProfile = false;
-                              _customDirectScreen = null;
-                            });
-                          },
-                        )
+                      : Builder(
+                  builder: (ctx) {
+                    final voidCallbackLogout = () {
+                      setState(() {
+                        _isAuthenticated = false;
+                        _hasSelectedProfile = false;
+                        _customDirectScreen = null;
+                      });
+                    };
+
+                    if (_isTvDevice(ctx)) {
+                      return TvDashboardScreen(
+                        onLogout: voidCallbackLogout,
+                      );
+                    }
+
+                    return HomeScreen(
+                      onLogout: voidCallbackLogout,
+                    );
+                  },
+                )
               : LoginScreen(
                   onLoginSuccess: ({Widget? directScreen}) {
                     setState(() {
