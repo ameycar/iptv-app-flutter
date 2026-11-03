@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel_model.dart';
 import '../widgets/pro_video_player.dart';
+import '../widgets/focusable_tv_card.dart'; // Importación del nuevo motor de foco D-Pad
 
 class TvDashboardScreen extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -121,7 +122,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                   )
                                 : const Icon(Icons.tv_rounded, color: Color(0xFF00E5FF), size: 28),
                             const SizedBox(height: 32),
-                            // Secciones del menú
+                            // Secciones del menú con el motor FocusableTvCard
                             Expanded(
                               child: ListView(
                                 children: [
@@ -168,43 +169,41 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   Widget _buildSidebarItem(IconData icon, String title, String section) {
     final isSelected = _selectedSection == section;
-    return Padding(
+    
+    // Reemplazamos Material e InkWell por nuestro nuevo FocusableTvCard
+    return FocusableTvCard(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () {
-            setState(() {
-              _selectedSection = section;
-              _isSidebarExpanded = false;
-            });
-          },
-          borderRadius: BorderRadius.circular(12),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            decoration: BoxDecoration(
-              color: isSelected ? Colors.white.withOpacity(0.12) : Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisAlignment: _isSidebarExpanded ? MainAxisAlignment.start : MainAxisAlignment.center,
-              children: [
-                Icon(icon, color: isSelected ? const Color(0xFF00E5FF) : Colors.white60, size: 22),
-                if (_isSidebarExpanded) ...[
-                  const SizedBox(width: 16),
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: isSelected ? Colors.white : Colors.white60,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      fontSize: 15,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+      focusedBorderColor: const Color(0xFF00E5FF),
+      focusedScale: 1.05, // Escala sutil para el menú lateral
+      onTap: () {
+        setState(() {
+          _selectedSection = section;
+          _isSidebarExpanded = false;
+        });
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white.withOpacity(0.12) : Colors.transparent,
+          // Eliminamos el borderRadius aquí porque el FocusableTvCard ya lo maneja
+        ),
+        child: Row(
+          mainAxisAlignment: _isSidebarExpanded ? MainAxisAlignment.start : MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: isSelected ? const Color(0xFF00E5FF) : Colors.white60, size: 22),
+            if (_isSidebarExpanded) ...[
+              const SizedBox(width: 16),
+              Text(
+                title,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.white60,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
