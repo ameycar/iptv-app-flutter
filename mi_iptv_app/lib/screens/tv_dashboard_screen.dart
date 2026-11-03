@@ -209,7 +209,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                             _isSidebarExpanded
                                 ? const Padding(
                                     padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                    child: Text('AMEYCAR TV', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 18, fontWeight: FontWeight.black, letterSpacing: 1.2)),
+                                    child: Text('AMEYCAR TV', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
                                   )
                                 : const Icon(Icons.tv_rounded, color: Color(0xFF00E5FF), size: 28),
                             const SizedBox(height: 32),
