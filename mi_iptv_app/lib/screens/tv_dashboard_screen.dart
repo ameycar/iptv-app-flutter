@@ -91,13 +91,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           body: Stack(
             children: [
               // 1. CAPA DE VIDEO (Fondo Absoluto)
-              const Positioned.fill(
-                child: Center(
-                  child: Text(
-                    'STREAMING DE FONDO',
-                    style: TextStyle(color: Colors.white10, fontSize: 32, fontWeight: FontWeight.w900),
-                  ),
-                ),
+              Positioned.fill(
+                child: ProVideoPlayer(), 
               ),
 
               // Oscurecimiento base para resaltar la UI
