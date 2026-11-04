@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'focusable_tv_card.dart';
+import '../models/channel_model.dart'; // Importamos tu modelo real
 
 class TvContentRow extends StatefulWidget {
   final String title;
-  final List<String> items; // Lista temporal para maquetar
+  final List<ChannelModel> items; // Lista de datos VIP reales
   final double height;
   final double cardWidth;
+  final void Function(ChannelModel channel)? onItemTap; // Gatillo de reproducción
 
   const TvContentRow({
     super.key,
@@ -13,6 +15,7 @@ class TvContentRow extends StatefulWidget {
     required this.items,
     this.height = 220.0,
     this.cardWidth = 140.0,
+    this.onItemTap,
   });
 
   @override
@@ -30,6 +33,10 @@ class _TvContentRowState extends State<TvContentRow> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.items.isEmpty) {
+      return const SizedBox.shrink(); // Si no hay contenido en esta categoría, ocultamos el carril
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -54,13 +61,19 @@ class _TvContentRowState extends State<TvContentRow> {
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             itemCount: widget.items.length,
             itemBuilder: (context, index) {
+              final item = widget.items[index];
+
               return Padding(
                 padding: const EdgeInsets.only(right: 16.0),
                 child: FocusableTvCard(
                   focusedScale: 1.1,
                   focusedBorderColor: const Color(0xFF00E5FF),
                   onTap: () {
-                    debugPrint('Reproducir: ${widget.items[index]}');
+                    if (widget.onItemTap != null) {
+                      widget.onItemTap!(item); // Avisa al Dashboard para reproducir
+                    } else {
+                      debugPrint('Reproducir: ${item.name}');
+                    }
                   },
                   child: Container(
                     width: widget.cardWidth,
@@ -71,8 +84,20 @@ class _TvContentRowState extends State<TvContentRow> {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        // Imagen de portada (Placeholder para mockup)
-                        const Icon(Icons.movie_creation_outlined, color: Colors.white12, size: 64),
+                        // IMAGEN DE PORTADA / LOGO REAL
+                        if (item.logoUrl.isNotEmpty)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.network(
+                              item.logoUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const Icon(Icons.movie_creation_outlined, color: Colors.white12, size: 64);
+                              },
+                            ),
+                          )
+                        else
+                          const Icon(Icons.movie_creation_outlined, color: Colors.white12, size: 64),
                         
                         // Gradiente oscuro en la parte inferior para resaltar el texto
                         Container(
@@ -88,13 +113,13 @@ class _TvContentRowState extends State<TvContentRow> {
                             ),
                           ),
                         ),
-                        // Título de la película/serie
+                        // TÍTULO REAL DE LA PELÍCULA/SERIE
                         Positioned(
                           bottom: 12,
                           left: 12,
                           right: 12,
                           child: Text(
-                            widget.items[index],
+                            item.name,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 14,
@@ -104,6 +129,25 @@ class _TvContentRowState extends State<TvContentRow> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        
+                        // ETIQUETA HD / 4K Opcional
+                        if (item.resolution.isNotEmpty)
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.7),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5), width: 0.5),
+                              ),
+                              child: Text(
+                                item.resolution.contains('4K') ? '4K' : (item.resolution.contains('720') ? 'HD' : 'FHD'),
+                                style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 9, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),

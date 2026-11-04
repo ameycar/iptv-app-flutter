@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-// Eliminamos services.dart porque ya no forzamos las teclas manualmente
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel_model.dart';
 import '../widgets/pro_video_player.dart';
 import '../widgets/focusable_tv_card.dart';
-import '../widgets/tv_content_row.dart'; // Importación de la Fase 6: Carruseles
+import '../widgets/tv_content_row.dart'; 
+import '../services/m3u_sanitizer_service.dart'; // INYECCIÓN: Tu motor de listas
 
 class TvDashboardScreen extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -27,7 +27,13 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   Timer? _zappingHideTimer;
 
   String _selectedSection = 'Inicio VIP';
+  
+  // LISTAS DE CONTENIDO REAL
   List<ChannelModel> _channels = [];
+  List<ChannelModel> _movies = [];
+  List<ChannelModel> _series = [];
+  List<ChannelModel> _liveTv = [];
+  
   int _selectedChannelIndex = 0;
 
   @override
@@ -36,11 +42,50 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     _loadChannels();
   }
 
+  // EL MOTOR DE ARRANQUE: Separando el contenido por categoría
   Future<void> _loadChannels() async {
     try {
-      final box = Hive.box('watch_progress_box');
-      // Lógica futura para cargar canales
-    } catch (_) {}
+      // NOTA: Aquí eventualmente llamarás a tu base de datos (Ej: box.get('playlist_real')).
+      // Por ahora, usamos tus canales curados para encender el motor sin errores.
+      final loadedChannels = M3USanitizerService.getCuratedChannels();
+      
+      setState(() {
+        _channels = loadedChannels;
+        // Filtramos usando tu clasificador estricto
+        _movies = _channels.where((c) => c.contentType == 'movie').toList();
+        _series = _channels.where((c) => c.contentType == 'series').toList();
+        _liveTv = _channels.where((c) => c.contentType == 'live').toList();
+        
+        if (_channels.isNotEmpty) {
+          _selectedChannelIndex = 0; // Reproduce el primer contenido disponible de fondo
+        }
+      });
+    } catch (e) {
+      debugPrint("Error cargando canales reales: $e");
+    }
+  }
+
+  // EL GATILLO DE REPRODUCCIÓN (Llamado desde los carruseles)
+  void _playContent(ChannelModel channel) {
+    final index = _channels.indexOf(channel);
+    if (index != -1) {
+      setState(() {
+        _selectedChannelIndex = index;
+      });
+      
+      // Feedback visual premium al reproducir
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('▶ Reproduciendo: ${channel.name}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+          backgroundColor: const Color(0xFF00E5FF),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          width: 400,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
   }
 
   void _triggerZappingOverlay() {
@@ -66,7 +111,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // CIRUGÍA 1: Eliminado el CallbackShortcuts para liberar el control remoto
     return FocusScope(
       node: _tvFocusScope,
       autofocus: true,
@@ -89,7 +133,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             // 2. CAPA ÁREA PRINCIPAL (VOD & Inteligencia Artificial)
             AnimatedPositioned(
               duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOutCubic, // Animación más fluida
+              curve: Curves.easeOutCubic,
               left: _isSidebarExpanded ? 260 : 90,
               right: 0, 
               top: 0,
@@ -97,7 +141,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               child: _buildMainVODContent(),
             ),
 
-            // 3. CAPA ZAPPING OVERLAY (Riel inferior Translúcido)
+            // 3. CAPA ZAPPING OVERLAY CON CANALES REALES EN VIVO
             AnimatedPositioned(
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeOutCubic,
@@ -119,17 +163,24 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                       focusNode: _zappingFocusNode,
                       child: ListView.builder(
                         scrollDirection: Axis.horizontal,
-                        itemCount: 10,
+                        itemCount: _liveTv.length, // Usamos la lista de canales en vivo
                         itemBuilder: (context, index) {
+                          final liveChannel = _liveTv[index];
+                          final isCurrentPlaying = _channels.isNotEmpty && _channels[_selectedChannelIndex].id == liveChannel.id;
+                          
                           return Padding(
                             padding: const EdgeInsets.only(right: 16),
                             child: FocusableTvCard(
                               focusedScale: 1.1,
                               focusedBorderColor: const Color(0xFF00E5FF),
-                              onTap: () => _triggerZappingOverlay(),
+                              onTap: () {
+                                _triggerZappingOverlay(); // Mantiene el overlay visible
+                                _playContent(liveChannel); // Lanza la reproducción
+                              },
                               child: Container(
                                 width: 180,
                                 decoration: BoxDecoration(
+                                  border: isCurrentPlaying ? Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5), width: 2) : null,
                                   gradient: LinearGradient(
                                     begin: Alignment.topCenter,
                                     end: Alignment.bottomCenter,
@@ -138,7 +189,16 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                 ),
                                 child: Stack(
                                   children: [
-                                    const Center(child: Icon(Icons.tv, color: Colors.white24, size: 48)),
+                                    if (liveChannel.logoUrl.isNotEmpty)
+                                      Center(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(24.0),
+                                          child: Image.network(liveChannel.logoUrl, errorBuilder: (c,e,s) => const Icon(Icons.tv, color: Colors.white24, size: 48)),
+                                        ),
+                                      )
+                                    else
+                                      const Center(child: Icon(Icons.tv, color: Colors.white24, size: 48)),
+                                    
                                     Positioned(
                                       bottom: 12,
                                       left: 12,
@@ -147,8 +207,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Text('CH ${index + 1}', style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold)),
-                                          const Text('En Vivo Ahora', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                                          Text('CH ${liveChannel.number}', style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold)),
+                                          Text(liveChannel.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
                                         ],
                                       ),
                                     ),
@@ -172,13 +232,12 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               left: 0,
               top: 0,
               bottom: 0,
-              width: _isSidebarExpanded ? 240 : 75, // Ajuste milimétrico para el menú cerrado
+              width: _isSidebarExpanded ? 240 : 75,
               child: ClipRRect(
                 borderRadius: const BorderRadius.only(topRight: Radius.circular(16), bottomRight: Radius.circular(16)),
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
                   child: Focus(
-                    // CIRUGÍA 2: El menú detecta el control remoto automáticamente
                     focusNode: _sidebarFocusNode,
                     onFocusChange: (hasFocus) {
                       if (mounted) {
@@ -187,7 +246,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     },
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.65), // Oscurecido para más contraste
+                        color: Colors.black.withOpacity(0.65),
                         border: Border(right: BorderSide(color: Colors.white.withOpacity(0.15), width: 1)),
                       ),
                       padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 10),
@@ -201,7 +260,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                 )
                               : const Padding(
                                   padding: EdgeInsets.only(top: 8.0),
-                                  child: Icon(Icons.tv_rounded, color: Color(0xFF00E5FF), size: 32), // Icono más grande
+                                  child: Icon(Icons.tv_rounded, color: Color(0xFF00E5FF), size: 32),
                                 ),
                           const SizedBox(height: 32),
                           Expanded(
@@ -228,7 +287,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     );
   }
 
-  // --- EL ÁREA DE CONTENIDO (Mantenida intacta) ---
+  // --- EL ÁREA DE CONTENIDO (CARRUSELES ALIMENTADOS POR EL PARSER REAL) ---
   Widget _buildMainVODContent() {
     return SingleChildScrollView(
       clipBehavior: Clip.none,
@@ -238,7 +297,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Título Dinámico
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20.0),
               child: Text(
@@ -254,42 +312,54 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             ),
             const SizedBox(height: 24),
 
-            // El "Gancho": Hero Banner Inteligente
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20.0),
               child: _buildHeroBanner(),
             ),
             const SizedBox(height: 48),
 
-            // Los Carruseles Magnéticos
-            const TvContentRow(
-              title: '🔮 Selección de IA para Carlos',
-              items: ['El Creador', 'Dune: Parte 2', 'Oppenheimer', 'Interstellar', 'Blade Runner 2049', 'Matrix Resurrecciones'],
-              height: 240,
-              cardWidth: 160,
-            ),
-            const SizedBox(height: 32),
-            const TvContentRow(
-              title: '⏱️ Continuar Viendo',
-              items: ['The Last of Us - S1:E3', 'Gladiador', 'Succession - S4:E1'],
-              height: 160,
-              cardWidth: 280, // Aspect Ratio 16:9 para episodios
-            ),
-            const SizedBox(height: 32),
-            const TvContentRow(
-              title: '🔥 Estrenos Premium',
-              items: ['Spider-Man', 'John Wick 4', 'Barbie', 'Super Mario Bros', 'Fast X'],
-              height: 240,
-              cardWidth: 160,
-            ),
+            // Carrusel de Películas Reales
+            if (_movies.isNotEmpty)
+              TvContentRow(
+                title: '🍿 Películas Premium',
+                items: _movies,
+                height: 240,
+                cardWidth: 160,
+                onItemTap: _playContent, // Pasamos el gatillo al componente
+              ),
+            if (_movies.isNotEmpty) const SizedBox(height: 32),
+            
+            // Carrusel de Series Reales (Formato ancho 16:9)
+            if (_series.isNotEmpty)
+              TvContentRow(
+                title: '📺 Series Destacadas',
+                items: _series,
+                height: 160,
+                cardWidth: 280, 
+                onItemTap: _playContent,
+              ),
+            if (_series.isNotEmpty) const SizedBox(height: 32),
+            
+            // Carrusel de Canales en Vivo
+            if (_liveTv.isNotEmpty)
+              TvContentRow(
+                title: '🔴 Televisión en Vivo',
+                items: _liveTv,
+                height: 240,
+                cardWidth: 160,
+                onItemTap: _playContent,
+              ),
           ],
         ),
       ),
     );
   }
 
-  // --- EL HERO BANNER (CIRUGÍA 3: Botones interactivos que brillan con el control) ---
   Widget _buildHeroBanner() {
+    // Si hay películas, mostramos la primera en el banner principal
+    final featuredTitle = _movies.isNotEmpty ? _movies.first.name : 'AMEYCAR ORIGINALS';
+    final featuredDesc = _movies.isNotEmpty ? 'Estreno recomendado exclusivamente para ti.' : 'Disfruta de la mejor experiencia cinematográfica en casa.';
+    
     return Container(
       height: 340,
       width: double.infinity,
@@ -300,32 +370,38 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           end: Alignment.bottomRight,
           colors: [Color(0xFF131726), Color(0xFF0A0C14)],
         ),
+        image: _movies.isNotEmpty && _movies.first.logoUrl.isNotEmpty
+            ? DecorationImage(
+                image: NetworkImage(_movies.first.logoUrl),
+                fit: BoxFit.cover,
+                colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.6), BlendMode.darken),
+              )
+            : null,
         boxShadow: [
           BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 25, offset: const Offset(0, 15)),
         ],
       ),
       child: Stack(
         children: [
-          // Patrón de fondo tecnológico
-          Positioned(
-            right: -60,
-            top: -60,
-            child: Icon(Icons.hub_outlined, size: 400, color: const Color(0xFF00E5FF).withOpacity(0.04)),
-          ),
-          Positioned(
-            right: 60,
-            bottom: -40,
-            child: Icon(Icons.movie_filter_rounded, size: 250, color: Colors.deepPurpleAccent.withOpacity(0.05)),
-          ),
+          if (_movies.isEmpty || _movies.first.logoUrl.isEmpty) ...[
+            Positioned(
+              right: -60,
+              top: -60,
+              child: Icon(Icons.hub_outlined, size: 400, color: const Color(0xFF00E5FF).withOpacity(0.04)),
+            ),
+            Positioned(
+              right: 60,
+              bottom: -40,
+              child: Icon(Icons.movie_filter_rounded, size: 250, color: Colors.deepPurpleAccent.withOpacity(0.05)),
+            ),
+          ],
           
-          // Textos y Botones
           Padding(
             padding: const EdgeInsets.all(40.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                // Etiqueta de IA
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   decoration: BoxDecoration(
@@ -344,24 +420,27 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 ),
                 const SizedBox(height: 20),
                 
-                // Título principal
-                const Text(
-                  'AMEYCAR ORIGINALS',
-                  style: TextStyle(color: Colors.white, fontSize: 42, fontWeight: FontWeight.w900, letterSpacing: 2.5),
+                Text(
+                  featuredTitle,
+                  style: const TextStyle(color: Colors.white, fontSize: 42, fontWeight: FontWeight.w900, letterSpacing: 2.5, shadows: [Shadow(color: Colors.black, blurRadius: 10)]),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 12),
                 
-                // Descripción
-                const Text(
-                  'Disfruta de la mejor experiencia cinematográfica en casa.\nUn catálogo infinito seleccionado inteligentemente para ti.',
-                  style: TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
+                Text(
+                  featuredDesc,
+                  style: const TextStyle(color: Colors.white70, fontSize: 16, height: 1.5, shadows: [Shadow(color: Colors.black, blurRadius: 5)]),
                 ),
                 const SizedBox(height: 32),
                 
-                // Botones de acción mejorados para TV
                 Row(
                   children: [
-                    _buildHeroButton('Reproducir', Icons.play_arrow_rounded, true),
+                    _buildHeroButton('Reproducir', Icons.play_arrow_rounded, true, onTap: () {
+                      if (_movies.isNotEmpty) {
+                        _playContent(_movies.first);
+                      }
+                    }),
                     const SizedBox(width: 20),
                     _buildHeroButton('Más Información', Icons.info_outline_rounded, false),
                   ],
@@ -374,8 +453,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     );
   }
 
-  // Helper para los botones del Hero Banner
-  Widget _buildHeroButton(String text, IconData icon, bool isPrimary) {
+  Widget _buildHeroButton(String text, IconData icon, bool isPrimary, {VoidCallback? onTap}) {
     return Builder(
       builder: (context) {
         return Focus(
@@ -383,7 +461,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             builder: (context) {
               final hasFocus = Focus.of(context).hasFocus;
               return GestureDetector(
-                onTap: () => debugPrint('$text presionado'),
+                onTap: onTap ?? () => debugPrint('$text presionado'),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
                   padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
@@ -414,7 +492,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     );
   }
 
-  // --- CIRUGÍA 4: Ítems del Menú Lateral con "Cursor" brillante ---
   Widget _buildSidebarItem(IconData icon, String title, String section) {
     final isSelected = _selectedSection == section;
     return Builder(
@@ -426,7 +503,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               return GestureDetector(
                 onTap: () {
                   setState(() => _selectedSection = section);
-                  // La barra lateral se cerrará automáticamente al perder el foco
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
