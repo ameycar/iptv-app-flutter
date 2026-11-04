@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart'; // NUEVO: Para abrir WhatsApp
+import 'package:url_launcher/url_launcher.dart'; 
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import '../services/language_service.dart';
@@ -107,7 +107,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // MÉTODO NUEVO: Menú inferior de Soporte Técnico Directo vía WhatsApp para Login
   void _openSupportMenu() {
     showModalBottomSheet(
       context: context,
@@ -166,12 +165,12 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // MÉTODO NUEVO: Widget de opciones de Soporte con enlace a WhatsApp
   Widget _buildSupportOption({required IconData icon, required String title, required String subtitle, required String message}) {
-    return InkWell(
-      onTap: () async {
-        Navigator.pop(context); // Cierra el menú
-        final phoneNumber = "51905823660"; // COLOCA AQUÍ TU NÚMERO REAL
+    // CAMBIO: ElevatedButton nativo para soportar D-Pad en el menú WhatsApp
+    return ElevatedButton(
+      onPressed: () async {
+        Navigator.pop(context); 
+        final phoneNumber = "51905823660"; 
         final url = Uri.parse("whatsapp://send?phone=$phoneNumber&text=${Uri.encodeComponent(message)}");
         
         try {
@@ -185,39 +184,42 @@ class _LoginScreenState extends State<LoginScreen> {
           debugPrint("Error al abrir WhatsApp: $e");
         }
       },
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E293B),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white10),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(color: const Color(0xFF00E5FF).withOpacity(0.1), shape: BoxShape.circle),
-              child: Icon(icon, color: const Color(0xFF00E5FF), size: 20),
+      style: ButtonStyle(
+        padding: MaterialStateProperty.all(const EdgeInsets.all(12)),
+        backgroundColor: MaterialStateProperty.resolveWith((states) {
+          if (states.contains(MaterialState.focused)) return const Color(0xFF00E5FF);
+          return const Color(0xFF1E293B);
+        }),
+        shape: MaterialStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+        side: MaterialStateProperty.resolveWith((states) {
+          if (states.contains(MaterialState.focused)) return const BorderSide(color: Colors.white, width: 2);
+          return const BorderSide(color: Colors.white10, width: 1);
+        }),
+        elevation: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? 10.0 : 0.0),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: Colors.black.withOpacity(0.2), shape: BoxShape.circle),
+            child: Icon(icon, color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                Text(subtitle, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+              ],
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                  Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
-                ],
-              ),
-            ),
-            const Icon(Icons.arrow_forward_ios, color: Colors.white38, size: 14),
-          ],
-        ),
+          ),
+          const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
+        ],
       ),
     );
   }
 
-// MÉTODO NUEVO: Modal de Auto-Registro para Clientes Nuevos (Con 3 Días VIP)
- // MÉTODO NUEVO: Modal de Auto-Registro Corporativo (Nombre + Apellido)
   void _showRegisterModal() {
     final nameCtrl = TextEditingController();
     final lastNameCtrl = TextEditingController();
@@ -265,7 +267,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         prefixIcon: const Icon(Icons.person, color: Color(0xFFC77DFF)),
                         filled: true,
                         fillColor: const Color(0xFF1E293B),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2)),
                       ),
                     ),
                   ),
@@ -279,7 +282,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         labelStyle: const TextStyle(color: Colors.white54),
                         filled: true,
                         fillColor: const Color(0xFF1E293B),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2)),
                       ),
                     ),
                   ),
@@ -296,7 +300,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   prefixIcon: const Icon(Icons.lock, color: Color(0xFF00E5FF)),
                   filled: true,
                   fillColor: const Color(0xFF1E293B),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2)),
                 ),
               ),
               const SizedBox(height: 24),
@@ -304,10 +309,17 @@ class _LoginScreenState extends State<LoginScreen> {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00E5FF),
-                    foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  style: ButtonStyle(
+                    backgroundColor: MaterialStateProperty.resolveWith((states) {
+                      if (states.contains(MaterialState.focused)) return Colors.white;
+                      return const Color(0xFF00E5FF);
+                    }),
+                    foregroundColor: MaterialStateProperty.all(Colors.black),
+                    shape: MaterialStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                    side: MaterialStateProperty.resolveWith((states) {
+                      if (states.contains(MaterialState.focused)) return const BorderSide(color: Color(0xFF00E5FF), width: 3);
+                      return BorderSide.none;
+                    }),
                   ),
                   onPressed: isRegistering
                       ? null
@@ -316,7 +328,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           
                           setModalState(() => isRegistering = true);
                           
-                          // Llamamos a la nueva función que recibe Nombre y Apellido
                           final res = await AuthService.registerUser(
                             nameCtrl.text.trim(),
                             lastNameCtrl.text.trim(),
@@ -328,16 +339,14 @@ class _LoginScreenState extends State<LoginScreen> {
                           if (mounted) {
                             Navigator.pop(ctx);
                             
-                            // Mostrarle su nuevo usuario autogenerado en un cartel
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(res.message, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                                 backgroundColor: res.isSuccess ? const Color(0xFF00C853) : Colors.redAccent,
-                                duration: const Duration(seconds: 6), // Más tiempo para que alcance a leerlo
+                                duration: const Duration(seconds: 6),
                               ),
                             );
                             
-                            // Autocompletamos las cajas del login para que solo tenga que presionar entrar
                             if (res.isSuccess && res.user != null) {
                               setState(() {
                                 _usernameController.text = res.user!.username;
@@ -385,21 +394,22 @@ class _LoginScreenState extends State<LoginScreen> {
               Navigator.pop(ctx);
               widget.onLoginSuccess();
             },
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Colors.white24),
+            style: ButtonStyle(
+              side: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? const BorderSide(color: Color(0xFF00E5FF), width: 2) : const BorderSide(color: Colors.white24)),
+              foregroundColor: MaterialStateProperty.all(Colors.white),
             ),
-            child: const Text('Ver TV / Canales', style: TextStyle(color: Colors.white)),
+            child: const Text('Ver TV / Canales'),
           ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(ctx);
               widget.onLoginSuccess(directScreen: const AdminPanelScreen());
             },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00E5FF),
-              foregroundColor: Colors.black,
+            style: ButtonStyle(
+              backgroundColor: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? Colors.white : const Color(0xFF00E5FF)),
+              foregroundColor: MaterialStateProperty.all(Colors.black),
             ),
-            child: const Text('Panel de Clientes & HW', style: TextStyle(fontWeight: FontWeight.bold)),
+            child: const Text('Panel de Clientes', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -499,10 +509,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       '1-Toque: Solicitar Cambio Express',
                       style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12),
                     ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFFD600),
-                      minimumSize: const Size(double.infinity, 40),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    style: ButtonStyle(
+                      backgroundColor: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? Colors.white : const Color(0xFFFFD600)),
+                      foregroundColor: MaterialStateProperty.all(Colors.black),
+                      minimumSize: MaterialStateProperty.all(const Size(double.infinity, 40)),
+                      shape: MaterialStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                     ),
                   ),
 
@@ -517,10 +528,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       'Ingresar PIN de 4 dígitos (WhatsApp)',
                       style: TextStyle(color: Color(0xFF00E5FF), fontSize: 12),
                     ),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFF00E5FF)),
-                      minimumSize: const Size(double.infinity, 40),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    style: ButtonStyle(
+                      side: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? const BorderSide(color: Colors.white, width: 2) : const BorderSide(color: Color(0xFF00E5FF))),
+                      minimumSize: MaterialStateProperty.all(const Size(double.infinity, 40)),
+                      shape: MaterialStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                     ),
                   ),
                 ],
@@ -567,7 +578,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 counterText: '',
                 filled: true,
                 fillColor: Colors.white.withOpacity(0.08),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2)),
               ),
             ),
           ],
@@ -575,7 +587,8 @@ class _LoginScreenState extends State<LoginScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            style: ButtonStyle(foregroundColor: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? Colors.white : Colors.white54)),
+            child: const Text('Cancelar'),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -597,8 +610,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 }
               }
             },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E5FF)),
-            child: const Text('Validar PIN', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+            style: ButtonStyle(
+              backgroundColor: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? Colors.white : const Color(0xFF00E5FF)),
+              foregroundColor: MaterialStateProperty.all(Colors.black),
+            ),
+            child: const Text('Validar PIN', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -660,35 +676,25 @@ class _LoginScreenState extends State<LoginScreen> {
       orElse: () => LanguageService.supportedLanguages.first,
     );
 
-    return InkWell(
-      onTap: () => _showLanguageSelectorDialog(context),
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: const Color(0xFF101726),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(currentLang['flag'] ?? '🌐', style: const TextStyle(fontSize: 15)),
-            const SizedBox(width: 6),
-            Text(
-              currentLang['name'] ?? '',
-              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-            ),
-            const Icon(Icons.arrow_drop_down, color: Color(0xFF00E5FF), size: 18),
-          ],
-        ),
+    // CAMBIO: Botón TV friendly para el idioma
+    return OutlinedButton.icon(
+      onPressed: () => _showLanguageSelectorDialog(context),
+      icon: Text(currentLang['flag'] ?? '🌐', style: const TextStyle(fontSize: 15)),
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            currentLang['name'] ?? '',
+            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+          const Icon(Icons.arrow_drop_down, color: Color(0xFF00E5FF), size: 18),
+        ],
+      ),
+      style: ButtonStyle(
+        backgroundColor: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? const Color(0xFF00E5FF).withOpacity(0.3) : const Color(0xFF101726)),
+        side: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? const BorderSide(color: Color(0xFF00E5FF), width: 2) : BorderSide(color: const Color(0xFF00E5FF).withOpacity(0.5))),
+        shape: MaterialStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
+        padding: MaterialStateProperty.all(const EdgeInsets.symmetric(horizontal: 10, vertical: 6)),
       ),
     );
   }
@@ -804,6 +810,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
                                 ),
                                 const SizedBox(height: 6),
+                                // CAMBIO: TextField con FocusedBorder nativo
                                 TextField(
                                   controller: _usernameController,
                                   style: const TextStyle(color: Colors.white),
@@ -814,6 +821,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     filled: true,
                                     fillColor: Colors.white.withOpacity(0.04),
                                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2)),
                                   ),
                                 ),
 
@@ -824,6 +832,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
                                 ),
                                 const SizedBox(height: 6),
+                                // CAMBIO: TextField con FocusedBorder nativo
                                 TextField(
                                   controller: _passwordController,
                                   obscureText: _obscurePassword,
@@ -842,19 +851,30 @@ class _LoginScreenState extends State<LoginScreen> {
                                     filled: true,
                                     fillColor: Colors.white.withOpacity(0.04),
                                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2)),
                                   ),
                                 ),
 
                                 const SizedBox(height: 22),
 
+                                // CAMBIO: ElevatedButton nativo que se ilumina con el D-Pad
                                 ElevatedButton(
                                   onPressed: _isLoading ? null : _doLogin,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF00E5FF),
-                                    foregroundColor: Colors.black,
-                                    minimumSize: const Size(double.infinity, 48),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                    elevation: 4,
+                                  style: ButtonStyle(
+                                    minimumSize: MaterialStateProperty.all(const Size(double.infinity, 48)),
+                                    shape: MaterialStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                                    backgroundColor: MaterialStateProperty.resolveWith((states) {
+                                      if (states.contains(MaterialState.disabled)) return Colors.grey;
+                                      if (states.contains(MaterialState.focused)) return Colors.white; 
+                                      return const Color(0xFF00E5FF);
+                                    }),
+                                    foregroundColor: MaterialStateProperty.all(Colors.black),
+                                    side: MaterialStateProperty.resolveWith((states) {
+                                      if (states.contains(MaterialState.focused)) return const BorderSide(color: Color(0xFF00E5FF), width: 3);
+                                      return BorderSide.none;
+                                    }),
+                                    elevation: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? 20.0 : 4.0),
+                                    shadowColor: MaterialStateProperty.all(const Color(0xFF00E5FF)),
                                   ),
                                   child: _isLoading
                                       ? const SizedBox(
@@ -870,46 +890,33 @@ class _LoginScreenState extends State<LoginScreen> {
                                 
                                 const SizedBox(height: 16),
                                 
-                                // NUEVO BOTÓN DE CREAR CUENTA
-Center(
-  child: InkWell(
-    onTap: _showRegisterModal,
-    borderRadius: BorderRadius.circular(12),
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF00E5FF).withOpacity(0.1),
-        border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.person_add_alt_1_rounded, color: Color(0xFF00E5FF), size: 20),
-          SizedBox(width: 10),
-          Text(
-            '¿No tienes cuenta? Crea una Gratis',
-            style: TextStyle(
-              color: Color(0xFF00E5FF),
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    ),
-  ),
-),
-const SizedBox(height: 16), // Espacio antes del botón de soporte
+                                // CAMBIO: Botón TV friendly para Crear Cuenta (Reemplazo el InkWell)
+                                OutlinedButton.icon(
+                                  onPressed: _showRegisterModal,
+                                  icon: const Icon(Icons.person_add_alt_1_rounded),
+                                  label: const Text('¿No tienes cuenta? Crea una Gratis'),
+                                  style: ButtonStyle(
+                                    minimumSize: MaterialStateProperty.all(const Size(double.infinity, 46)),
+                                    shape: MaterialStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                                    backgroundColor: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? const Color(0xFF00E5FF) : const Color(0xFF00E5FF).withOpacity(0.1)),
+                                    foregroundColor: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? Colors.black : const Color(0xFF00E5FF)),
+                                    side: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? const BorderSide(color: Colors.white, width: 2) : BorderSide(color: const Color(0xFF00E5FF).withOpacity(0.5))),
+                                    elevation: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? 15.0 : 0.0),
+                                  ),
+                                ),
+                                
+                                const SizedBox(height: 16), 
 
-                                // NUEVO BOTÓN DE SOPORTE BAJO EL LOGIN
+                                // CAMBIO: TextButton actualizado para captar Foco D-Pad
                                 Center(
                                   child: TextButton.icon(
                                     onPressed: _openSupportMenu,
-                                    icon: const Icon(Icons.support_agent, color: Color(0xFF00E5FF), size: 18),
-                                    label: const Text(
-                                      '¿Necesitas acceso o renovar? Contáctanos',
-                                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                                    icon: const Icon(Icons.support_agent, size: 18),
+                                    label: const Text('¿Necesitas acceso o renovar? Contáctanos', style: TextStyle(fontSize: 12)),
+                                    style: ButtonStyle(
+                                      foregroundColor: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? const Color(0xFF00E5FF) : Colors.white70),
+                                      backgroundColor: MaterialStateProperty.resolveWith((states) => states.contains(MaterialState.focused) ? const Color(0xFF00E5FF).withOpacity(0.1) : Colors.transparent),
+                                      shape: MaterialStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                                     ),
                                   ),
                                 ),
