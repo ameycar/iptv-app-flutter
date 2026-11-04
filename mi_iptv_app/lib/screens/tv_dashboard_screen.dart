@@ -92,7 +92,9 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             children: [
               // 1. CAPA DE VIDEO (Fondo Absoluto)
               Positioned.fill(
-                child: ProVideoPlayer(streamUrl: ''), 
+                child: ProVideoPlayer(
+                  streamUrl: _channels.isNotEmpty ? _channels[_selectedChannelIndex].streamUrl : '',
+                ), 
               ),
 
               // Oscurecimiento base para resaltar la UI
