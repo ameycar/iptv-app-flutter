@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter/services.dart'; // INYECCIÓN: Para capturar cierre con botón 'Atrás'
+import 'package:flutter/services.dart'; // IMPORTANTE para capturar el botón Atrás
 import '../models/playlist_item.dart';
 import '../services/reminder_service.dart';
 import 'active_reminders_dialog.dart';
@@ -20,7 +20,7 @@ class _EpgModalState extends State<EpgModal> {
   int _activeRemindersCount = 0;
   final Set<int> _activeIds = {};
 
-  // INYECCIÓN: Nodos de foco para la TV
+  // NODOS DE FOCO PARA SMART TV
   final FocusScopeNode _modalFocusScope = FocusScopeNode();
   final FocusNode _closeButtonNode = FocusNode();
   final FocusNode _remindersButtonNode = FocusNode();
@@ -130,13 +130,12 @@ class _EpgModalState extends State<EpgModal> {
       },
     ];
 
-    // INYECCIÓN: FocusScope general para capturar la tecla "Atrás" en Smart TV
+    // FOCO PRINCIPAL PARA CERRAR CON EL BOTÓN 'ATRÁS' DEL CONTROL
     return FocusScope(
       node: _modalFocusScope,
       autofocus: true,
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent) {
-          // Permite cerrar el modal EPG en TV presionando "Atrás" (Escape/Back)
           if (event.logicalKey == LogicalKeyboardKey.escape ||
               event.logicalKey == LogicalKeyboardKey.goBack) {
             Navigator.pop(context);
@@ -204,7 +203,7 @@ class _EpgModalState extends State<EpgModal> {
                       ],
                     ),
                   ),
-                  // INYECCIÓN: Foco para el botón Cerrar en TV
+                  // FOCO PARA EL BOTÓN CERRAR EN TV
                   Focus(
                     focusNode: _closeButtonNode,
                     builder: (context, focusNode) {
@@ -237,7 +236,7 @@ class _EpgModalState extends State<EpgModal> {
                     'Programas y Recordatorios:',
                     style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
                   ),
-                  // INYECCIÓN: Foco para el botón de Recordatorios en TV
+                  // FOCO PARA EL BOTÓN DE RECORDATORIOS EN TV
                   Focus(
                     focusNode: _remindersButtonNode,
                     builder: (context, focusNode) {
@@ -292,7 +291,7 @@ class _EpgModalState extends State<EpgModal> {
                     final timeRange = '${timeFormat.format(start)} - ${timeFormat.format(end)}';
                     final isAlarmSet = _activeIds.contains(pId);
 
-                    // INYECCIÓN: Focus para cada fila de programa
+                    // FOCO PARA CADA FILA DE PROGRAMA EN TV
                     return Focus(
                       builder: (context, focusNode) {
                         final hasFocus = Focus.of(context).hasFocus;
@@ -373,7 +372,6 @@ class _EpgModalState extends State<EpgModal> {
                               else
                                 IconButton(
                                   tooltip: isAlarmSet ? 'Desactivar recordatorio' : 'Activar recordatorio',
-                                  // Hacemos que el ícono de alarma se ilumine en TV si la fila tiene el foco
                                   icon: Icon(
                                     isAlarmSet ? Icons.alarm_on : Icons.alarm_add,
                                     color: isAlarmSet 
