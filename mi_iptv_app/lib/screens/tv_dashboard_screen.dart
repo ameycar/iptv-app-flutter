@@ -1,15 +1,17 @@
 import 'dart:async';
-import 'dart:convert'; // NUEVO: Para decodificar las listas de SharedPreferences
+import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // INYECCIÓN: Para capturar las flechas del control
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // NUEVO: Para acceder al caché
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/channel_model.dart';
 import '../widgets/pro_video_player.dart';
 import '../widgets/focusable_tv_card.dart';
 import '../widgets/tv_content_row.dart'; 
+import '../widgets/zapping_channel_overlay.dart'; // INYECCIÓN: El OSD de Pantalla Completa
 import '../services/m3u_sanitizer_service.dart';
-import '../services/auth_service.dart'; // NUEVO: Para saber qué perfil está activo
+import '../services/auth_service.dart';
 
 class TvDashboardScreen extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -31,7 +33,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   String _selectedSection = 'Inicio VIP';
   
-  // LISTAS DE CONTENIDO REAL
   List<ChannelModel> _channels = [];
   List<ChannelModel> _movies = [];
   List<ChannelModel> _series = [];
@@ -39,9 +40,14 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   
   int _selectedChannelIndex = 0;
 
-  // VARIABLES DE SINCRONIZACIÓN DE PROGRESO (NUEVAS)
   Timer? _progressSyncTimer;
   String? _currentStreamId;
+
+  // NUEVAS VARIABLES DE PANTALLA COMPLETA
+  bool _isFullScreenMode = false;
+  bool _showOsd = false;
+  bool _isPlayerPaused = false;
+  Timer? _osdHideTimer;
 
   @override
   void initState() {
@@ -49,13 +55,11 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     _loadChannels();
   }
 
-  // EL MOTOR DE ARRANQUE: Carga real desde SharedPreferences y Sanitizer
   Future<void> _loadChannels() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final String currentProfileId = AuthService.currentActiveProfile?.id ?? AuthService.currentUser?.id ?? 'default_profile';
       
-      // 1. Intentar cargar la lista desde el caché local
       final rawLists = prefs.getString('m3u_lists_$currentProfileId');
       String? savedM3u;
       
@@ -69,14 +73,12 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         }
       }
       
-      // Fallback a la antigua URL si no hay listas nuevas
       if (savedM3u == null || savedM3u.trim().isEmpty) {
         savedM3u = prefs.getString('saved_m3u_content');
       }
 
       List<ChannelModel> loadedChannels = [];
       
-      // 2. Procesar la lista M3U con tu Santizer Service inteligente
       if (savedM3u != null && savedM3u.isNotEmpty) {
         loadedChannels = M3USanitizerService.parseAndSanitize(savedM3u);
       } else {
@@ -93,7 +95,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           if (_channels.isNotEmpty) {
             final lastIndex = prefs.getInt('last_played_channel_index') ?? 0;
             _selectedChannelIndex = (lastIndex < _channels.length && lastIndex >= 0) ? lastIndex : 0;
-            // Iniciamos el tracker de progreso para el canal que arranca de fondo
             _startProgressSync(_channels[_selectedChannelIndex].streamUrl);
           }
         });
@@ -103,7 +104,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     }
   }
 
-  // MÉTODO NUEVO: Guarda el progreso en Hive cada 5 segundos
   void _startProgressSync(String streamUrl) {
     _currentStreamId = streamUrl;
     _progressSyncTimer?.cancel();
@@ -120,32 +120,64 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     });
   }
 
-  // EL GATILLO DE REPRODUCCIÓN (Llamado desde los carruseles)
+  // MÉTODO MEJORADO: Ahora entra a pantalla completa
   void _playContent(ChannelModel channel) async {
     final index = _channels.indexOf(channel);
     if (index != -1) {
       setState(() {
         _selectedChannelIndex = index;
+        _isFullScreenMode = true; // Inicia el Modo Cine
+        _showOsd = true; // Muestra los controles un rato
+        _isPlayerPaused = false;
       });
       
-      // Guardar el último índice y arrancar el tracker de progreso
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('last_played_channel_index', index);
       _startProgressSync(channel.streamUrl);
-      
-      // Feedback visual premium al reproducir
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('▶ Reproduciendo: ${channel.name}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-          backgroundColor: const Color(0xFF00E5FF),
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-          width: 400,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-      );
+      _triggerOsdTimer(); // Activa el auto-ocultado
     }
+  }
+
+  void _toggleOsd() {
+    setState(() {
+      _showOsd = !_showOsd;
+      if (_showOsd) {
+        _triggerOsdTimer();
+      } else {
+        _osdHideTimer?.cancel();
+      }
+    });
+  }
+
+  void _triggerOsdTimer() {
+    _osdHideTimer?.cancel();
+    _osdHideTimer = Timer(const Duration(seconds: 6), () {
+      if (mounted) {
+        setState(() => _showOsd = false);
+      }
+    });
+  }
+
+  void _nextChannel() {
+    if (_channels.isEmpty) return;
+    setState(() {
+      _selectedChannelIndex = (_selectedChannelIndex + 1) % _channels.length;
+      _isPlayerPaused = false;
+      _showOsd = true;
+    });
+    _triggerOsdTimer();
+    _startProgressSync(_channels[_selectedChannelIndex].streamUrl);
+  }
+
+  void _previousChannel() {
+    if (_channels.isEmpty) return;
+    setState(() {
+      _selectedChannelIndex = (_selectedChannelIndex - 1 < 0) ? _channels.length - 1 : _selectedChannelIndex - 1;
+      _isPlayerPaused = false;
+      _showOsd = true;
+    });
+    _triggerOsdTimer();
+    _startProgressSync(_channels[_selectedChannelIndex].streamUrl);
   }
 
   void _triggerZappingOverlay() {
@@ -162,8 +194,9 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   @override
   void dispose() {
-    _progressSyncTimer?.cancel(); // Limpiamos el temporizador al salir
+    _progressSyncTimer?.cancel();
     _zappingHideTimer?.cancel();
+    _osdHideTimer?.cancel();
     _tvFocusScope.dispose();
     _sidebarFocusNode.dispose();
     _zappingFocusNode.dispose();
@@ -172,177 +205,263 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return FocusScope(
-      node: _tvFocusScope,
-      autofocus: true,
-      child: Scaffold(
-        backgroundColor: const Color(0xFF070A10),
-        body: Stack(
-          children: [
-            // 1. CAPA DE VIDEO (Fondo Absoluto)
-            Positioned.fill(
-              child: ProVideoPlayer(
-                streamUrl: _channels.isNotEmpty ? _channels[_selectedChannelIndex].streamUrl : '',
-              ), 
-            ),
+    // PopScope protege el botón "Atrás" del control remoto
+    return PopScope(
+      canPop: !_isFullScreenMode,
+      onPopInvokedWithResult: (didPop, result) {
+        // Si estaba en pantalla completa, solo la apaga y vuelve al menú, sin salir de la app
+        if (!didPop && _isFullScreenMode) {
+          setState(() {
+            _isFullScreenMode = false;
+            _showOsd = false;
+          });
+        }
+      },
+      child: Focus(
+        node: _tvFocusScope,
+        autofocus: true,
+        // EL CEREBRO DEL CONTROL REMOTO PARA PANTALLA COMPLETA
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent) {
+            final key = event.logicalKey;
+            
+            if (_isFullScreenMode) {
+              // Tecla OK / SELECT
+              if (key == LogicalKeyboardKey.select || key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.gameButtonA) {
+                if (!_showOsd) {
+                  _toggleOsd();
+                  return KeyEventResult.handled;
+                }
+              }
+              
+              // Zapping rápido si el OSD NO está visible
+              if (!_showOsd) {
+                if (key == LogicalKeyboardKey.arrowUp) {
+                  _previousChannel();
+                  return KeyEventResult.handled;
+                }
+                if (key == LogicalKeyboardKey.arrowDown) {
+                  _nextChannel();
+                  return KeyEventResult.handled;
+                }
+                if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.arrowRight) {
+                  _toggleOsd();
+                  return KeyEventResult.handled;
+                }
+              }
+              
+              // Botones de hardware multimedia
+              if (key == LogicalKeyboardKey.mediaPlayPause) {
+                setState(() => _isPlayerPaused = !_isPlayerPaused);
+                return KeyEventResult.handled;
+              }
+            }
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Scaffold(
+          backgroundColor: const Color(0xFF070A10),
+          body: Stack(
+            children: [
+              // 1. CAPA DE VIDEO (Fondo Absoluto Siempre)
+              Positioned.fill(
+                child: ProVideoPlayer(
+                  streamUrl: _channels.isNotEmpty ? _channels[_selectedChannelIndex].streamUrl : '',
+                  isPlaying: !_isPlayerPaused,
+                ), 
+              ),
 
-            // Oscurecimiento base para resaltar la UI
-            Positioned.fill(
-              child: Container(color: Colors.black.withOpacity(0.4)),
-            ),
+              // ========================================================
+              // MODO DASHBOARD (Solo se muestra si NO estamos en FullScreen)
+              // ========================================================
+              if (!_isFullScreenMode) ...[
+                Positioned.fill(
+                  child: Container(color: Colors.black.withOpacity(0.4)),
+                ),
 
-            // 2. CAPA ÁREA PRINCIPAL (VOD & Inteligencia Artificial)
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOutCubic,
-              left: _isSidebarExpanded ? 260 : 90,
-              right: 0, 
-              top: 0,
-              bottom: 0,
-              child: _buildMainVODContent(),
-            ),
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOutCubic,
+                  left: _isSidebarExpanded ? 260 : 90,
+                  right: 0, 
+                  top: 0,
+                  bottom: 0,
+                  child: _buildMainVODContent(),
+                ),
 
-            // 3. CAPA ZAPPING OVERLAY CON CANALES REALES EN VIVO
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOutCubic,
-              bottom: _isZappingOverlayVisible ? 0 : -200,
-              left: _isSidebarExpanded ? 240 : 70,
-              right: 0,
-              height: 160,
-              child: ClipRRect(
-                borderRadius: const BorderRadius.only(topLeft: Radius.circular(24)),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.65),
-                      border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1)),
-                    ),
-                    padding: const EdgeInsets.only(top: 16, bottom: 16, left: 16),
-                    child: Focus(
-                      focusNode: _zappingFocusNode,
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _liveTv.length,
-                        itemBuilder: (context, index) {
-                          final liveChannel = _liveTv[index];
-                          final isCurrentPlaying = _channels.isNotEmpty && _channels[_selectedChannelIndex].id == liveChannel.id;
-                          
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 16),
-                            child: FocusableTvCard(
-                              focusedScale: 1.1,
-                              focusedBorderColor: const Color(0xFF00E5FF),
-                              onTap: () {
-                                _triggerZappingOverlay(); 
-                                _playContent(liveChannel); 
-                              },
-                              child: Container(
-                                width: 180,
-                                decoration: BoxDecoration(
-                                  border: isCurrentPlaying ? Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5), width: 2) : null,
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [const Color(0xFF1E2336), Colors.black.withOpacity(0.8)],
-                                  ),
-                                ),
-                                child: Stack(
-                                  children: [
-                                    if (liveChannel.logoUrl.isNotEmpty)
-                                      Center(
-                                        child: Padding(
-                                          padding: const EdgeInsets.all(24.0),
-                                          child: Image.network(liveChannel.logoUrl, errorBuilder: (c,e,s) => const Icon(Icons.tv, color: Colors.white24, size: 48)),
-                                        ),
-                                      )
-                                    else
-                                      const Center(child: Icon(Icons.tv, color: Colors.white24, size: 48)),
-                                    
-                                    Positioned(
-                                      bottom: 12,
-                                      left: 12,
-                                      right: 12,
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Text('CH ${liveChannel.number}', style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold)),
-                                          Text(liveChannel.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
-                                        ],
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOutCubic,
+                  bottom: _isZappingOverlayVisible ? 0 : -200,
+                  left: _isSidebarExpanded ? 240 : 70,
+                  right: 0,
+                  height: 160,
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.only(topLeft: Radius.circular(24)),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.65),
+                          border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1)),
+                        ),
+                        padding: const EdgeInsets.only(top: 16, bottom: 16, left: 16),
+                        child: Focus(
+                          focusNode: _zappingFocusNode,
+                          child: ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _liveTv.length,
+                            itemBuilder: (context, index) {
+                              final liveChannel = _liveTv[index];
+                              final isCurrentPlaying = _channels.isNotEmpty && _channels[_selectedChannelIndex].id == liveChannel.id;
+                              
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 16),
+                                child: FocusableTvCard(
+                                  focusedScale: 1.1,
+                                  focusedBorderColor: const Color(0xFF00E5FF),
+                                  onTap: () {
+                                    _triggerZappingOverlay(); 
+                                    _playContent(liveChannel); 
+                                  },
+                                  child: Container(
+                                    width: 180,
+                                    decoration: BoxDecoration(
+                                      border: isCurrentPlaying ? Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5), width: 2) : null,
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [const Color(0xFF1E2336), Colors.black.withOpacity(0.8)],
                                       ),
                                     ),
+                                    child: Stack(
+                                      children: [
+                                        if (liveChannel.logoUrl.isNotEmpty)
+                                          Center(
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(24.0),
+                                              child: Image.network(liveChannel.logoUrl, errorBuilder: (c,e,s) => const Icon(Icons.tv, color: Colors.white24, size: 48)),
+                                            ),
+                                          )
+                                        else
+                                          const Center(child: Icon(Icons.tv, color: Colors.white24, size: 48)),
+                                        
+                                        Positioned(
+                                          bottom: 12,
+                                          left: 12,
+                                          right: 12,
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text('CH ${liveChannel.number}', style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 12, fontWeight: FontWeight.bold)),
+                                              Text(liveChannel.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: _isSidebarExpanded ? 240 : 75,
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.only(topRight: Radius.circular(16), bottomRight: Radius.circular(16)),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                      child: Focus(
+                        focusNode: _sidebarFocusNode,
+                        onFocusChange: (hasFocus) {
+                          if (mounted) {
+                            setState(() => _isSidebarExpanded = hasFocus);
+                          }
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.65),
+                            border: Border(right: BorderSide(color: Colors.white.withOpacity(0.15), width: 1)),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 10),
+                          child: Column(
+                            crossAxisAlignment: _isSidebarExpanded ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+                            children: [
+                              _isSidebarExpanded
+                                  ? const Padding(
+                                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                      child: Text('AMEYCAR TV', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                                    )
+                                  : const Padding(
+                                      padding: EdgeInsets.only(top: 8.0),
+                                      child: Icon(Icons.tv_rounded, color: Color(0xFF00E5FF), size: 32),
+                                    ),
+                              const SizedBox(height: 32),
+                              Expanded(
+                                child: ListView(
+                                  children: [
+                                    _buildSidebarItem(Icons.home_filled, 'Inicio VIP', 'Inicio VIP'),
+                                    _buildSidebarItem(Icons.live_tv, 'Televisión', 'Televisión'),
+                                    _buildSidebarItem(Icons.movie, 'Cine IA', 'Cine IA'),
+                                    _buildSidebarItem(Icons.tv, 'Series', 'Series'),
+                                    _buildSidebarItem(Icons.settings, 'Ajustes', 'Ajustes'),
                                   ],
                                 ),
                               ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-
-            // 4. CAPA SIDEBAR TRANSLÚCIDO E INTELIGENTE
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: _isSidebarExpanded ? 240 : 75,
-              child: ClipRRect(
-                borderRadius: const BorderRadius.only(topRight: Radius.circular(16), bottomRight: Radius.circular(16)),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                  child: Focus(
-                    focusNode: _sidebarFocusNode,
-                    onFocusChange: (hasFocus) {
-                      if (mounted) {
-                        setState(() => _isSidebarExpanded = hasFocus);
-                      }
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.65),
-                        border: Border(right: BorderSide(color: Colors.white.withOpacity(0.15), width: 1)),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 10),
-                      child: Column(
-                        crossAxisAlignment: _isSidebarExpanded ? CrossAxisAlignment.start : CrossAxisAlignment.center,
-                        children: [
-                          _isSidebarExpanded
-                              ? const Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                  child: Text('AMEYCAR TV', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
-                                )
-                              : const Padding(
-                                  padding: EdgeInsets.only(top: 8.0),
-                                  child: Icon(Icons.tv_rounded, color: Color(0xFF00E5FF), size: 32),
-                                ),
-                          const SizedBox(height: 32),
-                          Expanded(
-                            child: ListView(
-                              children: [
-                                _buildSidebarItem(Icons.home_filled, 'Inicio VIP', 'Inicio VIP'),
-                                _buildSidebarItem(Icons.live_tv, 'Televisión', 'Televisión'),
-                                _buildSidebarItem(Icons.movie, 'Cine IA', 'Cine IA'),
-                                _buildSidebarItem(Icons.tv, 'Series', 'Series'),
-                                _buildSidebarItem(Icons.settings, 'Ajustes', 'Ajustes'),
-                              ],
-                            ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ),
-          ],
+              ],
+
+              // ========================================================
+              // MODO CINE / PANTALLA COMPLETA (Solo se muestra el Video y el OSD)
+              // ========================================================
+              if (_isFullScreenMode && _showOsd && _channels.isNotEmpty)
+                ZappingChannelOverlay(
+                  channel: _channels[_selectedChannelIndex],
+                  channelIndex: _selectedChannelIndex,
+                  totalChannels: _channels.length,
+                  isPlaying: !_isPlayerPaused,
+                  isFullScreen: true,
+                  onPlayPause: () {
+                    setState(() => _isPlayerPaused = !_isPlayerPaused);
+                    _triggerOsdTimer();
+                  },
+                  onNext: _nextChannel,
+                  onPrevious: _previousChannel,
+                  onToggleFullScreen: () => setState(() {
+                    _isFullScreenMode = false;
+                    _showOsd = false;
+                  }),
+                  onRewind15s: () {
+                     // Lógica temporal para evitar errores
+                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('⏪ Retrocediendo')));
+                  },
+                  onForward15s: () {
+                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('⏩ Adelantando')));
+                  },
+                  onOpenEpg: () {
+                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guía EPG Próximamente')));
+                  },
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -379,7 +498,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             ),
             const SizedBox(height: 48),
 
-            // Carrusel de Películas Reales
             if (_movies.isNotEmpty)
               TvContentRow(
                 title: '🍿 Películas Premium',
@@ -390,7 +508,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               ),
             if (_movies.isNotEmpty) const SizedBox(height: 32),
             
-            // Carrusel de Series Reales (Formato ancho 16:9)
             if (_series.isNotEmpty)
               TvContentRow(
                 title: '📺 Series Destacadas',
@@ -401,7 +518,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               ),
             if (_series.isNotEmpty) const SizedBox(height: 32),
             
-            // Carrusel de Canales en Vivo
             if (_liveTv.isNotEmpty)
               TvContentRow(
                 title: '🔴 Televisión en Vivo',
@@ -417,7 +533,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   }
 
   Widget _buildHeroBanner() {
-    // Si hay películas, mostramos la primera en el banner principal
     final featuredTitle = _movies.isNotEmpty ? _movies.first.name : 'AMEYCAR ORIGINALS';
     final featuredDesc = _movies.isNotEmpty ? 'Estreno recomendado exclusivamente para ti.' : 'Disfruta de la mejor experiencia cinematográfica en casa.';
     
