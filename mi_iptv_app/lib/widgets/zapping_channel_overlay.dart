@@ -242,7 +242,6 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
 
                         final bool isClickable = widget.isBehindLive || widget.isPlayingDvrRecording || _isManuallyBehindLive;
 
-                        // CORRECCIÓN: child: Builder(...) en lugar de builder:
                         return Focus(
                           canRequestFocus: isClickable,
                           child: Builder(
@@ -297,7 +296,6 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                     ),
                     const SizedBox(width: 12),
                     
-                    // CORRECCIÓN: child: Builder(...)
                     Focus(
                       child: Builder(
                         builder: (context) {
@@ -326,7 +324,6 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                     
                     if (widget.onToggleFullScreen != null) ...[
                       const SizedBox(width: 8),
-                      // CORRECCIÓN: child: Builder(...)
                       Focus(
                         child: Builder(
                           builder: (context) {
@@ -550,7 +547,6 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     );
   }
 
-  // CORRECCIÓN: child: Builder(...)
   Widget _buildCompactControlChip({
     required IconData icon,
     required String label,

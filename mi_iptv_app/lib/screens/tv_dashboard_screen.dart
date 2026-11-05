@@ -63,8 +63,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       String? savedM3u;
       
       if (rawLists != null && rawLists.isNotEmpty) {
-        // CORRECCIÓN: Casteo seguro para evitar error del compilador
-        final decoded = jsonDecode(rawLists) as List;
+        // CORRECCIÓN: Casteo explícito para Flutter Web
+        final List<dynamic> decoded = jsonDecode(rawLists);
         final List> savedPlaylists = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
         final activeList = savedPlaylists.where((l) => l['isActive'] == true).toList();
         
