@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'dart:convert'; // NUEVO: Para decodificar las listas de SharedPreferences
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // NUEVO: Para acceder al caché
 import '../models/channel_model.dart';
 import '../widgets/pro_video_player.dart';
 import '../widgets/focusable_tv_card.dart';
 import '../widgets/tv_content_row.dart'; 
-import '../services/m3u_sanitizer_service.dart'; // INYECCIÓN: Tu motor de listas
+import '../services/m3u_sanitizer_service.dart';
+import '../services/auth_service.dart'; // NUEVO: Para saber qué perfil está activo
 
 class TvDashboardScreen extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -36,42 +39,99 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   
   int _selectedChannelIndex = 0;
 
+  // VARIABLES DE SINCRONIZACIÓN DE PROGRESO (NUEVAS)
+  Timer? _progressSyncTimer;
+  String? _currentStreamId;
+
   @override
   void initState() {
     super.initState();
     _loadChannels();
   }
 
-  // EL MOTOR DE ARRANQUE: Separando el contenido por categoría
+  // EL MOTOR DE ARRANQUE: Carga real desde SharedPreferences y Sanitizer
   Future<void> _loadChannels() async {
     try {
-      // NOTA: Aquí eventualmente llamarás a tu base de datos (Ej: box.get('playlist_real')).
-      // Por ahora, usamos tus canales curados para encender el motor sin errores.
-      final loadedChannels = M3USanitizerService.getCuratedChannels();
+      final prefs = await SharedPreferences.getInstance();
+      final String currentProfileId = AuthService.currentActiveProfile?.id ?? AuthService.currentUser?.id ?? 'default_profile';
       
-      setState(() {
-        _channels = loadedChannels;
-        // Filtramos usando tu clasificador estricto
-        _movies = _channels.where((c) => c.contentType == 'movie').toList();
-        _series = _channels.where((c) => c.contentType == 'series').toList();
-        _liveTv = _channels.where((c) => c.contentType == 'live').toList();
+      // 1. Intentar cargar la lista desde el caché local
+      final rawLists = prefs.getString('m3u_lists_$currentProfileId');
+      String? savedM3u;
+      
+      if (rawLists != null && rawLists.isNotEmpty) {
+        final List decoded = jsonDecode(rawLists);
+        final List> savedPlaylists = decoded.map((e) => Map<String, dynamic>.from(e)).toList();
+        final activeList = savedPlaylists.where((l) => l['isActive'] == true).toList();
         
-        if (_channels.isNotEmpty) {
-          _selectedChannelIndex = 0; // Reproduce el primer contenido disponible de fondo
+        if (activeList.isNotEmpty) {
+          savedM3u = prefs.getString('m3u_cache_${activeList.first['id']}');
         }
-      });
+      }
+      
+      // Fallback a la antigua URL si no hay listas nuevas
+      if (savedM3u == null || savedM3u.trim().isEmpty) {
+        savedM3u = prefs.getString('saved_m3u_content');
+      }
+
+      List<ChannelModel> loadedChannels = [];
+      
+      // 2. Procesar la lista M3U con tu Santizer Service inteligente
+      if (savedM3u != null && savedM3u.isNotEmpty) {
+        loadedChannels = M3USanitizerService.parseAndSanitize(savedM3u);
+      } else {
+        loadedChannels = M3USanitizerService.getCuratedChannels();
+      }
+      
+      if (mounted) {
+        setState(() {
+          _channels = loadedChannels;
+          _movies = _channels.where((c) => c.contentType == 'movie').toList();
+          _series = _channels.where((c) => c.contentType == 'series').toList();
+          _liveTv = _channels.where((c) => c.contentType == 'live').toList();
+          
+          if (_channels.isNotEmpty) {
+            final lastIndex = prefs.getInt('last_played_channel_index') ?? 0;
+            _selectedChannelIndex = (lastIndex < _channels.length && lastIndex >= 0) ? lastIndex : 0;
+            // Iniciamos el tracker de progreso para el canal que arranca de fondo
+            _startProgressSync(_channels[_selectedChannelIndex].streamUrl);
+          }
+        });
+      }
     } catch (e) {
-      debugPrint("Error cargando canales reales: $e");
+      debugPrint("Error cargando canales reales en TV: $e");
     }
   }
 
+  // MÉTODO NUEVO: Guarda el progreso en Hive cada 5 segundos
+  void _startProgressSync(String streamUrl) {
+    _currentStreamId = streamUrl;
+    _progressSyncTimer?.cancel();
+    
+    _progressSyncTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (_currentStreamId != null) {
+        try {
+          final box = Hive.box('watch_progress_box');
+          await box.put(_currentStreamId, {
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          });
+        } catch (_) {}
+      }
+    });
+  }
+
   // EL GATILLO DE REPRODUCCIÓN (Llamado desde los carruseles)
-  void _playContent(ChannelModel channel) {
+  void _playContent(ChannelModel channel) async {
     final index = _channels.indexOf(channel);
     if (index != -1) {
       setState(() {
         _selectedChannelIndex = index;
       });
+      
+      // Guardar el último índice y arrancar el tracker de progreso
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('last_played_channel_index', index);
+      _startProgressSync(channel.streamUrl);
       
       // Feedback visual premium al reproducir
       ScaffoldMessenger.of(context).clearSnackBars();
@@ -102,6 +162,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   @override
   void dispose() {
+    _progressSyncTimer?.cancel(); // Limpiamos el temporizador al salir
     _zappingHideTimer?.cancel();
     _tvFocusScope.dispose();
     _sidebarFocusNode.dispose();
@@ -163,7 +224,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                       focusNode: _zappingFocusNode,
                       child: ListView.builder(
                         scrollDirection: Axis.horizontal,
-                        itemCount: _liveTv.length, // Usamos la lista de canales en vivo
+                        itemCount: _liveTv.length,
                         itemBuilder: (context, index) {
                           final liveChannel = _liveTv[index];
                           final isCurrentPlaying = _channels.isNotEmpty && _channels[_selectedChannelIndex].id == liveChannel.id;
@@ -174,8 +235,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                               focusedScale: 1.1,
                               focusedBorderColor: const Color(0xFF00E5FF),
                               onTap: () {
-                                _triggerZappingOverlay(); // Mantiene el overlay visible
-                                _playContent(liveChannel); // Lanza la reproducción
+                                _triggerZappingOverlay(); 
+                                _playContent(liveChannel); 
                               },
                               child: Container(
                                 width: 180,
@@ -325,7 +386,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 items: _movies,
                 height: 240,
                 cardWidth: 160,
-                onItemTap: _playContent, // Pasamos el gatillo al componente
+                onItemTap: _playContent, 
               ),
             if (_movies.isNotEmpty) const SizedBox(height: 32),
             
