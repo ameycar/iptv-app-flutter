@@ -44,11 +44,11 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   int _selectedChannelIndex = 0;
 
-  // VARIABLES DE SINCRONIZACIÓN DE PROGRESO Y LISTAS
+  // VARIABLES DE SINCRONIZACIÓN DE PROGRESO Y LISTAS (Sin signos anidados)
   Timer? _progressSyncTimer;
   String? _currentStreamId;
   int _currentPlaybackPosition = 0;
-  List> _savedPlaylists = [];
+  List<dynamic> _savedPlaylists = [];
 
   // VARIABLES DE PANTALLA COMPLETA Y OSD
   bool _isFullScreenMode = false;
@@ -85,7 +85,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               data?['m3u_playlists'];
 
           if (rawCloud is List && rawCloud.isNotEmpty) {
-            final List> cloudList = [];
+            final List<dynamic> cloudList = [];
             for (final item in rawCloud) {
               if (item is Map) {
                 cloudList.add(Map<String, dynamic>.from(item));
@@ -106,7 +106,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         if (rawLists != null && rawLists.isNotEmpty) {
           final decoded = jsonDecode(rawLists);
           if (decoded is List) {
-            final List> localList = [];
+            final List<dynamic> localList = [];
             for (final item in decoded) {
               if (item is Map) {
                 localList.add(Map<String, dynamic>.from(item));
@@ -133,8 +133,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
       Map<String, dynamic>? activePlaylist;
       for (final pl in _savedPlaylists) {
-        if (pl['isActive'] == true) {
-          activePlaylist = pl;
+        if (pl is Map && pl['isActive'] == true) {
+          activePlaylist = Map<String, dynamic>.from(pl);
           break;
         }
       }
@@ -168,7 +168,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       }
 
       if (mounted) {
-        final lastIndex = prefs.getInt('last_played_channel_index') ?? 0;
+        final int lastIndex = prefs.getInt('last_played_channel_index') ?? 0;
         setState(() {
           _channels = loadedChannels;
           _movies = _channels.where((c) => c.contentType == 'movie').toList();
@@ -274,7 +274,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   // EL GATILLO DE REPRODUCCIÓN (Llamado desde los carruseles)
   void _playContent(ChannelModel channel) async {
-    final index = _channels.indexOf(channel);
+    final int index = _channels.indexOf(channel);
     if (index != -1) {
       unawaited(_syncProgressToCloud());
       _currentPlaybackPosition = 0;
@@ -334,8 +334,9 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     if (_channels.isEmpty) return;
     unawaited(_syncProgressToCloud());
     _currentPlaybackPosition = 0;
+    final int total = _channels.length;
     setState(() {
-      _selectedChannelIndex = (_selectedChannelIndex + 1) % _channels.length;
+      _selectedChannelIndex = (_selectedChannelIndex + 1).remainder(total);
       _isPlayerPaused = false;
       _showOsd = true;
     });
@@ -347,9 +348,10 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     if (_channels.isEmpty) return;
     unawaited(_syncProgressToCloud());
     _currentPlaybackPosition = 0;
+    final int total = _channels.length;
     setState(() {
       _selectedChannelIndex = (_selectedChannelIndex - 1 < 0)
-          ? _channels.length - 1
+          ? total - 1
           : _selectedChannelIndex - 1;
       _isPlayerPaused = false;
       _showOsd = true;
@@ -394,7 +396,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           });
         }
       },
-      // CORRECCIÓN: FocusScope sí acepta el parámetro node: _tvFocusScope
       child: FocusScope(
         node: _tvFocusScope,
         autofocus: true,
