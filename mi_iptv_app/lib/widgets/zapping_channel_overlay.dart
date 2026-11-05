@@ -51,7 +51,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseController;
   
-  // NUEVO: Memoria interna para saber si el usuario retrocedió manualmente
+  // Memoria interna para saber si el usuario retrocedió manualmente
   bool _isManuallyBehindLive = false;
 
   @override
@@ -127,19 +127,19 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
           alignment: Alignment.bottomCenter,
           child: Container(
             margin: const EdgeInsets.all(8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFF090D16).withValues(alpha: 0.92),
-              borderRadius: BorderRadius.circular(14),
+              color: const Color(0xFF090D16).withOpacity(0.95),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: const Color(0xFF00E5FF).withValues(alpha: 0.30),
-                width: 1,
+                color: const Color(0xFF00E5FF).withOpacity(0.30),
+                width: 1.5,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.65),
-                  blurRadius: 14,
-                  offset: const Offset(0, 4),
+                  color: Colors.black.withOpacity(0.8),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
                 ),
               ],
             ),
@@ -151,12 +151,12 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF00E5FF).withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(6),
+                        color: const Color(0xFF00E5FF).withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                          color: const Color(0xFF00E5FF).withValues(alpha: 0.5),
+                          color: const Color(0xFF00E5FF).withOpacity(0.5),
                           width: 1,
                         ),
                       ),
@@ -165,17 +165,17 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                         style: const TextStyle(
                           color: Color(0xFF00E5FF),
                           fontWeight: FontWeight.w900,
-                          fontSize: 11,
+                          fontSize: 13,
                           letterSpacing: 0.8,
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 10),
                     ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        width: 28,
-                        height: 28,
+                        width: 34,
+                        height: 34,
                         color: const Color(0xFF131A29),
                         child: logoUrl.isNotEmpty
                             ? Image.network(
@@ -184,13 +184,13 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                                 errorBuilder: (_, __, ___) => const Icon(
                                   Icons.tv,
                                   color: Colors.white54,
-                                  size: 16,
+                                  size: 18,
                                 ),
                               )
-                            : const Icon(Icons.tv, color: Colors.white54, size: 16),
+                            : const Icon(Icons.tv, color: Colors.white54, size: 18),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Row(
                         children: [
@@ -202,22 +202,22 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
-                                fontSize: 13,
+                                fontSize: 16,
                               ),
                             ),
                           ),
-                          const SizedBox(width: 5),
+                          const SizedBox(width: 8),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
                               color: Colors.white12,
-                              borderRadius: BorderRadius.circular(4),
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
                               resolution,
                               style: const TextStyle(
                                 color: Colors.white70,
-                                fontSize: 8.5,
+                                fontSize: 10,
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
@@ -228,7 +228,6 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                     AnimatedBuilder(
                       animation: _pulseController,
                       builder: (context, child) {
-                        // Modificado para responder a _isManuallyBehindLive
                         final Color badgeColor = widget.isPlayingDvrRecording
                             ? const Color(0xFF9D4EDD)
                             : (widget.isBehindLive || _isManuallyBehindLive)
@@ -237,95 +236,122 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                                     ? const Color(0xFFFFB703)
                                     : const Color(0xFFFF1744));
 
-                        // Modificado para responder a _isManuallyBehindLive
                         final String badgeLabel = widget.isPlayingDvrRecording
                             ? 'GRABACIÓN'
                             : (widget.isBehindLive || _isManuallyBehindLive)
                                 ? 'DIFERIDO'
                                 : (isSyncing ? 'SINCRONIZANDO...' : 'EN VIVO');
 
-                        return GestureDetector(
-                          onTap: (widget.isBehindLive || widget.isPlayingDvrRecording || _isManuallyBehindLive)
-                              ? () {
-                                  if (widget.onJumpToLive != null) {
-                                    widget.onJumpToLive!();
-                                    setState(() {
-                                      _isManuallyBehindLive = false;
-                                    });
-                                  }
-                                }
-                              : null,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: badgeColor.withValues(
-                                alpha: 0.2 + (_pulseController.value * 0.25),
-                              ),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: badgeColor.withValues(
-                                  alpha: 0.6 + (_pulseController.value * 0.4),
-                                ),
-                                width: 1,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.circle, color: badgeColor, size: 6),
-                                const SizedBox(width: 3),
-                                Text(
-                                  badgeLabel,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 8.5,
-                                    fontWeight: FontWeight.w900,
+                        final bool isClickable = widget.isBehindLive || widget.isPlayingDvrRecording || _isManuallyBehindLive;
+
+                        return Focus(
+                          canRequestFocus: isClickable,
+                          builder: (context, focusNode) {
+                            final hasFocus = Focus.of(context).hasFocus;
+                            return GestureDetector(
+                              onTap: isClickable
+                                  ? () {
+                                      if (widget.onJumpToLive != null) {
+                                        widget.onJumpToLive!();
+                                        setState(() {
+                                          _isManuallyBehindLive = false;
+                                        });
+                                      }
+                                    }
+                                  : null,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 150),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: hasFocus 
+                                      ? badgeColor 
+                                      : badgeColor.withOpacity(0.2 + (_pulseController.value * 0.25)),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: hasFocus ? Colors.white : badgeColor.withOpacity(0.6 + (_pulseController.value * 0.4)),
+                                    width: hasFocus ? 2 : 1,
                                   ),
+                                  boxShadow: hasFocus ? [BoxShadow(color: badgeColor.withOpacity(0.8), blurRadius: 12)] : [],
                                 ),
-                              ],
-                            ),
-                          ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.circle, color: hasFocus ? Colors.black : badgeColor, size: 8),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      badgeLabel,
+                                      style: TextStyle(
+                                        color: hasFocus ? Colors.black : Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }
                         );
                       },
                     ),
-                    const SizedBox(width: 6),
-                    IconButton(
-                      icon: Icon(
-                        widget.isPlaying
-                            ? Icons.pause_circle_filled
-                            : Icons.play_circle_filled,
-                        color: const Color(0xFF00E5FF),
-                        size: 24,
-                      ),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      onPressed: widget.onPlayPause,
-                    ),
-                    if (widget.onToggleFullScreen != null) ...[
-                      const SizedBox(width: 6),
-                      InkWell(
-                        onTap: widget.onToggleFullScreen,
-                        borderRadius: BorderRadius.circular(6),
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
+                    const SizedBox(width: 12),
+                    
+                    // BOTÓN PLAY/PAUSE CON FOCO TV
+                    Focus(
+                      builder: (context, focusNode) {
+                        final hasFocus = Focus.of(context).hasFocus;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF7B2CBF).withValues(alpha: 0.35),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0xFFC77DFF), width: 1),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: hasFocus ? const Color(0xFF00E5FF) : Colors.transparent, width: 2),
+                            boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.8), blurRadius: 12)] : [],
                           ),
-                          child: Icon(
-                            widget.isFullScreen
-                                ? Icons.fullscreen_exit
-                                : Icons.fullscreen,
-                            color: Colors.white,
-                            size: 18,
+                          child: IconButton(
+                            icon: Icon(
+                              widget.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                              color: hasFocus ? Colors.white : const Color(0xFF00E5FF),
+                              size: 32,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: widget.onPlayPause,
                           ),
-                        ),
+                        );
+                      }
+                    ),
+                    
+                    if (widget.onToggleFullScreen != null) ...[
+                      const SizedBox(width: 8),
+                      // BOTÓN PANTALLA COMPLETA CON FOCO TV
+                      Focus(
+                        builder: (context, focusNode) {
+                          final hasFocus = Focus.of(context).hasFocus;
+                          return InkWell(
+                            onTap: widget.onToggleFullScreen,
+                            borderRadius: BorderRadius.circular(8),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: hasFocus ? const Color(0xFFC77DFF) : const Color(0xFF7B2CBF).withOpacity(0.35),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: hasFocus ? Colors.white : const Color(0xFFC77DFF), width: hasFocus ? 2 : 1),
+                                boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFFC77DFF).withOpacity(0.8), blurRadius: 12)] : [],
+                              ),
+                              child: Icon(
+                                widget.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                                color: hasFocus ? Colors.black : Colors.white,
+                                size: 20,
+                              ),
+                            ),
+                          );
+                        }
                       ),
                     ],
                   ],
                 ),
-                const SizedBox(height: 5),
+                const SizedBox(height: 8),
 
                 // Fila 2: Programa Actual (o título de grabación DVR) y Horario
                 Row(
@@ -333,9 +359,9 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                     Icon(
                       widget.isPlayingDvrRecording ? Icons.fiber_smart_record : Icons.play_arrow,
                       color: const Color(0xFF00E5FF),
-                      size: 14,
+                      size: 16,
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         widget.isPlayingDvrRecording
@@ -345,44 +371,43 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 11.5,
+                          fontSize: 13,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     Text(
                       widget.isPlayingDvrRecording ? 'DESDE INICIO' : currentProg.timeFormatted,
                       style: const TextStyle(
                         color: Colors.white54,
-                        fontSize: 10.5,
+                        fontSize: 12,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
 
                 // Barra de Progreso
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
+                  borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
                     value: currentProg.progress.clamp(0.0, 1.0),
                     backgroundColor: Colors.white12,
                     valueColor: AlwaysStoppedAnimation<Color>(
                       isSyncing ? const Color(0xFFFFB703) : const Color(0xFF00E5FF),
                     ),
-                    minHeight: 3,
+                    minHeight: 4,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 10),
 
                 // Fila 3: Controles Timeshift (-15s / +15s / IR A VIVO) + REC + EPG + CH- / CH+
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      // Modificado para activar estado Diferido al retroceder
                       if (widget.onRewind15s != null) ...[
                         _buildCompactControlChip(
                           icon: Icons.replay_10,
@@ -396,7 +421,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                             });
                           },
                         ),
-                        const SizedBox(width: 5),
+                        const SizedBox(width: 8),
                       ],
                       if (widget.onForward15s != null) ...[
                         _buildCompactControlChip(
@@ -408,16 +433,15 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                             widget.onForward15s!();
                           },
                         ),
-                        const SizedBox(width: 5),
+                        const SizedBox(width: 8),
                       ],
-                      // Modificado para mostrarse si se activó _isManuallyBehindLive
                       if ((widget.isBehindLive || widget.isPlayingDvrRecording || _isManuallyBehindLive) &&
                           widget.onJumpToLive != null) ...[
                         _buildCompactControlChip(
                           icon: Icons.bolt,
                           label: 'IR A VIVO',
                           borderColor: const Color(0xFF00E5FF),
-                          bgColor: const Color(0xFF00E5FF).withValues(alpha: 0.22),
+                          bgColor: const Color(0xFF00E5FF).withOpacity(0.22),
                           iconColor: const Color(0xFF00E5FF),
                           onTap: () {
                             widget.onJumpToLive!();
@@ -426,7 +450,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                             });
                           },
                         ),
-                        const SizedBox(width: 5),
+                        const SizedBox(width: 8),
                       ],
                       if (widget.onToggleRecord != null && !widget.isPlayingDvrRecording) ...[
                         ValueListenableBuilder<bool>(
@@ -437,49 +461,46 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                               label: isRec ? 'STOP' : 'REC',
                               borderColor: const Color(0xFFFF1744),
                               bgColor: isRec
-                                  ? const Color(0xFFFF1744).withValues(alpha: 0.40)
-                                  : const Color(0xFFFF1744).withValues(alpha: 0.16),
+                                  ? const Color(0xFFFF1744).withOpacity(0.40)
+                                  : const Color(0xFFFF1744).withOpacity(0.16),
                               iconColor: const Color(0xFFFF1744),
                               onTap: widget.onToggleRecord!,
                             );
                           },
                         ),
-                        const SizedBox(width: 5),
+                        const SizedBox(width: 8),
                       ],
                       if (widget.onOpenEpg != null) ...[
                         _buildCompactControlChip(
                           icon: Icons.calendar_month,
                           label: 'EPG',
-                          borderColor: const Color(0xFFC77DFF).withValues(alpha: 0.6),
-                          bgColor: const Color(0xFF7B2CBF).withValues(alpha: 0.35),
+                          borderColor: const Color(0xFFC77DFF).withOpacity(0.6),
+                          bgColor: const Color(0xFF7B2CBF).withOpacity(0.35),
                           iconColor: const Color(0xFFFFB703),
                           onTap: widget.onOpenEpg!,
                         ),
-                        const SizedBox(width: 5),
+                        const SizedBox(width: 8),
                       ],
-
-                      // Botón CC (Subtítulos)
-                        _buildCompactControlChip(
-                          icon: Icons.closed_caption,
-                          label: 'CC',
-                          borderColor: Colors.white24,
-                          bgColor: Colors.white10,
-                          onTap: () {
-                         // Acción rápida para subtítulos o aviso
+                      _buildCompactControlChip(
+                        icon: Icons.closed_caption,
+                        label: 'CC',
+                        borderColor: Colors.white24,
+                        bgColor: Colors.white10,
+                        onTap: () {
                           ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                         content: Text('CC: Los subtítulos automáticos se activarán si el canal los incluye.'),
-                         duration: Duration(seconds: 2),
-                             ),
-                           );
-                         },
-                        ),
-                         const SizedBox(width: 5),
+                            const SnackBar(
+                              content: Text('CC: Los subtítulos automáticos se activarán si el canal los incluye.'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 8),
                       _buildCompactControlChip(
                         icon: Icons.settings_input_component,
                         label: 'ADV',
-                        borderColor: const Color(0xFF00E5FF).withValues(alpha: 0.6),
-                        bgColor: const Color(0xFF00E5FF).withValues(alpha: 0.2),
+                        borderColor: const Color(0xFF00E5FF).withOpacity(0.6),
+                        bgColor: const Color(0xFF00E5FF).withOpacity(0.2),
                         iconColor: const Color(0xFF00E5FF),
                         onTap: () {
                           showModalBottomSheet(
@@ -490,7 +511,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                           );
                         },
                       ),
-                      const SizedBox(width: 5),
+                      const SizedBox(width: 8),
                       _buildCompactControlChip(
                         icon: Icons.skip_previous,
                         label: 'CH-',
@@ -498,10 +519,10 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                         bgColor: Colors.white10,
                         onTap: () {
                           widget.onPrevious();
-                          setState(() { _isManuallyBehindLive = false; }); // Reset visual
+                          setState(() { _isManuallyBehindLive = false; }); 
                         },
                       ),
-                      const SizedBox(width: 5),
+                      const SizedBox(width: 8),
                       _buildCompactControlChip(
                         icon: Icons.skip_next,
                         label: 'CH+',
@@ -509,15 +530,15 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                         bgColor: Colors.white10,
                         onTap: () {
                           widget.onNext();
-                          setState(() { _isManuallyBehindLive = false; }); // Reset visual
+                          setState(() { _isManuallyBehindLive = false; }); 
                         },
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       Text(
                         'Sig: ${nextProg.title}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white60, fontSize: 9.5),
+                        style: const TextStyle(color: Colors.white60, fontSize: 11),
                       ),
                     ],
                   ),
@@ -530,6 +551,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     );
   }
 
+  // COMPONENTE DE BOTÓN MEJORADO CON FOCO PARA SMART TV
   Widget _buildCompactControlChip({
     required IconData icon,
     required String label,
@@ -538,32 +560,46 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     required VoidCallback onTap,
     Color iconColor = Colors.white70,
   }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: borderColor),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: iconColor, size: 12.5),
-            const SizedBox(width: 3),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 9.5,
-                fontWeight: FontWeight.bold,
-              ),
+    return Focus(
+      builder: (context, focusNode) {
+        final hasFocus = Focus.of(context).hasFocus;
+        
+        // Colores dinámicos al recibir foco (Alto Contraste)
+        final effectiveBgColor = hasFocus ? Colors.white : bgColor;
+        final effectiveBorderColor = hasFocus ? const Color(0xFF00E5FF) : borderColor;
+        final effectiveIconColor = hasFocus ? Colors.black : iconColor;
+        final effectiveTextColor = hasFocus ? Colors.black : Colors.white;
+
+        return InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: effectiveBgColor,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: effectiveBorderColor, width: hasFocus ? 2 : 1),
+              boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.8), blurRadius: 10)] : [],
             ),
-          ],
-        ),
-      ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: effectiveIconColor, size: 14),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: effectiveTextColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
     );
   }
 }
