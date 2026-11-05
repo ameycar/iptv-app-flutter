@@ -51,7 +51,6 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseController;
   
-  // Memoria interna para saber si el usuario retrocedió manualmente
   bool _isManuallyBehindLive = false;
 
   @override
@@ -147,7 +146,6 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Fila 1: Número CH, Logo, Nombre del Canal, Badge EN VIVO / DVR, Play/Pause y Pantalla Completa
                 Row(
                   children: [
                     Container(
@@ -244,116 +242,121 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
 
                         final bool isClickable = widget.isBehindLive || widget.isPlayingDvrRecording || _isManuallyBehindLive;
 
+                        // CORRECCIÓN: child: Builder(...) en lugar de builder:
                         return Focus(
                           canRequestFocus: isClickable,
-                          builder: (context, focusNode) {
-                            final hasFocus = Focus.of(context).hasFocus;
-                            return GestureDetector(
-                              onTap: isClickable
-                                  ? () {
-                                      if (widget.onJumpToLive != null) {
-                                        widget.onJumpToLive!();
-                                        setState(() {
-                                          _isManuallyBehindLive = false;
-                                        });
+                          child: Builder(
+                            builder: (context) {
+                              final hasFocus = Focus.of(context).hasFocus;
+                              return GestureDetector(
+                                onTap: isClickable
+                                    ? () {
+                                        if (widget.onJumpToLive != null) {
+                                          widget.onJumpToLive!();
+                                          setState(() {
+                                            _isManuallyBehindLive = false;
+                                          });
+                                        }
                                       }
-                                    }
-                                  : null,
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: hasFocus 
-                                      ? badgeColor 
-                                      : badgeColor.withOpacity(0.2 + (_pulseController.value * 0.25)),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: hasFocus ? Colors.white : badgeColor.withOpacity(0.6 + (_pulseController.value * 0.4)),
-                                    width: hasFocus ? 2 : 1,
-                                  ),
-                                  boxShadow: hasFocus ? [BoxShadow(color: badgeColor.withOpacity(0.8), blurRadius: 12)] : [],
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.circle, color: hasFocus ? Colors.black : badgeColor, size: 8),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      badgeLabel,
-                                      style: TextStyle(
-                                        color: hasFocus ? Colors.black : Colors.white,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w900,
-                                      ),
+                                    : null,
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 150),
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: hasFocus 
+                                        ? badgeColor 
+                                        : badgeColor.withOpacity(0.2 + (_pulseController.value * 0.25)),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: hasFocus ? Colors.white : badgeColor.withOpacity(0.6 + (_pulseController.value * 0.4)),
+                                      width: hasFocus ? 2 : 1,
                                     ),
-                                  ],
+                                    boxShadow: hasFocus ? [BoxShadow(color: badgeColor.withOpacity(0.8), blurRadius: 12)] : [],
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.circle, color: hasFocus ? Colors.black : badgeColor, size: 8),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        badgeLabel,
+                                        style: TextStyle(
+                                          color: hasFocus ? Colors.black : Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            );
-                          }
+                              );
+                            }
+                          ),
                         );
                       },
                     ),
                     const SizedBox(width: 12),
                     
-                    // BOTÓN PLAY/PAUSE CON FOCO TV
+                    // CORRECCIÓN: child: Builder(...)
                     Focus(
-                      builder: (context, focusNode) {
-                        final hasFocus = Focus.of(context).hasFocus;
-                        return AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: hasFocus ? const Color(0xFF00E5FF) : Colors.transparent, width: 2),
-                            boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.8), blurRadius: 12)] : [],
-                          ),
-                          child: IconButton(
-                            icon: Icon(
-                              widget.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                              color: hasFocus ? Colors.white : const Color(0xFF00E5FF),
-                              size: 32,
+                      child: Builder(
+                        builder: (context) {
+                          final hasFocus = Focus.of(context).hasFocus;
+                          return AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: hasFocus ? const Color(0xFF00E5FF) : Colors.transparent, width: 2),
+                              boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.8), blurRadius: 12)] : [],
                             ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            onPressed: widget.onPlayPause,
-                          ),
-                        );
-                      }
+                            child: IconButton(
+                              icon: Icon(
+                                widget.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                                color: hasFocus ? Colors.white : const Color(0xFF00E5FF),
+                                size: 32,
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              onPressed: widget.onPlayPause,
+                            ),
+                          );
+                        }
+                      ),
                     ),
                     
                     if (widget.onToggleFullScreen != null) ...[
                       const SizedBox(width: 8),
-                      // BOTÓN PANTALLA COMPLETA CON FOCO TV
+                      // CORRECCIÓN: child: Builder(...)
                       Focus(
-                        builder: (context, focusNode) {
-                          final hasFocus = Focus.of(context).hasFocus;
-                          return InkWell(
-                            onTap: widget.onToggleFullScreen,
-                            borderRadius: BorderRadius.circular(8),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: hasFocus ? const Color(0xFFC77DFF) : const Color(0xFF7B2CBF).withOpacity(0.35),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: hasFocus ? Colors.white : const Color(0xFFC77DFF), width: hasFocus ? 2 : 1),
-                                boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFFC77DFF).withOpacity(0.8), blurRadius: 12)] : [],
+                        child: Builder(
+                          builder: (context) {
+                            final hasFocus = Focus.of(context).hasFocus;
+                            return InkWell(
+                              onTap: widget.onToggleFullScreen,
+                              borderRadius: BorderRadius.circular(8),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 150),
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: hasFocus ? const Color(0xFFC77DFF) : const Color(0xFF7B2CBF).withOpacity(0.35),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: hasFocus ? Colors.white : const Color(0xFFC77DFF), width: hasFocus ? 2 : 1),
+                                  boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFFC77DFF).withOpacity(0.8), blurRadius: 12)] : [],
+                                ),
+                                child: Icon(
+                                  widget.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                                  color: hasFocus ? Colors.black : Colors.white,
+                                  size: 20,
+                                ),
                               ),
-                              child: Icon(
-                                widget.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                                color: hasFocus ? Colors.black : Colors.white,
-                                size: 20,
-                              ),
-                            ),
-                          );
-                        }
+                            );
+                          }
+                        ),
                       ),
                     ],
                   ],
                 ),
                 const SizedBox(height: 8),
-
-                // Fila 2: Programa Actual (o título de grabación DVR) y Horario
                 Row(
                   children: [
                     Icon(
@@ -388,8 +391,6 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                   ],
                 ),
                 const SizedBox(height: 6),
-
-                // Barra de Progreso
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
@@ -402,8 +403,6 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                   ),
                 ),
                 const SizedBox(height: 10),
-
-                // Fila 3: Controles Timeshift (-15s / +15s / IR A VIVO) + REC + EPG + CH- / CH+
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -551,7 +550,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     );
   }
 
-  // COMPONENTE DE BOTÓN MEJORADO CON FOCO PARA SMART TV
+  // CORRECCIÓN: child: Builder(...)
   Widget _buildCompactControlChip({
     required IconData icon,
     required String label,
@@ -561,45 +560,46 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     Color iconColor = Colors.white70,
   }) {
     return Focus(
-      builder: (context, focusNode) {
-        final hasFocus = Focus.of(context).hasFocus;
-        
-        // Colores dinámicos al recibir foco (Alto Contraste)
-        final effectiveBgColor = hasFocus ? Colors.white : bgColor;
-        final effectiveBorderColor = hasFocus ? const Color(0xFF00E5FF) : borderColor;
-        final effectiveIconColor = hasFocus ? Colors.black : iconColor;
-        final effectiveTextColor = hasFocus ? Colors.black : Colors.white;
+      child: Builder(
+        builder: (context) {
+          final hasFocus = Focus.of(context).hasFocus;
+          
+          final effectiveBgColor = hasFocus ? Colors.white : bgColor;
+          final effectiveBorderColor = hasFocus ? const Color(0xFF00E5FF) : borderColor;
+          final effectiveIconColor = hasFocus ? Colors.black : iconColor;
+          final effectiveTextColor = hasFocus ? Colors.black : Colors.white;
 
-        return InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: effectiveBgColor,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: effectiveBorderColor, width: hasFocus ? 2 : 1),
-              boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.8), blurRadius: 10)] : [],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, color: effectiveIconColor, size: 14),
-                const SizedBox(width: 4),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: effectiveTextColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
+          return InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(8),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: effectiveBgColor,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: effectiveBorderColor, width: hasFocus ? 2 : 1),
+                boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.8), blurRadius: 10)] : [],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: effectiveIconColor, size: 14),
+                  const SizedBox(width: 4),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: effectiveTextColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        );
-      }
+          );
+        }
+      ),
     );
   }
 }

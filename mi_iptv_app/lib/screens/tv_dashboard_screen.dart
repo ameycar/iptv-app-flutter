@@ -2,14 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // INYECCIÓN: Para capturar las flechas del control
+import 'package:flutter/services.dart'; 
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/channel_model.dart';
 import '../widgets/pro_video_player.dart';
 import '../widgets/focusable_tv_card.dart';
 import '../widgets/tv_content_row.dart'; 
-import '../widgets/zapping_channel_overlay.dart'; // INYECCIÓN: El OSD de Pantalla Completa
+import '../widgets/zapping_channel_overlay.dart'; 
 import '../services/m3u_sanitizer_service.dart';
 import '../services/auth_service.dart';
 
@@ -43,7 +43,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   Timer? _progressSyncTimer;
   String? _currentStreamId;
 
-  // NUEVAS VARIABLES DE PANTALLA COMPLETA
   bool _isFullScreenMode = false;
   bool _showOsd = false;
   bool _isPlayerPaused = false;
@@ -64,8 +63,9 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       String? savedM3u;
       
       if (rawLists != null && rawLists.isNotEmpty) {
-        final List decoded = jsonDecode(rawLists);
-        final List> savedPlaylists = decoded.map((e) => Map<String, dynamic>.from(e)).toList();
+        // CORRECCIÓN: Casteo seguro para evitar error del compilador
+        final decoded = jsonDecode(rawLists) as List;
+        final List> savedPlaylists = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
         final activeList = savedPlaylists.where((l) => l['isActive'] == true).toList();
         
         if (activeList.isNotEmpty) {
@@ -120,21 +120,20 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     });
   }
 
-  // MÉTODO MEJORADO: Ahora entra a pantalla completa
   void _playContent(ChannelModel channel) async {
     final index = _channels.indexOf(channel);
     if (index != -1) {
       setState(() {
         _selectedChannelIndex = index;
-        _isFullScreenMode = true; // Inicia el Modo Cine
-        _showOsd = true; // Muestra los controles un rato
+        _isFullScreenMode = true; 
+        _showOsd = true; 
         _isPlayerPaused = false;
       });
       
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('last_played_channel_index', index);
       _startProgressSync(channel.streamUrl);
-      _triggerOsdTimer(); // Activa el auto-ocultado
+      _triggerOsdTimer(); 
     }
   }
 
@@ -205,11 +204,9 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // PopScope protege el botón "Atrás" del control remoto
     return PopScope(
       canPop: !_isFullScreenMode,
       onPopInvokedWithResult: (didPop, result) {
-        // Si estaba en pantalla completa, solo la apaga y vuelve al menú, sin salir de la app
         if (!didPop && _isFullScreenMode) {
           setState(() {
             _isFullScreenMode = false;
@@ -220,13 +217,11 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       child: Focus(
         node: _tvFocusScope,
         autofocus: true,
-        // EL CEREBRO DEL CONTROL REMOTO PARA PANTALLA COMPLETA
         onKeyEvent: (node, event) {
           if (event is KeyDownEvent) {
             final key = event.logicalKey;
             
             if (_isFullScreenMode) {
-              // Tecla OK / SELECT
               if (key == LogicalKeyboardKey.select || key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.gameButtonA) {
                 if (!_showOsd) {
                   _toggleOsd();
@@ -234,7 +229,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 }
               }
               
-              // Zapping rápido si el OSD NO está visible
               if (!_showOsd) {
                 if (key == LogicalKeyboardKey.arrowUp) {
                   _previousChannel();
@@ -250,7 +244,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 }
               }
               
-              // Botones de hardware multimedia
               if (key == LogicalKeyboardKey.mediaPlayPause) {
                 setState(() => _isPlayerPaused = !_isPlayerPaused);
                 return KeyEventResult.handled;
@@ -263,7 +256,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           backgroundColor: const Color(0xFF070A10),
           body: Stack(
             children: [
-              // 1. CAPA DE VIDEO (Fondo Absoluto Siempre)
               Positioned.fill(
                 child: ProVideoPlayer(
                   streamUrl: _channels.isNotEmpty ? _channels[_selectedChannelIndex].streamUrl : '',
@@ -271,9 +263,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 ), 
               ),
 
-              // ========================================================
-              // MODO DASHBOARD (Solo se muestra si NO estamos en FullScreen)
-              // ========================================================
               if (!_isFullScreenMode) ...[
                 Positioned.fill(
                   child: Container(color: Colors.black.withOpacity(0.4)),
@@ -429,9 +418,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 ),
               ],
 
-              // ========================================================
-              // MODO CINE / PANTALLA COMPLETA (Solo se muestra el Video y el OSD)
-              // ========================================================
               if (_isFullScreenMode && _showOsd && _channels.isNotEmpty)
                 ZappingChannelOverlay(
                   channel: _channels[_selectedChannelIndex],
@@ -450,7 +436,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     _showOsd = false;
                   }),
                   onRewind15s: () {
-                     // Lógica temporal para evitar errores
                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('⏪ Retrocediendo')));
                   },
                   onForward15s: () {
@@ -467,7 +452,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     );
   }
 
-  // --- EL ÁREA DE CONTENIDO (CARRUSELES ALIMENTADOS POR EL PARSER REAL) ---
   Widget _buildMainVODContent() {
     return SingleChildScrollView(
       clipBehavior: Clip.none,
