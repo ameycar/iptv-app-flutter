@@ -4825,7 +4825,9 @@ void _showColorBlindSelectorDialog() {
       },
       onDoubleTap: () => setState(() => _isFullScreenMode = !_isFullScreenMode),
       child: Container(
-        height: fillAvailableHeight ? double.infinity : 225,
+        // AJUSTE MINUCIOSO: Redujimos la altura de 225 a 200 para dar más espacio a la lista abajo 
+        // y hacer que el OSD flote más abajo.
+        height: fillAvailableHeight ? double.infinity : 200, 
         width: double.infinity,
         color: const Color(0xFF070A10),
         child: Stack(
@@ -4838,7 +4840,7 @@ void _showColorBlindSelectorDialog() {
                   streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null) ? _activeDvrFilePath! : activeChannel.streamUrl,
                   volume: _currentVolume,
                   isPlaying: !_isPlayerPaused,
-                  colorBlindMode: _selectedColorBlindMode, // <--- Agrégalo aquí
+                  colorBlindMode: _selectedColorBlindMode, 
                 ),
               )
             else if (_hasVideoError)
@@ -5091,7 +5093,7 @@ void _showColorBlindSelectorDialog() {
     }
 
     return ListView.builder(
-      padding: EdgeInsets.symmetric(horizontal: compactLandscape ? 8 : 12, vertical: 6),
+      padding: EdgeInsets.symmetric(horizontal: compactLandscape ? 8 : 12, vertical: 4), // Margen vertical general reducido
       itemCount: list.length,
       itemBuilder: (context, index) {
         final channel = list[index];
@@ -5101,7 +5103,8 @@ void _showColorBlindSelectorDialog() {
         final isFav = _favoriteChannelUrls.contains(channel.streamUrl.trim());
 
         return Container(
-          margin: const EdgeInsets.only(bottom: 6),
+          // AJUSTE MINUCIOSO: Redujimos el margen inferior de 6 a 4 para juntar un poco más los canales
+          margin: const EdgeInsets.only(bottom: 4), 
           decoration: BoxDecoration(
             color: isSelected ? const Color(0xFF1E293B).withOpacity(0.92) : const Color(0xFF0F172A).withOpacity(0.45),
             borderRadius: BorderRadius.circular(10),
@@ -5112,9 +5115,10 @@ void _showColorBlindSelectorDialog() {
             onTap: () => _changeChannel(channel),
             onLongPress: () => _onChannelLongPress(channel),
           child: Padding(
+              // AJUSTE MINUCIOSO: Redujimos el padding vertical interno de 10 a 6
               padding: EdgeInsets.symmetric(
                 horizontal: compactLandscape ? 8 : 12,
-                vertical: compactLandscape ? 8 : 10,
+                vertical: compactLandscape ? 6 : 6, 
               ),
               child: Row(
                 children: [
@@ -5127,7 +5131,7 @@ void _showColorBlindSelectorDialog() {
                       children: [
                        
                          Text(
-  _customChannelAliases[channel.streamUrl.isNotEmpty ? channel.streamUrl : channel.id] ?? channel.name,
+                          _customChannelAliases[channel.streamUrl.isNotEmpty ? channel.streamUrl : channel.id] ?? channel.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
