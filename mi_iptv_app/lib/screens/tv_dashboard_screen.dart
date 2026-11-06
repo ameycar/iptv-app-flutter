@@ -17,6 +17,7 @@ import '../widgets/focusable_tv_card.dart';
 import '../widgets/tv_content_row.dart';
 import '../widgets/zapping_channel_overlay.dart';
 import '../widgets/pin_dialog.dart';
+import '../widgets/alexa_voice_sheet.dart';
 import '../services/m3u_sanitizer_service.dart';
 import '../services/auth_service.dart';
 import '../services/epg_service.dart';
@@ -61,7 +62,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   Timer? _progressSyncTimer;
   String? _currentStreamId;
   int _currentPlaybackPosition = 0;
-  List<dynamic> _savedPlaylists = []; // CORREGIDO TIPO DINÁMICO
+  List<dynamic> _savedPlaylists = [];
 
   // VARIABLES DE PANTALLA COMPLETA, DVR Y OSD
   bool _isFullScreenMode = false;
@@ -158,7 +159,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               data?['m3u_playlists'];
 
           if (rawCloud is List && rawCloud.isNotEmpty) {
-            final List<dynamic> cloudList = []; // CORREGIDO A DYNAMIC
+            final List<dynamic> cloudList = [];
             for (final item in rawCloud) {
               if (item is Map) {
                 cloudList.add(Map<String, dynamic>.from(item));
@@ -179,7 +180,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         if (rawLists != null && rawLists.isNotEmpty) {
           final decoded = jsonDecode(rawLists);
           if (decoded is List) {
-            final List<dynamic> localList = []; // CORREGIDO A DYNAMIC
+            final List<dynamic> localList = [];
             for (final item in decoded) {
               if (item is Map) {
                 localList.add(Map<String, dynamic>.from(item));
@@ -206,7 +207,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
       Map<String, dynamic>? activePlaylist;
       for (final pl in _savedPlaylists) {
-        if (pl is Map && pl['isActive'] == true) { // VERIFICACIÓN DE TIPO AÑADIDA
+        if (pl is Map && pl['isActive'] == true) {
           activePlaylist = Map<String, dynamic>.from(pl);
           break;
         }
@@ -420,6 +421,44 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         );
       }
     }
+  }
+
+  void _startVoiceSearch() {
+    List<ChannelModel> searchPool;
+    if (_selectedSection == 'Cine IA' && _movies.isNotEmpty) {
+      searchPool = _movies;
+    } else if (_selectedSection == 'Series' && _series.isNotEmpty) {
+      searchPool = _series;
+    } else {
+      searchPool = _liveTv.isNotEmpty ? _liveTv : _channels;
+    }
+
+    AlexaVoiceSheet.show(
+      context: context,
+      channels: searchPool,
+      currentSection: _selectedSection,
+      currentChannel: _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+          ? _channels[_selectedChannelIndex]
+          : null,
+      onChannelSelected: (item) {
+        if (item is ChannelModel) {
+          _playContent(item);
+        }
+      },
+      onOpenEpg: () {
+        if (_channels.isNotEmpty && _selectedChannelIndex < _channels.length) {
+          _openTvEpgModal(_channels[_selectedChannelIndex]);
+        }
+      },
+      onCategorySelected: (cat) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Aplicando filtro: $cat'),
+            backgroundColor: const Color(0xFF7B2CBF),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _seekRelativeSeconds(int deltaSeconds) async {
@@ -890,16 +929,75 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                 Expanded(
                                   child: ListView(
                                     children: [
-                                      _buildSidebarItem(Icons.home_filled,
-                                          'Inicio VIP', 'Inicio VIP'),
-                                      _buildSidebarItem(Icons.live_tv,
-                                          'Televisión', 'Televisión'),
-                                      _buildSidebarItem(
-                                          Icons.movie, 'Cine IA', 'Cine IA'),
-                                      _buildSidebarItem(
-                                          Icons.tv, 'Series', 'Series'),
-                                      _buildSidebarItem(
-                                          Icons.settings, 'Ajustes', 'Ajustes'),
+                                      // Botón Especial para invocar la Búsqueda / IA
+                                      Builder(builder: (context) {
+                                        return Focus(
+                                          onKeyEvent: (node, event) {
+                                            if (event is KeyDownEvent &&
+                                                (event.logicalKey == LogicalKeyboardKey.select ||
+                                                    event.logicalKey == LogicalKeyboardKey.enter ||
+                                                    event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+                                              _startVoiceSearch();
+                                              return KeyEventResult.handled;
+                                            }
+                                            return KeyEventResult.ignored;
+                                          },
+                                          child: Builder(builder: (context) {
+                                            final hasFocus = Focus.of(context).hasFocus;
+                                            return GestureDetector(
+                                              onTap: _startVoiceSearch,
+                                              child: AnimatedContainer(
+                                                duration: const Duration(milliseconds: 150),
+                                                margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                                                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                                                decoration: BoxDecoration(
+                                                  color: hasFocus
+                                                      ? const Color(0xFF00E5FF).withOpacity(0.25)
+                                                      : Colors.transparent,
+                                                  borderRadius: BorderRadius.circular(10),
+                                                  border: Border.all(
+                                                    color: hasFocus ? const Color(0xFF00E5FF) : Colors.transparent,
+                                                    width: 2,
+                                                  ),
+                                                ),
+                                                child: Row(
+                                                  mainAxisAlignment: _isSidebarExpanded
+                                                      ? MainAxisAlignment.start
+                                                      : MainAxisAlignment.center,
+                                                  children: [
+                                                    Icon(Icons.mic,
+                                                        color: hasFocus ? const Color(0xFF00E5FF) : Colors.white60,
+                                                        size: 24),
+                                                    if (_isSidebarExpanded) ...[
+                                                      const SizedBox(width: 16),
+                                                      Expanded(
+                                                        child: Text(
+                                                          'Búsqueda IA',
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow.ellipsis,
+                                                          style: TextStyle(
+                                                            color: hasFocus ? Colors.white : Colors.white60,
+                                                            fontWeight: hasFocus ? FontWeight.bold : FontWeight.normal,
+                                                            fontSize: 15,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ],
+                                                ),
+                                              ),
+                                            );
+                                          }),
+                                        );
+                                      }),
+                                      const Divider(color: Colors.white12, height: 16),
+                                      
+                                      // Secciones de contenido normales
+                                      _buildSidebarItem(Icons.home_filled, 'Inicio VIP', 'Inicio VIP'),
+                                      _buildSidebarItem(Icons.live_tv, 'Televisión', 'Televisión'),
+                                      _buildSidebarItem(Icons.movie, 'Cine IA', 'Cine IA'),
+                                      _buildSidebarItem(Icons.tv, 'Series', 'Series'),
+                                      _buildSidebarItem(Icons.settings, 'Ajustes', 'Ajustes'),
                                     ],
                                   ),
                                 ),
