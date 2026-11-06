@@ -60,7 +60,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   Timer? _progressSyncTimer;
   String? _currentStreamId;
   int _currentPlaybackPosition = 0;
-  List> _savedPlaylists = [];
+  List<dynamic> _savedPlaylists = []; // CORREGIDO TIPO DINÁMICO
 
   // VARIABLES DE PANTALLA COMPLETA, DVR Y OSD
   bool _isFullScreenMode = false;
@@ -157,7 +157,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               data?['m3u_playlists'];
 
           if (rawCloud is List && rawCloud.isNotEmpty) {
-            final List> cloudList = [];
+            final List<dynamic> cloudList = []; // CORREGIDO A DYNAMIC
             for (final item in rawCloud) {
               if (item is Map) {
                 cloudList.add(Map<String, dynamic>.from(item));
@@ -178,7 +178,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         if (rawLists != null && rawLists.isNotEmpty) {
           final decoded = jsonDecode(rawLists);
           if (decoded is List) {
-            final List> localList = [];
+            final List<dynamic> localList = []; // CORREGIDO A DYNAMIC
             for (final item in decoded) {
               if (item is Map) {
                 localList.add(Map<String, dynamic>.from(item));
@@ -205,7 +205,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
       Map<String, dynamic>? activePlaylist;
       for (final pl in _savedPlaylists) {
-        if (pl['isActive'] == true) {
+        if (pl is Map && pl['isActive'] == true) { // VERIFICACIÓN DE TIPO AÑADIDA
           activePlaylist = Map<String, dynamic>.from(pl);
           break;
         }
