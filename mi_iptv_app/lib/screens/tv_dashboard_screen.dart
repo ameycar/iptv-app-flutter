@@ -465,7 +465,9 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   right: 0,
                   top: 0,
                   bottom: 0,
-                  child: _buildMainVODContent(),
+                  child: FocusTraversalGroup(
+                      policy: WidgetOrderTraversalPolicy(),
+                      child: _buildMainVODContent()),
                 ),
 
                 // 3. CAPA ZAPPING OVERLAY CON CANALES REALES EN VIVO
@@ -604,62 +606,65 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                         bottomRight: Radius.circular(16)),
                     child: BackdropFilter(
                       filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                      child: Focus(
-                        focusNode: _sidebarFocusNode,
-                        onFocusChange: (hasFocus) {
-                          if (mounted) {
-                            setState(() => _isSidebarExpanded = hasFocus);
-                          }
-                        },
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.65),
-                            border: Border(
-                                right: BorderSide(
-                                    color: Colors.white.withOpacity(0.15),
-                                    width: 1)),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 24, horizontal: 10),
-                          child: Column(
-                            crossAxisAlignment: _isSidebarExpanded
-                                ? CrossAxisAlignment.start
-                                : CrossAxisAlignment.center,
-                            children: [
-                              _isSidebarExpanded
-                                  ? const Padding(
-                                      padding: EdgeInsets.symmetric(
-                                          horizontal: 16, vertical: 8),
-                                      child: Text('AMEYCAR TV',
-                                          style: TextStyle(
-                                              color: Color(0xFF00E5FF),
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.bold,
-                                              letterSpacing: 1.2)),
-                                    )
-                                  : const Padding(
-                                      padding: EdgeInsets.only(top: 8.0),
-                                      child: Icon(Icons.tv_rounded,
-                                          color: Color(0xFF00E5FF), size: 32),
-                                    ),
-                              const SizedBox(height: 32),
-                              Expanded(
-                                child: ListView(
-                                  children: [
-                                    _buildSidebarItem(Icons.home_filled,
-                                        'Inicio VIP', 'Inicio VIP'),
-                                    _buildSidebarItem(Icons.live_tv,
-                                        'Televisión', 'Televisión'),
-                                    _buildSidebarItem(
-                                        Icons.movie, 'Cine IA', 'Cine IA'),
-                                    _buildSidebarItem(
-                                        Icons.tv, 'Series', 'Series'),
-                                    _buildSidebarItem(
-                                        Icons.settings, 'Ajustes', 'Ajustes'),
-                                  ],
+                      child: FocusTraversalGroup(
+                        policy: WidgetOrderTraversalPolicy(),
+                        child: Focus(
+                          focusNode: _sidebarFocusNode,
+                          onFocusChange: (hasFocus) {
+                            if (mounted) {
+                              setState(() => _isSidebarExpanded = hasFocus);
+                            }
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.65),
+                              border: Border(
+                                  right: BorderSide(
+                                      color: Colors.white.withOpacity(0.15),
+                                      width: 1)),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 24, horizontal: 10),
+                            child: Column(
+                              crossAxisAlignment: _isSidebarExpanded
+                                  ? CrossAxisAlignment.start
+                                  : CrossAxisAlignment.center,
+                              children: [
+                                _isSidebarExpanded
+                                    ? const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 8),
+                                        child: Text('AMEYCAR TV',
+                                            style: TextStyle(
+                                                color: Color(0xFF00E5FF),
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                                letterSpacing: 1.2)),
+                                      )
+                                    : const Padding(
+                                        padding: EdgeInsets.only(top: 8.0),
+                                        child: Icon(Icons.tv_rounded,
+                                            color: Color(0xFF00E5FF), size: 32),
+                                      ),
+                                const SizedBox(height: 32),
+                                Expanded(
+                                  child: ListView(
+                                    children: [
+                                      _buildSidebarItem(Icons.home_filled,
+                                          'Inicio VIP', 'Inicio VIP'),
+                                      _buildSidebarItem(Icons.live_tv,
+                                          'Televisión', 'Televisión'),
+                                      _buildSidebarItem(
+                                          Icons.movie, 'Cine IA', 'Cine IA'),
+                                      _buildSidebarItem(
+                                          Icons.tv, 'Series', 'Series'),
+                                      _buildSidebarItem(
+                                          Icons.settings, 'Ajustes', 'Ajustes'),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -738,40 +743,51 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20.0),
-              child: _buildHeroBanner(),
+              child: FocusTraversalGroup(
+                  policy: WidgetOrderTraversalPolicy(),
+                  child: _buildHeroBanner()),
             ),
             const SizedBox(height: 48),
 
             // Carrusel de Películas Reales
             if (_movies.isNotEmpty)
-              TvContentRow(
-                title: '🍿 Películas Premium',
-                items: _movies,
-                height: 240,
-                cardWidth: 160,
-                onItemTap: _playContent,
+              FocusTraversalGroup(
+                policy: WidgetOrderTraversalPolicy(),
+                child: TvContentRow(
+                  title: '🍿 Películas Premium',
+                  items: _movies,
+                  height: 240,
+                  cardWidth: 160,
+                  onItemTap: _playContent,
+                ),
               ),
             if (_movies.isNotEmpty) const SizedBox(height: 32),
 
             // Carrusel de Series Reales (Formato ancho 16:9)
             if (_series.isNotEmpty)
-              TvContentRow(
-                title: '📺 Series Destacadas',
-                items: _series,
-                height: 160,
-                cardWidth: 280,
-                onItemTap: _playContent,
+              FocusTraversalGroup(
+                policy: WidgetOrderTraversalPolicy(),
+                child: TvContentRow(
+                  title: '📺 Series Destacadas',
+                  items: _series,
+                  height: 160,
+                  cardWidth: 280,
+                  onItemTap: _playContent,
+                ),
               ),
             if (_series.isNotEmpty) const SizedBox(height: 32),
 
             // Carrusel de Canales en Vivo
             if (_liveTv.isNotEmpty)
-              TvContentRow(
-                title: '🔴 Televisión en Vivo',
-                items: _liveTv,
-                height: 240,
-                cardWidth: 160,
-                onItemTap: _playContent,
+              FocusTraversalGroup(
+                policy: WidgetOrderTraversalPolicy(),
+                child: TvContentRow(
+                  title: '🔴 Televisión en Vivo',
+                  items: _liveTv,
+                  height: 240,
+                  cardWidth: 160,
+                  onItemTap: _playContent,
+                ),
               ),
           ],
         ),
