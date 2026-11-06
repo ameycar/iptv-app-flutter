@@ -26,6 +26,7 @@ import '../utils/premium_manager.dart';
 import 'profile_selector_screen.dart';
 import 'remote_control_screen.dart';
 import 'family_panel_screen.dart';
+import 'tv_vod_details_screen.dart';
 
 class TvDashboardScreen extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -365,6 +366,22 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   // EL GATILLO DE REPRODUCCIÓN (Llamado desde los carruseles)
   void _playContent(ChannelModel channel) async {
+    // Si es película o serie, abrimos la pantalla de detalles VOD Leanback
+    if (channel.contentType == 'movie' || channel.contentType == 'series') {
+      final bool? playNow = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => TvVodDetailsScreen(item: channel),
+        ),
+      );
+
+      // Si el usuario presionó "Reproducir" o "Volver", evaluamos:
+      if (playNow != true) {
+        return; // El usuario le dio a volver, no reproducimos.
+      }
+    }
+
+    // Si es TV en Vivo o el usuario confirmó "Reproducir" en Detalles:
     final int index = _channels.indexOf(channel);
     if (index != -1) {
       unawaited(_syncProgressToCloud());
