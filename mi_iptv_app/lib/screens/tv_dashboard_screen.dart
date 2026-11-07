@@ -141,7 +141,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     } catch (_) {}
   }
 
-  // 1. CARGA DESDE SHAREDPREFERENCES O FIRESTORE
   Future<void> _loadChannels() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -274,7 +273,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     }
   }
 
-  // 2. DESCARGA Y SANEAMIENTO INTELIGENTE DE LA LISTA M3U
   Future<void> _downloadAndSanitizeM3u(
     String url, {
     String? playlistId,
@@ -321,7 +319,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     }
   }
 
-  // 3. TEMPORIZADOR DE 5 SEGUNDOS PARA GUARDAR PROGRESO EN HIVE Y FIRESTORE
   void _startProgressSync(String streamUrl) {
     _currentStreamId = streamUrl;
     _progressSyncTimer?.cancel();
@@ -365,9 +362,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     } catch (_) {}
   }
 
-  // EL GATILLO DE REPRODUCCIÓN (Llamado desde los carruseles)
   void _playContent(ChannelModel channel) async {
-    // Si es película o serie, abrimos la pantalla de detalles VOD Leanback
     if (channel.contentType == 'movie' || channel.contentType == 'series') {
       final bool? playNow = await Navigator.push(
         context,
@@ -376,13 +371,11 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         ),
       );
 
-      // Si el usuario presionó "Reproducir" o "Volver", evaluamos:
       if (playNow != true) {
-        return; // El usuario le dio a volver, no reproducimos.
+        return;
       }
     }
 
-    // Si es TV en Vivo o el usuario confirmó "Reproducir" en Detalles:
     final int index = _channels.indexOf(channel);
     if (index != -1) {
       unawaited(_syncProgressToCloud());
@@ -698,7 +691,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           backgroundColor: const Color(0xFF070A10),
           body: Stack(
             children: [
-              // 1. CAPA DE VIDEO (Fondo Absoluto)
               Positioned.fill(
                 child: ProVideoPlayer(
                   key: _playerKey,
@@ -711,7 +703,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               ),
 
               if (!_isFullScreenMode) ...[
-                // Oscurecimiento base para resaltar la UI
                 Positioned.fill(
                   child: Container(
                     color: _selectedSection == 'Ajustes'
@@ -720,7 +711,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   ),
                 ),
 
-                // 2. CAPA ÁREA PRINCIPAL (VOD o AJUSTES)
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 300),
                   curve: Curves.easeOutCubic,
@@ -736,7 +726,13 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   ),
                 ),
 
-                // 3. CAPA ZAPPING OVERLAY CON CANALES REALES EN VIVO
+                // Lupa flotante de Búsqueda
+                Positioned(
+                  top: 32,
+                  right: 32,
+                  child: _buildSearchButton(),
+                ),
+
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 300),
                   curve: Curves.easeOutCubic,
@@ -858,7 +854,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   ),
                 ),
 
-                // 4. CAPA SIDEBAR TRANSLÚCIDO E INTELIGENTE
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 300),
                   curve: Curves.easeInOut,
@@ -891,117 +886,118 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                             ),
                             padding: const EdgeInsets.symmetric(
                                 vertical: 24, horizontal: 10),
-                            child: Column(
-                              crossAxisAlignment: _isSidebarExpanded
-                                  ? CrossAxisAlignment.start
-                                  : CrossAxisAlignment.center,
-                              children: [
-                                _isSidebarExpanded
-                                    ? Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 14, vertical: 6),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            const Text('AMEYCAR TV',
-                                                style: TextStyle(
-                                                    color: Color(0xFF00E5FF),
-                                                    fontSize: 18,
-                                                    fontWeight: FontWeight.w900,
-                                                    letterSpacing: 1.2)),
-                                            const SizedBox(height: 2),
-                                            Text('🕒 $_currentTime',
-                                                style: const TextStyle(
-                                                    color: Color(0xFFC77DFF),
-                                                    fontSize: 11,
-                                                    fontWeight:
-                                                        FontWeight.bold)),
-                                          ],
+                            // SOLUCIÓN AL PROBLEMA DEL SCROLL EN EL SIDEBAR:
+                            // Cambiamos ListView (que no se auto-enfoca bien en TV) por SingleChildScrollView + Column
+                            child: SingleChildScrollView(
+                              physics: const BouncingScrollPhysics(),
+                              child: Column(
+                                crossAxisAlignment: _isSidebarExpanded
+                                    ? CrossAxisAlignment.start
+                                    : CrossAxisAlignment.center,
+                                children: [
+                                  _isSidebarExpanded
+                                      ? Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 14, vertical: 6),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              const Text('AMEYCAR TV',
+                                                  style: TextStyle(
+                                                      color: Color(0xFF00E5FF),
+                                                      fontSize: 18,
+                                                      fontWeight: FontWeight.w900,
+                                                      letterSpacing: 1.2)),
+                                              const SizedBox(height: 2),
+                                              Text('🕒 $_currentTime',
+                                                  style: const TextStyle(
+                                                      color: Color(0xFFC77DFF),
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.bold)),
+                                            ],
+                                          ),
+                                        )
+                                      : const Padding(
+                                          padding: EdgeInsets.only(top: 8.0),
+                                          child: Icon(Icons.tv_rounded,
+                                              color: Color(0xFF00E5FF), size: 32),
                                         ),
-                                      )
-                                    : const Padding(
-                                        padding: EdgeInsets.only(top: 8.0),
-                                        child: Icon(Icons.tv_rounded,
-                                            color: Color(0xFF00E5FF), size: 32),
-                                      ),
-                                const SizedBox(height: 28),
-                                Expanded(
-                                  child: ListView(
-                                    children: [
-                                      // Botón Especial para invocar la Búsqueda / IA
-                                      Builder(builder: (context) {
-                                        return Focus(
-                                          onKeyEvent: (node, event) {
-                                            if (event is KeyDownEvent &&
-                                                (event.logicalKey == LogicalKeyboardKey.select ||
-                                                    event.logicalKey == LogicalKeyboardKey.enter ||
-                                                    event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-                                              _startVoiceSearch();
-                                              return KeyEventResult.handled;
-                                            }
-                                            return KeyEventResult.ignored;
-                                          },
-                                          child: Builder(builder: (context) {
-                                            final hasFocus = Focus.of(context).hasFocus;
-                                            return GestureDetector(
-                                              onTap: _startVoiceSearch,
-                                              child: AnimatedContainer(
-                                                duration: const Duration(milliseconds: 150),
-                                                margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                                                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-                                                decoration: BoxDecoration(
-                                                  color: hasFocus
-                                                      ? const Color(0xFF00E5FF).withOpacity(0.25)
-                                                      : Colors.transparent,
-                                                  borderRadius: BorderRadius.circular(10),
-                                                  border: Border.all(
-                                                    color: hasFocus ? const Color(0xFF00E5FF) : Colors.transparent,
-                                                    width: 2,
-                                                  ),
-                                                ),
-                                                child: Row(
-                                                  mainAxisAlignment: _isSidebarExpanded
-                                                      ? MainAxisAlignment.start
-                                                      : MainAxisAlignment.center,
-                                                  children: [
-                                                    Icon(Icons.mic,
-                                                        color: hasFocus ? const Color(0xFF00E5FF) : Colors.white60,
-                                                        size: 24),
-                                                    if (_isSidebarExpanded) ...[
-                                                      const SizedBox(width: 16),
-                                                      Expanded(
-                                                        child: Text(
-                                                          'Búsqueda IA',
-                                                          maxLines: 1,
-                                                          overflow: TextOverflow.ellipsis,
-                                                          style: TextStyle(
-                                                            color: hasFocus ? Colors.white : Colors.white60,
-                                                            fontWeight: hasFocus ? FontWeight.bold : FontWeight.normal,
-                                                            fontSize: 15,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ],
-                                                ),
+                                  const SizedBox(height: 28),
+                                  Builder(builder: (context) {
+                                    return Focus(
+                                      onKeyEvent: (node, event) {
+                                        if (event is KeyDownEvent &&
+                                            (event.logicalKey == LogicalKeyboardKey.select ||
+                                                event.logicalKey == LogicalKeyboardKey.enter ||
+                                                event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+                                          _startVoiceSearch();
+                                          return KeyEventResult.handled;
+                                        }
+                                        return KeyEventResult.ignored;
+                                      },
+                                      onFocusChange: (hasFocus) {
+                                         if (hasFocus) {
+                                           Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 200));
+                                         }
+                                      },
+                                      child: Builder(builder: (context) {
+                                        final hasFocus = Focus.of(context).hasFocus;
+                                        return GestureDetector(
+                                          onTap: _startVoiceSearch,
+                                          child: AnimatedContainer(
+                                            duration: const Duration(milliseconds: 150),
+                                            margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                                            decoration: BoxDecoration(
+                                              color: hasFocus
+                                                  ? const Color(0xFF00E5FF).withOpacity(0.25)
+                                                  : Colors.transparent,
+                                              borderRadius: BorderRadius.circular(10),
+                                              border: Border.all(
+                                                color: hasFocus ? const Color(0xFF00E5FF) : Colors.transparent,
+                                                width: 2,
                                               ),
-                                            );
-                                          }),
+                                            ),
+                                            child: Row(
+                                              mainAxisAlignment: _isSidebarExpanded
+                                                  ? MainAxisAlignment.start
+                                                  : MainAxisAlignment.center,
+                                              children: [
+                                                Icon(Icons.mic,
+                                                    color: hasFocus ? const Color(0xFF00E5FF) : Colors.white60,
+                                                    size: 24),
+                                                if (_isSidebarExpanded) ...[
+                                                  const SizedBox(width: 16),
+                                                  Expanded(
+                                                    child: Text(
+                                                      'Búsqueda IA',
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: TextStyle(
+                                                        color: hasFocus ? Colors.white : Colors.white60,
+                                                        fontWeight: hasFocus ? FontWeight.bold : FontWeight.normal,
+                                                        fontSize: 15,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                          ),
                                         );
                                       }),
-                                      const Divider(color: Colors.white12, height: 16),
-                                      
-                                      // Secciones de contenido normales
-                                      _buildSidebarItem(Icons.home_filled, 'Inicio VIP', 'Inicio VIP'),
-                                      _buildSidebarItem(Icons.live_tv, 'Televisión', 'Televisión'),
-                                      _buildSidebarItem(Icons.movie, 'Cine IA', 'Cine IA'),
-                                      _buildSidebarItem(Icons.tv, 'Series', 'Series'),
-                                      _buildSidebarItem(Icons.settings, 'Ajustes', 'Ajustes'),
-                                    ],
-                                  ),
-                                ),
-                              ],
+                                    );
+                                  }),
+                                  const Divider(color: Colors.white12, height: 16),
+                                  _buildSidebarItem(Icons.home_filled, 'Inicio VIP', 'Inicio VIP'),
+                                  _buildSidebarItem(Icons.live_tv, 'Televisión', 'Televisión'),
+                                  _buildSidebarItem(Icons.movie, 'Cine IA', 'Cine IA'),
+                                  _buildSidebarItem(Icons.tv, 'Series', 'Series'),
+                                  _buildSidebarItem(Icons.settings, 'Ajustes', 'Ajustes'),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -1011,7 +1007,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 ),
               ],
 
-              // MODO CINE / PANTALLA COMPLETA CON OSD COMPLETO
               if (_isFullScreenMode && _showOsd && activeChannel != null)
                 ZappingChannelOverlay(
                   channel: activeChannel,
@@ -1043,6 +1038,50 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         ),
       ),
     );
+  }
+
+  // BOTÓN DE BÚSQUEDA FLOTANTE (Solución a la lupa)
+  Widget _buildSearchButton() {
+    return Builder(builder: (context) {
+      return Focus(
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent &&
+              (event.logicalKey == LogicalKeyboardKey.select ||
+                  event.logicalKey == LogicalKeyboardKey.enter ||
+                  event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+            _startVoiceSearch();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Builder(builder: (context) {
+          final hasFocus = Focus.of(context).hasFocus;
+          return GestureDetector(
+            onTap: _startVoiceSearch,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: hasFocus ? const Color(0xFF00E5FF) : Colors.black.withOpacity(0.6),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: hasFocus ? Colors.white : Colors.white38,
+                  width: hasFocus ? 2 : 1,
+                ),
+                boxShadow: hasFocus
+                    ? [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.6), blurRadius: 15)]
+                    : [],
+              ),
+              child: Icon(
+                Icons.search,
+                color: hasFocus ? Colors.black : Colors.white,
+                size: 28,
+              ),
+            ),
+          );
+        }),
+      );
+    });
   }
 
   // ===========================================================================
@@ -1110,7 +1149,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     policy: WidgetOrderTraversalPolicy(),
                     child: _buildHeroBanner()),
               ),
-              const SizedBox(height: 44),
+              const SizedBox(height: 24), // Reducido el espacio debajo del banner
             ],
 
             if ((showAll || showLiveOnly) && _liveTv.isNotEmpty) ...[
@@ -1174,7 +1213,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ENCABEZADO DEL PANEL DE CONFIGURACIÓN
           Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
@@ -1258,7 +1296,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           ),
           const SizedBox(height: 28),
 
-          // CUADRÍCULA DE TARJETAS NAVEGABLES CON CONTROL REMOTO
           FocusTraversalGroup(
             policy: WidgetOrderTraversalPolicy(),
             child: GridView.count(
@@ -2667,7 +2704,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         : 'Disfruta de la mejor experiencia cinematográfica en casa.';
 
     return Container(
-      height: 340,
+      height: 220, // SOLUCIÓN: Altura reducida para que no ocupe toda la pantalla
       width: double.infinity,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
@@ -2708,7 +2745,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             ),
           ],
           Padding(
-            padding: const EdgeInsets.all(40.0),
+            padding: const EdgeInsets.symmetric(horizontal: 40.0, vertical: 24.0), // Ajustado el padding
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.end,
@@ -2728,7 +2765,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                       Icon(Icons.auto_awesome,
                           color: Color(0xFF00E5FF), size: 16),
                       SizedBox(width: 8),
-                      Text('Recomendación IA: 98% Afinidad',
+                      Text('Recomendación IA',
                           style: TextStyle(
                               color: Color(0xFF00E5FF),
                               fontWeight: FontWeight.bold,
@@ -2737,28 +2774,28 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 12),
                 Text(
                   featuredTitle,
                   style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 42,
+                      fontSize: 32, // Reducido tamaño de fuente
                       fontWeight: FontWeight.w900,
-                      letterSpacing: 2.5,
+                      letterSpacing: 1.5,
                       shadows: [Shadow(color: Colors.black, blurRadius: 10)]),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 Text(
                   featuredDesc,
                   style: const TextStyle(
                       color: Colors.white70,
-                      fontSize: 16,
-                      height: 1.5,
+                      fontSize: 14,
+                      height: 1.2,
                       shadows: [Shadow(color: Colors.black, blurRadius: 5)]),
                 ),
-                const SizedBox(height: 32),
+                const Spacer(),
                 Row(
                   children: [
                     _buildHeroButton('Reproducir', Icons.play_arrow_rounded, true,
@@ -2769,7 +2806,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                         _playContent(_channels[_selectedChannelIndex]);
                       }
                     }),
-                    const SizedBox(width: 20),
+                    const SizedBox(width: 16),
                     _buildHeroButton(
                       'Guía EPG en Vivo',
                       Icons.calendar_month_rounded,
@@ -2810,7 +2847,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             onTap: onTap ?? () => debugPrint('$text presionado'),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
-              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               decoration: BoxDecoration(
                 color: hasFocus
                     ? const Color(0xFF00E5FF)
@@ -2839,7 +2876,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                       color: hasFocus
                           ? Colors.black
                           : (isPrimary ? Colors.black : Colors.white),
-                      size: 26),
+                      size: 24),
                   const SizedBox(width: 8),
                   Text(text,
                       style: TextStyle(
@@ -2847,7 +2884,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                               ? Colors.black
                               : (isPrimary ? Colors.black : Colors.white),
                           fontWeight: FontWeight.bold,
-                          fontSize: 17)),
+                          fontSize: 15)),
                 ],
               ),
             ),
@@ -2870,6 +2907,11 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
+        },
+        onFocusChange: (hasFocus) {
+          if (hasFocus) {
+             Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 200));
+          }
         },
         child: Builder(builder: (context) {
           final hasFocus = Focus.of(context).hasFocus;
