@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class FocusableTvCard extends StatefulWidget {
   final Widget child;
@@ -12,7 +13,7 @@ class FocusableTvCard extends StatefulWidget {
     required this.child,
     required this.onTap,
     this.focusedScale = 1.08,
-    this.focusedBorderColor = const Color(0xFF00E5FF), // Cyan por defecto
+    this.focusedBorderColor = const Color(0xFF00E5FF),
     this.padding = EdgeInsets.zero,
   });
 
@@ -26,9 +27,19 @@ class _FocusableTvCardState extends State<FocusableTvCard> {
     return Padding(
       padding: widget.padding,
       child: Focus(
+        onKeyEvent: (node, event) {
+          // Captura el botón "OK" / "Enter" del control remoto de la TV
+          if (event is KeyDownEvent &&
+              (event.logicalKey == LogicalKeyboardKey.select ||
+                  event.logicalKey == LogicalKeyboardKey.enter ||
+                  event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+            widget.onTap();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
         child: Builder(
           builder: (context) {
-            // Detecta si el control remoto está posicionado sobre este elemento
             final hasFocus = Focus.of(context).hasFocus;
             
             return GestureDetector(
@@ -36,7 +47,7 @@ class _FocusableTvCardState extends State<FocusableTvCard> {
               child: AnimatedScale(
                 scale: hasFocus ? widget.focusedScale : 1.0,
                 duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOutBack, // Efecto de rebote sutil
+                curve: Curves.easeOutBack,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   curve: Curves.easeOutCubic,
@@ -57,7 +68,7 @@ class _FocusableTvCardState extends State<FocusableTvCard> {
                         : [],
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(9), // Ajustado al borde interior
+                    borderRadius: BorderRadius.circular(9),
                     child: widget.child,
                   ),
                 ),
