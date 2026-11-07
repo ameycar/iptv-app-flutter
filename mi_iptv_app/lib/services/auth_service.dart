@@ -42,10 +42,8 @@ class AuthService {
   static const String _kActiveProfileKey = 'current_active_profile_id';
   static const String _kAdminDeviceIdKey = 'authorized_superadmin_hwid';
 
-  // Base de datos Cloud REST de respaldo automático (Sincroniza múltiples dispositivos aún sin google-services.json)
   static const String _cloudSyncBaseUrl = 'https://ameycar-tv-default-rtdb.firebaseio.com';
 
-  // LLAVE MAESTRA DE EMERGENCIA (Para autorizar un nuevo dispositivo del Admin)
   static const String superAdminMasterKey = 'AMEYCAR-ROOT-2026';
   static const String masterRecoveryKey = 'AMEYCAR-ROOT-2026';
 
@@ -72,7 +70,6 @@ class AuthService {
   static bool get isLoggedIn => _currentUser != null;
   static bool get isAdmin => _currentUser?.isAdmin ?? false;
   
-  /// NUEVO: Verifica estrictamente si el perfil actualmente seleccionado es el Administrador de la Familia
   static bool get isFamilyAdmin {
     if (_currentUser == null) return false;
     if (_currentUser!.isAdmin) return true;
@@ -83,21 +80,18 @@ class AuthService {
     return _currentUser!.isFamilyGroupAdmin ?? false;
   }
 
-  /// Establece el perfil activo de la familia y lo recuerda
   static Future<void> setActiveProfile(UserModel profile) async {
     _currentActiveProfile = profile;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kActiveProfileKey, profile.id);
   }
 
-  /// Limpia el perfil recordado
   static Future<void> clearActiveProfile() async {
     _currentActiveProfile = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kActiveProfileKey);
   }
 
-  /// Obtiene o genera el Hardware ID único del dispositivo
   static Future<String> getDeviceHardwareId() async {
     final prefs = await SharedPreferences.getInstance();
     String? hwId = prefs.getString('device_unique_hw_id');
@@ -111,7 +105,6 @@ class AuthService {
     return hwId;
   }
 
-  /// Valida que una cuenta familiar no exceda el límite de 1 Móvil y 1 TV conectados simultáneamente
   static Future<bool> validateDeviceScreenLimit(String familyId, String deviceType) async {
     final members = await getFamilyMembers(familyId);
     
@@ -127,15 +120,14 @@ class AuthService {
 
     final reqType = deviceType.toLowerCase();
     if ((reqType.contains('phone') || reqType.contains('celular')) && phonesCount >= 1) {
-      return false; // Ya hay un celular registrado
+      return false;
     }
     if ((reqType.contains('tv') || reqType.contains('televisor')) && tvsCount >= 1) {
-      return false; // Ya hay un TV registrado
+      return false;
     }
     return true;
   }
 
-  /// Inicializa la cuenta SuperAdmin por defecto si no existe
   static Future<void> initializeAdminAccount() async {
     try {
       final hardwareId = await getDeviceHardwareId();
@@ -166,7 +158,6 @@ class AuthService {
               .collection(_usersCollection)
               .doc(defaultAdmin.id)
               .set(defaultAdmin.toMap());
-          debugPrint('✅ [AuthService Cloud] SuperAdmin creado en Firestore.');
         }
       } else {
         final localUsers = await _getLocalUsers();
@@ -174,7 +165,6 @@ class AuthService {
         if (!exists) {
           localUsers.add(defaultAdmin);
           await _saveLocalUsers(localUsers);
-          debugPrint('✅ [AuthService Local] SuperAdmin creado en almacenamiento local y Cloud Sync.');
         }
       }
     } catch (e) {
@@ -182,7 +172,6 @@ class AuthService {
     }
   }
 
-  /// Inicia sesión con validación de credenciales, roles y blindaje de Hardware
   static Future<AuthResponse> login({
     required String username,
     required String password,
@@ -201,9 +190,6 @@ class AuthService {
 
       final hardwareId = await getDeviceHardwareId();
 
-      // ==========================================
-      // CASO A: MODO CLOUD NATIVO (FIRESTORE)
-      // ==========================================
       if (isFirebaseAvailable) {
         final snapshot = await FirebaseFirestore.instance
             .collection(_usersCollection)
@@ -246,7 +232,6 @@ class AuthService {
           );
         }
 
-        // CONTROL DE ACCESO SUPERADMIN
         if (user.isAdmin) {
           final prefs = await SharedPreferences.getInstance();
           final authorizedAdminHwId = prefs.getString(_kAdminDeviceIdKey);
@@ -270,7 +255,6 @@ class AuthService {
           return AuthResponse(status: AuthStatus.success, user: user, message: 'Bienvenido Administrador');
         }
 
-        // CONTROL DE BLINDAJE DE HARDWARE
         if (user.registeredHardwareId == null || user.registeredHardwareId!.isEmpty) {
           await FirebaseFirestore.instance.collection(_usersCollection).doc(user.id).update({
             'registeredHardwareId': hardwareId,
@@ -298,9 +282,6 @@ class AuthService {
         return AuthResponse(status: AuthStatus.success, user: user, message: 'Acceso concedido.');
       }
 
-      // ==========================================
-      // CASO B: MODO CLOUD SYNC & LOCAL SEGURO
-      // ==========================================
       List<UserModel> localUsers = await _getLocalUsers();
 
       var matched = localUsers.where((u) => u.username.toLowerCase() == cleanUsername);
@@ -385,10 +366,6 @@ class AuthService {
     }
   }
 
-  // ============================================================
-  // GESTIÓN DE PLANES FAMILIARES
-  // ============================================================
-
   static Future<void> createFamilyGroup({
     required String familyName,
     required String adminUsername,
@@ -406,7 +383,9 @@ class AuthService {
       isActive: true,
       isVip: isVip,
       expirationDate: expirationDate,
-      deviceName: 'Pantalla Principal ($adminUsername)',
+      // IMPORTANTE: Dejamos el hardwareId nulo para que el jefe de familia lo asigne al iniciar sesión
+      registeredHardwareId: null, 
+      deviceName: null, 
       maxScreens: 5,
       familyId: familyId,
       isFamilyAdmin: true,
@@ -464,7 +443,9 @@ class AuthService {
       isActive: true,
       isVip: isMemberVip,
       expirationDate: expDate,
-      deviceName: memberName ?? username,
+      // IMPORTANTE: Dejamos el hardwareId nulo para que la pantalla se vincule en el primer uso
+      registeredHardwareId: null,
+      deviceName: null, // El nombre se asignará en el login
       maxScreens: 1,
       familyId: familyId,
       isFamilyAdmin: false,
@@ -556,10 +537,6 @@ class AuthService {
       await _saveLocalUsers(list);
     }
   }
-
-  // ============================================================
-  // PINES Y PAGOS
-  // ============================================================
 
   static Future<AuthResponse> redeemActivationPin(
     String pinCode, {
@@ -763,10 +740,6 @@ class AuthService {
       return AuthResponse(status: AuthStatus.error, message: 'Error al procesar pago: $e');
     }
   }
-
-  // ============================================================
-  // LIBERACIÓN EXPRESS DE HARDWARE
-  // ============================================================
 
   static Future<bool> requestHardwareReset(String userId) async {
     try {
@@ -1082,10 +1055,6 @@ class AuthService {
     await prefs.remove(_kActiveProfileKey);
   }
 
-  // ==========================================
-  // HELPERS DE ALMACENAMIENTO LOCAL Y CLOUD SYNC
-  // ==========================================
-
   static Future<List<UserModel>> _getLocalUsers() async {
     final prefs = await SharedPreferences.getInstance();
     final rawJson = prefs.getString(_kLocalUsersDbKey);
@@ -1203,12 +1172,8 @@ class AuthService {
     return [];
   }
 
-  // ============================================================
-  // REGISTRO CORPORATIVO CON ANTI-ABUSO (NOMBRE + APELLIDO)
-  // ============================================================
   static Future<AuthResponse> registerUser(String firstName, String lastName, String password) async {
     try {
-      // Función interna para limpiar acentos y espacios
       String cleanText(String text) {
         return text.trim().toLowerCase()
             .replaceAll('á', 'a').replaceAll('é', 'e').replaceAll('í', 'i')
@@ -1227,13 +1192,11 @@ class AuthService {
         );
       }
 
-      // 1. Generamos el usuario base (Ej: c + acosta = cacosta)
       String baseUsername = '${cleanFirst[0]}$cleanLast';
       String finalUsername = baseUsername;
       bool userExists = true;
       int counter = 0;
 
-      // 2. Bucle para asegurar que el usuario no exista (cacosta, cacosta1, cacosta2...)
       while (userExists) {
         finalUsername = counter == 0 ? baseUsername : '$baseUsername$counter';
         userExists = false;
@@ -1248,7 +1211,6 @@ class AuthService {
         if (userExists) counter++;
       }
 
-      // 3. Obtenemos el Hardware ID para el anti-abuso
       final hwId = await getDeviceHardwareId();
       bool hasUsedTrial = false;
 
@@ -1260,18 +1222,18 @@ class AuthService {
         if (localUsers.any((u) => u.registeredHardwareId == hwId)) hasUsedTrial = true;
       }
 
-      // 4. Veredicto: 3 días VIP si es equipo nuevo
       final int grantedDays = hasUsedTrial ? 0 : 3;
       final expirationDate = DateTime.now().add(Duration(days: grantedDays));
 
       final newUser = UserModel(
         id: isFirebaseAvailable ? FirebaseFirestore.instance.collection(_usersCollection).doc().id : 'user_${DateTime.now().millisecondsSinceEpoch}',
-        username: finalUsername, // ¡Aquí guardamos el usuario autogenerado!
+        username: finalUsername, 
         password: cleanPassword,
         role: 'user',
         isActive: true,
         isVip: grantedDays > 0,
         expirationDate: expirationDate,
+        // IMPORTANTE: Un usuario auto-registrado SÍ vincula el dispositivo inmediatamente
         registeredHardwareId: hwId,
         deviceName: '$firstName $lastName',
         maxScreens: 1,
@@ -1281,7 +1243,6 @@ class AuthService {
 
       await createClientUser(newUser);
 
-      // Enviamos el usuario autogenerado de vuelta para mostrarlo en pantalla
       return AuthResponse(
         status: AuthStatus.success,
         user: newUser,

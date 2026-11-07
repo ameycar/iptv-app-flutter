@@ -341,10 +341,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
 
-  // --- LÓGICA DE INTERFAZ DUAL (MÓVIL Y TV) ---
   Widget _buildDualDeviceIndicator(UserModel user) {
     final hasHw = user.registeredHardwareId != null && user.registeredHardwareId!.isNotEmpty;
-    // CORRECCIÓN: Encendemos el celular porque la app actual es móvil
     final bool isMobileLinked = hasHw; 
     final bool isTvLinked = false; 
 
@@ -540,7 +538,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
           const Divider(color: Colors.white10, height: 1),
           const SizedBox(height: 10),
           
-          // REEMPLAZO POR INDICADOR DUAL
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -568,7 +565,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
 
-  // --- MODAL DE RESET ERGONÓMICO ---
   void _showErgonomicResetModal(BuildContext context, UserModel user) {
     showModalBottomSheet(
       context: context,
@@ -591,7 +587,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ),
             const SizedBox(height: 20),
             
-            // Opción CELULAR
             ListTile(
               tileColor: const Color(0xFF1E283D),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -605,7 +600,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ),
             const SizedBox(height: 10),
             
-            // Opción TV
             ListTile(
               tileColor: const Color(0xFF1E283D),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -619,7 +613,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
             ),
             const SizedBox(height: 10),
             
-            // Opción AMBOS
             ListTile(
               tileColor: Colors.redAccent.withOpacity(0.1),
               shape: RoundedRectangleBorder(
@@ -639,7 +632,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
 
-  // Ejecuta la limpieza según el tipo (Adaptado a tu base actual)
   Future<void> _performReset(UserModel user, {required String type}) async {
     final success = await AuthService.adminResetHardware(user.id);
     if (success && mounted) {
@@ -831,7 +823,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                   final pwd = adminPassCtrl.text.trim();
                   if (famName.isEmpty || uname.isEmpty || pwd.isEmpty) return;
                   
-                  // MAGIA DE REFERIDOS: Generamos el código automáticamente
                   final cleanName = uname.toUpperCase().replaceAll(' ', '');
                   final refCode = 'AMEY-$cleanName-${Random().nextInt(9999).toString().padLeft(4, '0')}';
 
@@ -846,8 +837,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                   if (context.mounted) {
                     Navigator.pop(ctx);
                     setState(() {});
-                    
-                    // VENTANA EMERGENTE CON LOS DATOS LISTOS PARA MANDAR POR WHATSAPP
                     _showSuccessDialog(uname, pwd, refCode);
                   }
                 },
@@ -933,7 +922,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
 
                   final id = 'usr_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(9999)}';
                   
-                  // MAGIA DE REFERIDOS: Generamos el código de invitación único
                   final cleanName = uname.toUpperCase().replaceAll(' ', '');
                   final refCode = 'AMEY-$cleanName-${Random().nextInt(9999).toString().padLeft(4, '0')}';
 
@@ -945,18 +933,18 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     isActive: true,
                     isVip: isVip,
                     expirationDate: DateTime.now().add(Duration(days: selectedMonths * 30)),
+                    // IMPORTANTE: Dejamos el hardwareId nulo para que el usuario lo vincule al iniciar sesión
+                    registeredHardwareId: null,
+                    deviceName: null,
                   );
                   
                   await AuthService.createClientUser(newUser);
                   
-                  // Inyectamos el código a Firebase usando el actualizador de mapas para no romper nada
                   await AuthService.updateClientUser(id, {'referralCode': refCode});
 
                   if (context.mounted) {
                     Navigator.pop(ctx);
                     setState(() {});
-                    
-                    // VENTANA EMERGENTE CON LOS DATOS LISTOS PARA MANDAR POR WHATSAPP
                     _showSuccessDialog(uname, pwd, refCode);
                   }
                 },
@@ -970,7 +958,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
     );
   }
   
-  // NUEVO MODAL DE ÉXITO: Para copiar y enviar los datos del cliente + Referido
   void _showSuccessDialog(String uname, String pwd, String refCode) {
     showDialog(
       context: context,
@@ -1097,7 +1084,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                 ),
                 const SizedBox(height: 14),
 
-                // GENERADOR RÁPIDO
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
@@ -1210,7 +1196,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                 const Text('Pines en el Sistema:', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
 
-                // LISTA DE PINES EN TIEMPO REAL
                 Expanded(
                   child: StreamBuilder<List<ActivationPinModel>>(
                     stream: AuthService.getActivationPinsStream(),

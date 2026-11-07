@@ -330,10 +330,8 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
     );
   }
 
-  // --- INDICADOR VISUAL DUAL (MÓVIL Y TV) ---
   Widget _buildDualDeviceIndicator(UserModel user) {
     final hasHw = user.registeredHardwareId != null && user.registeredHardwareId!.isNotEmpty;
-    // CORRECCIÓN: Encendemos el celular porque la app actual es móvil
     final bool isMobileLinked = hasHw; 
     final bool isTvLinked = false; 
 
@@ -374,7 +372,6 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
     );
   }
 
-  // --- MODAL DE RESET ERGONÓMICO FAMILIAR ---
   void _showErgonomicResetModal(BuildContext context, UserModel user) {
     showModalBottomSheet(
       context: context,
@@ -443,7 +440,6 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
   }
 
   Future<void> _performReset(UserModel user, {required String type}) async {
-    // Almacena el llamado unificado de reset por ahora
     final success = await AuthService.adminResetHardware(user.id);
     if (success && mounted) {
       setState(() {});
@@ -692,7 +688,6 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                             ),
                             const Divider(color: Colors.white10, height: 24),
                             
-                            // NUEVO: INDICADOR VISUAL DUAL EN PANEL FAMILIAR
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
@@ -718,7 +713,7 @@ class _FamilyPanelScreenState extends State<FamilyPanelScreen> {
                                       side: const BorderSide(color: Colors.amberAccent),
                                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                     ),
-                                    onPressed: () => _showErgonomicResetModal(context, member), // CAMBIO ERGONÓMICO
+                                    onPressed: () => _showErgonomicResetModal(context, member),
                                     icon: const Icon(Icons.refresh, size: 14),
                                     label: const Text('Liberar HW', style: TextStyle(fontSize: 11)),
                                   ),
