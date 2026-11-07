@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vincular TV - AMEYCAR VIP</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #080C14;
+            color: white;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .card {
+            background: #101726;
+            padding: 40px;
+            border-radius: 24px;
+            width: 100%;
+            max-width: 450px;
+            border: 1px solid rgba(0, 229, 255, 0.3);
+            box-shadow: 0 10px 30px rgba(0, 229, 255, 0.1);
+        }
+        h2 {
+            text-align: center;
+            color: #00E5FF;
+            margin-top: 0;
+            font-weight: 900;
+        }
+        p {
+            text-align: center;
+            color: #888;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #B388FF;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        input {
+            width: 100%;
+            padding: 14px;
+            margin-bottom: 20px;
+            background: #1E293B;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            color: white;
+            box-sizing: border-box;
+            outline: none;
+        }
+        input:focus {
+            border-color: #00E5FF;
+        }
+        #tvCode {
+            font-size: 24px;
+            text-align: center;
+            letter-spacing: 10px;
+            font-weight: bold;
+            color: #00E5FF;
+        }
+        button {
+            width: 100%;
+            padding: 16px;
+            background: #00E5FF;
+            color: black;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 900;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        button:hover {
+            background: #7B2CBF;
+            color: white;
+        }
+        .loader {
+            display: none;
+            text-align: center;
+            color: #00E5FF;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Vinculación Express</h2>
+        <p>Ingresa el código que aparece en la pantalla de tu Smart TV y pega tu lista M3U aquí.</p>
+
+        <label>CÓDIGO DE TU TV (4 DÍGITOS)</label>
+        <input type="number" id="tvCode" placeholder="----" maxlength="4">
+
+        <label>URL DE TU LISTA M3U</label>
+        <input type="url" id="m3uUrl" placeholder="https://...">
+
+        <label>NOMBRE (OPCIONAL)</label>
+        <input type="text" id="playlistName" placeholder="Mi Lista VIP">
+
+        <label>URL GUÍA EPG (OPCIONAL)</label>
+        <input type="url" id="epgUrl" placeholder="https://...">
+
+        <button id="submitBtn" onclick="linkToTv()">ENVIAR A MI TV</button>
+        <div class="loader" id="loader">Conectando con tu televisor...</div>
+    </div>
+
+    <!-- Firebase SDK Compat para web estática -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+    <script>
+              
+        const firebaseConfig = {
+            apiKey: 'AIzaSyCdezgxIJsdnEXyvZaeazYYpHHbzcHm9Xs',
+            appId: '1:1056187378484:web:18fd0ec0a86c7c9af19361',
+            messagingSenderId: '1056187378484',
+            projectId: 'ameycartv',
+            authDomain: 'ameycartv.firebaseapp.com',
+            storageBucket: 'ameycartv.firebasestorage.app',
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        async function linkToTv() {
+            const code = document.getElementById('tvCode').value.trim();
+            const m3uUrl = document.getElementById('m3uUrl').value.trim();
+            const playlistName = document.getElementById('playlistName').value.trim();
+            const epgUrl = document.getElementById('epgUrl').value.trim();
+
+            if (code.length !== 4) {
+                alert("El código debe tener 4 dígitos.");
+                return;
+            }
+            if (!m3uUrl) {
+                alert("La URL de la lista M3U es obligatoria.");
+                return;
+            }
+
+            document.getElementById('submitBtn').style.display = 'none';
+            document.getElementById('loader').style.display = 'block';
+
+            try {
+                // Buscamos el documento con el código exacto generado por la TV
+                const docRef = db.collection('tv_pairing').doc(code);
+                const docSnap = await docRef.get();
+
+                if (!docSnap.exists) {
+                    alert("Código inválido o caducado. Vuelve a abrir la pantalla en tu TV para generar uno nuevo.");
+                    document.getElementById('submitBtn').style.display = 'block';
+                    document.getElementById('loader').style.display = 'none';
+                    return;
+                }
+
+                // Actualizamos el documento con la lista, lo que disparará el Listener en el Smart TV
+                await docRef.update({
+                    status: 'linked',
+                    m3uUrl: m3uUrl,
+                    epgUrl: epgUrl,
+                    playlistName: playlistName
+                });
+
+                document.querySelector('.card').innerHTML = `
+                    <div style="text-align:center;">
+                        <h2 style="color:#10B981; font-size:60px; margin-bottom:10px;">✓</h2>
+                        <h2>¡Enviado con Éxito!</h2>
+                        <p style="color:white; margin-top:20px;">Mira la pantalla de tu Smart TV, los canales se están cargando automáticamente.</p>
+                    </div>
+                `;
+
+            } catch (error) {
+                console.error("Error vinculando:", error);
+                alert("Hubo un error de conexión con el servidor.");
+                document.getElementById('submitBtn').style.display = 'block';
+                document.getElementById('loader').style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
