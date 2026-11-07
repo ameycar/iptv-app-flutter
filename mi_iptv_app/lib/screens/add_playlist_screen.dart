@@ -459,7 +459,7 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                       ),
                       const SizedBox(height: 12),
                       const Text(
-                        'Evita usar el teclado de la TV. Desde tu celular ingresa a:\nameycar.tv/link',
+                        'Evita usar el teclado de la TV. Desde tu celular ingresa a:\nhttps://ameycar-tv.netlify.app/link',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white60, fontSize: 16, height: 1.4),
                       ),
