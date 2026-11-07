@@ -726,7 +726,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   ),
                 ),
 
-                // Lupa flotante de Búsqueda
                 Positioned(
                   top: 32,
                   right: 32,
@@ -886,8 +885,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                             ),
                             padding: const EdgeInsets.symmetric(
                                 vertical: 24, horizontal: 10),
-                            // SOLUCIÓN AL PROBLEMA DEL SCROLL EN EL SIDEBAR:
-                            // Cambiamos ListView (que no se auto-enfoca bien en TV) por SingleChildScrollView + Column
                             child: SingleChildScrollView(
                               physics: const BouncingScrollPhysics(),
                               child: Column(
@@ -1040,7 +1037,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     );
   }
 
-  // BOTÓN DE BÚSQUEDA FLOTANTE (Solución a la lupa)
   Widget _buildSearchButton() {
     return Builder(builder: (context) {
       return Focus(
@@ -1084,9 +1080,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     });
   }
 
-  // ===========================================================================
-  // SECCIÓN 1: CONTENIDO PRINCIPAL VOD Y CANALES EN VIVO
-  // ===========================================================================
   Widget _buildMainVODContent() {
     final bool showAll = _selectedSection == 'Inicio VIP';
     final bool showLiveOnly = _selectedSection == 'Televisión';
@@ -1125,7 +1118,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     FocusTraversalGroup(
                       policy: WidgetOrderTraversalPolicy(),
                       child: _buildHeroButton(
-                        'Ver Canal Actual en Pantalla Completa',
+                        'Ver Canal Actual',
                         Icons.fullscreen_rounded,
                         false,
                         onTap: () {
@@ -1140,17 +1133,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 24),
-
-            if (showAll || showMoviesOnly) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                child: FocusTraversalGroup(
-                    policy: WidgetOrderTraversalPolicy(),
-                    child: _buildHeroBanner()),
-              ),
-              const SizedBox(height: 24), // Reducido el espacio debajo del banner
-            ],
+            
+            const SizedBox(height: 40), 
 
             if ((showAll || showLiveOnly) && _liveTv.isNotEmpty) ...[
               FocusTraversalGroup(
@@ -1199,9 +1183,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     );
   }
 
-  // ===========================================================================
-  // SECCIÓN 2: CENTRO DE CONFIGURACIÓN LEANBACK (AJUSTES SMART TV)
-  // ===========================================================================
   Widget _buildTvSettingsContent() {
     final user = AuthService.currentActiveProfile ?? AuthService.currentUser;
     final rootUser = AuthService.currentUser;
@@ -1563,10 +1544,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       ),
     );
   }
-
-  // ===========================================================================
-  // MODALES INTERACTIVOS PARA SMART TV (EPG, RENOVACIÓN, DVR, PARENTAL, M3U)
-  // ===========================================================================
 
   void _openTvEpgModal(ChannelModel channel) {
     final schedule =
@@ -2689,140 +2666,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             }).toList(),
           ),
         ),
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // BANNER HERO Y ELEMENTOS DEL MENÚ LATERAL
-  // ===========================================================================
-  Widget _buildHeroBanner() {
-    final featuredTitle =
-        _movies.isNotEmpty ? _movies.first.name : 'AMEYCAR ORIGINALS';
-    final featuredDesc = _movies.isNotEmpty
-        ? 'Estreno recomendado exclusivamente para ti.'
-        : 'Disfruta de la mejor experiencia cinematográfica en casa.';
-
-    return Container(
-      height: 220, // SOLUCIÓN: Altura reducida para que no ocupe toda la pantalla
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF131726), Color(0xFF0A0C14)],
-        ),
-        image: _movies.isNotEmpty && _movies.first.logoUrl.isNotEmpty
-            ? DecorationImage(
-                image: NetworkImage(_movies.first.logoUrl),
-                fit: BoxFit.cover,
-                colorFilter: ColorFilter.mode(
-                    Colors.black.withOpacity(0.6), BlendMode.darken),
-              )
-            : null,
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.6),
-              blurRadius: 25,
-              offset: const Offset(0, 15)),
-        ],
-      ),
-      child: Stack(
-        children: [
-          if (_movies.isEmpty || _movies.first.logoUrl.isEmpty) ...[
-            Positioned(
-              right: -60,
-              top: -60,
-              child: Icon(Icons.hub_outlined,
-                  size: 400, color: const Color(0xFF00E5FF).withOpacity(0.04)),
-            ),
-            Positioned(
-              right: 60,
-              bottom: -40,
-              child: Icon(Icons.movie_filter_rounded,
-                  size: 250, color: Colors.deepPurpleAccent.withOpacity(0.05)),
-            ),
-          ],
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40.0, vertical: 24.0), // Ajustado el padding
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF00E5FF).withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(
-                        color: const Color(0xFF00E5FF).withOpacity(0.5)),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.auto_awesome,
-                          color: Color(0xFF00E5FF), size: 16),
-                      SizedBox(width: 8),
-                      Text('Recomendación IA',
-                          style: TextStyle(
-                              color: Color(0xFF00E5FF),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                              letterSpacing: 0.5)),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  featuredTitle,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 32, // Reducido tamaño de fuente
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.5,
-                      shadows: [Shadow(color: Colors.black, blurRadius: 10)]),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  featuredDesc,
-                  style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                      height: 1.2,
-                      shadows: [Shadow(color: Colors.black, blurRadius: 5)]),
-                ),
-                const Spacer(),
-                Row(
-                  children: [
-                    _buildHeroButton('Reproducir', Icons.play_arrow_rounded, true,
-                        onTap: () {
-                      if (_movies.isNotEmpty) {
-                        _playContent(_movies.first);
-                      } else if (_channels.isNotEmpty) {
-                        _playContent(_channels[_selectedChannelIndex]);
-                      }
-                    }),
-                    const SizedBox(width: 16),
-                    _buildHeroButton(
-                      'Guía EPG en Vivo',
-                      Icons.calendar_month_rounded,
-                      false,
-                      onTap: () {
-                        if (_channels.isNotEmpty) {
-                          _openTvEpgModal(_channels[_selectedChannelIndex]);
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
