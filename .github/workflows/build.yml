@@ -32,8 +32,13 @@ jobs:
           cd mi_iptv_app
           flutter build apk --release --obfuscate --split-debug-info=./debug_info --no-tree-shake-icons
 
+      - name: Rename APK for Artifact Download
+        run: |
+          cd mi_iptv_app
+          mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/AMEYCARTV.apk
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
-          path: mi_iptv_app/build/app/outputs/flutter-apk/app-release.apk
+          name: AMEYCARTV-APK
+          path: mi_iptv_app/build/app/outputs/flutter-apk/AMEYCARTV.apk
