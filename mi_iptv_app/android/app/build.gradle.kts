@@ -31,6 +31,14 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // Regla automática para renombrar el APK de salida en compilación local y GitHub Actions
+    applicationVariants.all {
+        outputs.all {
+            val output = this as com.android.build.gradle.api.BaseVariantOutput
+            output.outputFileName = "AMEYCARTV.apk"
+        }
+    }
 }
 
 dependencies {
