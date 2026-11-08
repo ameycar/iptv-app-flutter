@@ -20,8 +20,54 @@
   
   <style>
     body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #070A10; color: #FFFFFF; overflow-x: hidden; }
-    .logo-multicolor { background: linear-gradient(90deg, #D946EF 0%, #9D4EDD 30%, #3B82F6 65%, #00E5FF 100%); background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: gradientFlow 5s linear infinite; }
+    .logo-multicolor { background: linear-gradient(90deg, #D946EF 0%, #9D4EDD 30%, #3B82F6 65%, #00E5FF 100%); background-size: 200% auto; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; animation: gradientFlow 5s linear infinite; }
     @keyframes gradientFlow { 0% { background-position: 0% center; } 100% { background-position: 200% center; } }
+    
+    /* ANIMACIÓN DEL MURO DE PÓSTERES (FONDO CINEMÁTICO) */
+    @keyframes scrollWall {
+      0% { transform: translateY(0); }
+      100% { transform: translateY(-50%); }
+    }
+    .poster-wall-container {
+      position: absolute;
+      inset: -50% -20% -50% -20%;
+      transform: perspective(1000px) rotateX(25deg) rotateY(-15deg) rotateZ(10deg) scale(1.5);
+      opacity: 0.15;
+      z-index: -10;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .poster-track {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      animation: scrollWall 60s linear infinite;
+    }
+    .poster-track.reverse {
+      animation-direction: reverse;
+      animation-duration: 75s;
+    }
+    .poster-track.fast {
+      animation-duration: 45s;
+    }
+    .poster-item {
+      width: 100%;
+      aspect-ratio: 2/3;
+      border-radius: 12px;
+      background-size: cover;
+      background-position: center;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+      filter: saturate(1.5) contrast(1.2);
+    }
+    
+    .hero-overlay {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at center, transparent 0%, #070A10 70%), linear-gradient(to bottom, rgba(7,10,16,0.5) 0%, #070A10 90%);
+      z-index: -5;
+      pointer-events: none;
+    }
+
     .bto-card { transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.45s ease, border-color 0.35s ease; }
     .bto-card:hover { transform: translateY(-10px) scale(1.015); box-shadow: 0 25px 50px -12px rgba(0, 229, 255, 0.25), 0 0 35px -8px rgba(157, 78, 221, 0.4); }
     .bto-card .card-visual { transition: transform 0.55s cubic-bezier(0.16, 1, 0.3, 1); }
@@ -33,7 +79,6 @@
     @keyframes floatEmoji { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-8px); } }
     .float-anim { animation: floatEmoji 3s ease-in-out infinite; }
     
-    /* ANIMACIONES DEL NUEVO BANNER HERO */
     @keyframes floatMockupTV { 0%, 100% { transform: perspective(1200px) rotateY(-15deg) rotateX(5deg) translateY(0px); } 50% { transform: perspective(1200px) rotateY(-15deg) rotateX(5deg) translateY(-15px); } }
     .anim-mockup-tv { animation: floatMockupTV 6s ease-in-out infinite; }
     
@@ -44,19 +89,89 @@
     .glow-cyan { box-shadow: 0 0 40px -10px rgba(0, 229, 255, 0.4); }
   </style>
 </head>
-<body class="antialiased selection:bg-cyan-400 selection:text-black">
+<body class="antialiased selection:bg-cyan-400 selection:text-black relative">
 
-  <div id="commercial-landing" class="min-h-screen flex flex-col justify-between relative overflow-hidden">
+  <!-- FONDO CINEMÁTICO TIPO NETFLIX (SIN COPYRIGHT) -->
+  <div class="fixed inset-0 overflow-hidden pointer-events-none -z-20">
+    <div class="poster-wall-container grid grid-cols-5 sm:grid-cols-7 gap-4">
+      
+      <!-- Columna 1 -->
+      <div class="poster-track">
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1518066000714-58c45f1a2c0a?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1626814026160-2237a95fc5a0?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1518066000714-58c45f1a2c0a?auto=format&fit=crop&w=300&q=80');"></div>
+      </div>
 
-    <!-- LUCES AMBIENTALES -->
-    <div class="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-      <div class="absolute -top-40 left-1/4 w-[500px] h-[500px] bg-purple-700/20 rounded-full blur-[130px]"></div>
-      <div class="absolute top-1/4 -right-20 w-[600px] h-[600px] bg-blue-600/15 rounded-full blur-[140px]"></div>
-      <div class="absolute bottom-20 left-10 w-[420px] h-[420px] bg-cyan-500/15 rounded-full blur-[130px]"></div>
+      <!-- Columna 2 (Reversa) -->
+      <div class="poster-track reverse hidden sm:flex">
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1505775561242-727616550275?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1535016120720-40c746a50616?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1618336753174-8e10c8bc0cb9?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1505775561242-727616550275?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=300&q=80');"></div>
+      </div>
+
+      <!-- Columna 3 (Rápida) -->
+      <div class="poster-track fast">
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1478720568477-152d9b164e26?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1551259508-8eef4b8d70e3?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1611162617474-5b21e879e113?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1542204165-65bf26472b9b?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1478720568477-152d9b164e26?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1551259508-8eef4b8d70e3?auto=format&fit=crop&w=300&q=80');"></div>
+      </div>
+
+      <!-- Columna 4 (Reversa rápida) -->
+      <div class="poster-track reverse fast hidden lg:flex">
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1509281373149-e957c6296406?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1616469829581-73993eb86b02?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1509281373149-e957c6296406?auto=format&fit=crop&w=300&q=80');"></div>
+      </div>
+
+       <!-- Columna 5 -->
+       <div class="poster-track">
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1498736297812-3a08021f206f?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1560169897-fc0cdbdfa4d5?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1585647347483-22b66260dfff?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1498736297812-3a08021f206f?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1560169897-fc0cdbdfa4d5?auto=format&fit=crop&w=300&q=80');"></div>
+      </div>
+      
+       <!-- Columna 6 (Reversa) -->
+       <div class="poster-track reverse hidden md:flex">
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1626814026160-2237a95fc5a0?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1505775561242-727616550275?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1518066000714-58c45f1a2c0a?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1626814026160-2237a95fc5a0?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1505775561242-727616550275?auto=format&fit=crop&w=300&q=80');"></div>
+      </div>
+
+       <!-- Columna 7 -->
+       <div class="poster-track fast hidden sm:flex">
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1551259508-8eef4b8d70e3?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1478720568477-152d9b164e26?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1611162617474-5b21e879e113?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=300&q=80');"></div>
+        <div class="poster-item" style="background-image: url('https://images.unsplash.com/photo-1551259508-8eef4b8d70e3?auto=format&fit=crop&w=300&q=80');"></div>
+      </div>
     </div>
+    <div class="hero-overlay"></div>
+  </div>
+
+  <div id="commercial-landing" class="min-h-screen flex flex-col justify-between relative">
 
     <!-- NAVBAR -->
-    <nav class="sticky top-0 z-50 backdrop-blur-xl bg-[#070A10]/90 border-b border-purple-500/20 px-4 sm:px-8 py-3.5">
+    <nav class="sticky top-0 z-50 backdrop-blur-xl bg-[#070A10]/80 border-b border-purple-500/20 px-4 sm:px-8 py-3.5">
       <div class="max-w-7xl mx-auto flex justify-between items-center">
         <a href="#" class="flex items-center space-x-2.5 group">
           <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-600 via-blue-500 to-cyan-400 p-[2px] shadow-lg group-hover:scale-105 transition">
@@ -95,7 +210,7 @@
         </div>
       </div>
 
-      <div id="mobile-menu" class="hidden lg:hidden mt-3 pt-3 border-t border-white/10 flex flex-col space-y-2.5 text-sm font-semibold text-white px-2 pb-2">
+      <div id="mobile-menu" class="hidden lg:hidden mt-3 pt-3 border-t border-white/10 flex flex-col space-y-2.5 text-sm font-semibold text-white px-2 pb-2 bg-[#070A10]/95 rounded-b-xl">
         <a href="#superpoderes" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">⚡ Superpoderes de la App</a>
         <a href="#carrusel-pro" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">🎯 Tour Interactivo en Vivo</a>
         <a href="#guia-uso" onclick="toggleMobileMenu()" class="py-1.5 hover:text-cyan-400">📲 Guía Intuitiva de Instalación</a>
@@ -105,30 +220,30 @@
       </div>
     </nav>
 
-    <!-- NUEVO HERO SECTION REDISEÑADO CON MOCKUPS -->
-    <header id="inicio" class="pt-10 pb-16 px-4 sm:px-8 max-w-[1400px] mx-auto w-full">
+    <!-- HERO SECTION CON MOCKUPS -->
+    <header id="inicio" class="pt-10 pb-16 px-4 sm:px-8 max-w-[1400px] mx-auto w-full z-10">
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
         
         <!-- Columna Izquierda: Texto Principal -->
-        <div class="lg:col-span-5 text-center lg:text-left z-10">
-          <div class="inline-flex items-center gap-2 bg-purple-950/70 border border-purple-500/40 text-white px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-bold tracking-wider uppercase mb-6 glow-purple">
+        <div class="lg:col-span-5 text-center lg:text-left">
+          <div class="inline-flex items-center gap-2 bg-purple-950/70 backdrop-blur-sm border border-purple-500/40 text-white px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-bold tracking-wider uppercase mb-6 glow-purple">
             <span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
             Reproductor Inteligente • Cero Publicidad
           </div>
 
-          <h1 class="text-4xl sm:text-5xl lg:text-[4rem] font-black tracking-tight leading-[1.05] text-white mb-6">
+          <h1 class="text-4xl sm:text-5xl lg:text-[4rem] font-black tracking-tight leading-[1.05] text-white mb-6 drop-shadow-2xl">
             Televisión sin cortes. <br class="hidden lg:block"/><span class="logo-multicolor">Así de simple.</span>
           </h1>
 
-          <p class="text-white/80 text-base sm:text-lg mb-8 font-medium leading-relaxed max-w-xl mx-auto lg:mx-0">
+          <p class="text-white/90 text-base sm:text-lg mb-8 font-medium leading-relaxed max-w-xl mx-auto lg:mx-0 drop-shadow-lg">
             Deja atrás los reproductores lentos y llenos de anuncios invasivos. Disfruta tus listas M3U con <strong class="text-cyan-300">Asistente por Voz IA</strong>, <strong class="text-purple-300">Grabación DVR</strong>, <strong class="text-blue-300">Retroceso en Vivo</strong> y control total desde tu celular.
           </p>
 
           <div class="flex flex-col sm:flex-row items-center gap-4 justify-center lg:justify-start">
-            <a href="app.html" class="w-full sm:w-auto bg-gradient-to-r from-purple-600 via-blue-500 to-cyan-400 text-white font-black px-7 py-4 rounded-xl glow-cyan hover:scale-105 transition text-[15px] tracking-wide shadow-xl text-center flex items-center justify-center gap-2">
+            <a href="app.html" class="w-full sm:w-auto bg-gradient-to-r from-purple-600 via-blue-500 to-cyan-400 text-white font-black px-7 py-4 rounded-xl glow-cyan hover:scale-105 transition text-[15px] tracking-wide shadow-[0_10px_25px_rgba(0,0,0,0.5)] text-center flex items-center justify-center gap-2">
               <span>▶</span> ABRIR REPRODUCTOR WEB
             </a>
-            <a href="#planes" class="w-full sm:w-auto bg-white/5 border border-white/20 text-white font-bold px-7 py-4 rounded-xl hover:bg-white/10 transition text-[15px] text-center">
+            <a href="#planes" class="w-full sm:w-auto bg-[#070A10]/60 backdrop-blur-md border border-white/20 text-white font-bold px-7 py-4 rounded-xl hover:bg-white/10 transition text-[15px] text-center shadow-lg">
               💎 Ver Licencias VIP
             </a>
           </div>
@@ -138,7 +253,7 @@
         <div class="lg:col-span-7 relative h-[450px] sm:h-[550px] w-full flex items-center justify-center lg:justify-end mt-10 lg:mt-0 perspective-1000">
           
           <!-- Mockup Smart TV (Fondo) -->
-          <div class="absolute right-0 lg:right-[-20px] w-full max-w-[650px] h-[360px] sm:h-[400px] bg-[#0A0D14] border-4 border-[#2A3143] rounded-2xl shadow-[0_30px_70px_-15px_rgba(0,0,0,0.8)] overflow-hidden anim-mockup-tv z-0 before:absolute before:inset-0 before:shadow-[inset_0_0_50px_rgba(0,0,0,0.9)] before:z-20">
+          <div class="absolute right-0 lg:right-[-20px] w-full max-w-[650px] h-[360px] sm:h-[400px] bg-[#0A0D14] border-4 border-[#2A3143] rounded-2xl shadow-[0_30px_70px_-15px_rgba(0,0,0,0.9)] overflow-hidden anim-mockup-tv z-0 before:absolute before:inset-0 before:shadow-[inset_0_0_50px_rgba(0,0,0,0.9)] before:z-20">
             <!-- Pata del TV -->
             <div class="absolute -bottom-6 left-1/2 -translate-x-1/2 w-40 h-6 bg-gradient-to-b from-[#2A3143] to-[#11141D] rounded-b-xl z-30"></div>
             
@@ -190,7 +305,7 @@
           </div>
 
           <!-- Mockup Celular (Frente, flotando) -->
-          <div class="absolute left-0 lg:left-10 bottom-4 sm:bottom-12 w-[160px] sm:w-[220px] h-[340px] sm:h-[460px] bg-[#070A10] border-[6px] border-[#1C2235] rounded-[32px] shadow-[0_20px_50px_rgba(0,0,0,0.9)] overflow-hidden anim-mockup-mobile z-40 flex flex-col justify-between">
+          <div class="absolute left-0 lg:left-10 bottom-4 sm:bottom-12 w-[160px] sm:w-[220px] h-[340px] sm:h-[460px] bg-[#070A10] border-[6px] border-[#1C2235] rounded-[32px] shadow-[0_25px_60px_rgba(0,0,0,0.95)] overflow-hidden anim-mockup-mobile z-40 flex flex-col justify-between">
             <!-- Notch superior celular -->
             <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[40%] h-4 bg-[#1C2235] rounded-b-xl z-50"></div>
             
@@ -213,7 +328,7 @@
 
               <!-- Botones del Mando Remoto -->
               <div class="px-3 mt-4 space-y-2.5">
-                <div class="text-[10px] text-white/50 font-bold uppercase tracking-wider text-center mb-1">Mando Remoto Smart TV</div>
+                <div class="text-[10px] text-white/50 font-bold uppercase tracking-wider text-center mb-1">Mando Smart TV</div>
                 
                 <!-- Rueda D-PAD Celular -->
                 <div class="w-24 h-24 sm:w-32 sm:h-32 mx-auto relative rounded-full bg-[#171E2D] border border-white/5 shadow-inner flex items-center justify-center">
@@ -247,11 +362,11 @@
       </div>
     </header>
 
-    <!-- 4 TARJETAS INTERACTIVAS (Rediseñadas y acopladas debajo del Hero) -->
-    <section class="max-w-7xl mx-auto px-4 sm:px-8 pb-16 w-full -mt-2">
+    <!-- 4 TARJETAS INTERACTIVAS -->
+    <section class="max-w-7xl mx-auto px-4 sm:px-8 pb-16 w-full -mt-2 z-10 relative">
       <div id="superpoderes" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 text-left">
         
-        <div onclick="jumpToSlide(0)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#4C1D95] via-[#1E1B4B] to-[#0B1020] border border-purple-400/30 p-6 flex flex-col justify-between min-h-[300px] relative overflow-hidden">
+        <div onclick="jumpToSlide(0)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#4C1D95]/90 via-[#1E1B4B]/90 to-[#0B1020]/90 backdrop-blur-md border border-purple-400/30 p-6 flex flex-col justify-between min-h-[300px] relative overflow-hidden">
           <div class="card-visual bg-[#070A10]/80 border border-purple-400/30 rounded-2xl p-4 mb-4 shadow-inner">
             <div class="flex justify-between items-center mb-3">
               <span class="text-[10px] font-black text-purple-300 tracking-wider">ZAPPING TURBO</span>
@@ -277,7 +392,7 @@
           </div>
         </div>
 
-        <div onclick="jumpToSlide(1)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#0369A1] via-[#0F294A] to-[#0B1020] border border-cyan-400/35 p-6 flex flex-col justify-between min-h-[300px] relative overflow-hidden">
+        <div onclick="jumpToSlide(1)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#0369A1]/90 via-[#0F294A]/90 to-[#0B1020]/90 backdrop-blur-md border border-cyan-400/35 p-6 flex flex-col justify-between min-h-[300px] relative overflow-hidden">
           <div class="card-visual bg-[#070A10]/80 border border-cyan-400/30 rounded-2xl p-4 mb-4 flex flex-col items-center justify-center h-[105px]">
             <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-cyan-400 flex items-center justify-center text-black text-lg font-black mic-pulse mb-2">
               🎙️
@@ -293,7 +408,7 @@
           </div>
         </div>
 
-        <div onclick="jumpToSlide(2)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#6D28D9] via-[#2E1065] to-[#0B1020] border border-fuchsia-400/30 p-6 flex flex-col justify-between min-h-[300px] relative overflow-hidden">
+        <div onclick="jumpToSlide(2)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#6D28D9]/90 via-[#2E1065]/90 to-[#0B1020]/90 backdrop-blur-md border border-fuchsia-400/30 p-6 flex flex-col justify-between min-h-[300px] relative overflow-hidden">
           <div class="card-visual bg-[#070A10]/80 border border-fuchsia-400/30 rounded-2xl p-4 mb-4">
             <div class="flex justify-between items-center mb-2">
               <span class="bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full">● REC DVR</span>
@@ -316,7 +431,7 @@
           </div>
         </div>
 
-        <div onclick="jumpToSlide(3)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#1D4ED8] via-[#172554] to-[#0B1020] border border-blue-400/35 p-6 flex flex-col justify-between min-h-[300px] relative overflow-hidden">
+        <div onclick="jumpToSlide(3)" class="bto-card cursor-pointer rounded-[28px] bg-gradient-to-b from-[#1D4ED8]/90 via-[#172554]/90 to-[#0B1020]/90 backdrop-blur-md border border-blue-400/35 p-6 flex flex-col justify-between min-h-[300px] relative overflow-hidden">
           <div class="card-visual bg-[#070A10]/80 border border-blue-400/30 rounded-2xl p-4 mb-4 relative h-[105px] flex flex-col justify-between">
             <div class="flex justify-between items-center">
               <span class="text-[10px] font-bold text-blue-300">📱 Mando Móvil</span>
@@ -340,7 +455,7 @@
     </section>
 
     <!-- CARRUSEL INTERACTIVO PRO -->
-    <section id="carrusel-pro" class="py-20 px-4 sm:px-8 border-t border-white/10 bg-[#090D18]/80">
+    <section id="carrusel-pro" class="py-20 px-4 sm:px-8 border-t border-white/10 bg-[#090D18]/90 relative z-10">
       <div class="max-w-6xl mx-auto">
         <div class="text-center max-w-3xl mx-auto mb-10">
           <span class="text-cyan-400 text-xs font-extrabold uppercase tracking-widest">Ingeniería & Experiencia Visual</span>
@@ -390,9 +505,9 @@
     </section>
 
     <!-- COMPARATIVA -->
-    <section class="py-16 px-4 sm:px-8 max-w-6xl mx-auto w-full">
+    <section class="py-16 px-4 sm:px-8 max-w-6xl mx-auto w-full relative z-10">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="bg-[#111522]/70 border border-red-500/20 rounded-3xl p-8">
+        <div class="bg-[#111522]/90 backdrop-blur-sm border border-red-500/20 rounded-3xl p-8">
           <span class="text-red-400 text-xs font-extrabold uppercase tracking-widest">El Pasado</span>
           <h3 class="text-2xl font-black text-white mt-1 mb-5">Apps Tradicionales Obsoletas</h3>
           <ul class="space-y-3 text-sm text-white/70">
@@ -404,7 +519,7 @@
           </ul>
         </div>
 
-        <div class="bg-gradient-to-br from-[#1B1438] via-[#0F1B36] to-[#091829] border-2 border-cyan-400/50 rounded-3xl p-8 glow-cyan">
+        <div class="bg-gradient-to-br from-[#1B1438]/90 via-[#0F1B36]/90 to-[#091829]/90 backdrop-blur-sm border-2 border-cyan-400/50 rounded-3xl p-8 glow-cyan">
           <span class="text-cyan-400 text-xs font-extrabold uppercase tracking-widest">El Nuevo Estándar</span>
           <h3 class="text-2xl font-black text-white mt-1 mb-5">Ecosistema AMEYCAR TV VIP</h3>
           <ul class="space-y-3 text-sm text-white font-semibold">
@@ -419,7 +534,7 @@
     </section>
 
     <!-- GUÍA 3 PASOS -->
-    <section id="guia-uso" class="py-20 px-4 sm:px-8 bg-[#0A0F1E]/70 border-t border-white/10">
+    <section id="guia-uso" class="py-20 px-4 sm:px-8 bg-[#0A0F1E]/90 backdrop-blur-md border-t border-white/10 relative z-10">
       <div class="max-w-5xl mx-auto text-center">
         <span class="text-purple-400 text-xs font-extrabold uppercase tracking-widest">Configuración en Menos de 2 Minutos</span>
         <h2 class="text-3xl sm:text-5xl font-black text-white mt-2 mb-4">Guía Intuitiva de Inicio Rápido</h2>
@@ -445,7 +560,7 @@
     </section>
 
     <!-- PLANES VIP (PRECIOS ACTUALIZADOS S/15, S/25, S/40) -->
-    <section id="planes" class="py-24 px-4 sm:px-8 max-w-6xl mx-auto w-full">
+    <section id="planes" class="py-24 px-4 sm:px-8 max-w-6xl mx-auto w-full relative z-10">
       <div class="text-center max-w-3xl mx-auto mb-14">
         <span class="text-cyan-400 text-xs font-extrabold uppercase tracking-widest">Activación Automática 24/7 con PIN</span>
         <h2 class="text-3xl sm:text-5xl font-black text-white mt-2 mb-4">Licencias de Acceso AMEYCAR TV VIP</h2>
@@ -453,7 +568,7 @@
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
-        <div class="bto-card bg-[#0E1526] border border-white/15 p-8 rounded-3xl flex flex-col justify-between relative overflow-hidden">
+        <div class="bto-card bg-[#0E1526]/90 backdrop-blur-sm border border-white/15 p-8 rounded-3xl flex flex-col justify-between relative overflow-hidden">
           <div>
             <span class="text-cyan-400 text-xs font-bold uppercase">Uso Personal</span>
             <h3 class="text-2xl font-black text-white mt-1 mb-1">Licencia Individual</h3>
@@ -473,7 +588,7 @@
           </a>
         </div>
 
-        <div class="bto-card bg-gradient-to-b from-[#2A1458] via-[#131B36] to-[#0B1020] border-2 border-cyan-400 p-8 rounded-3xl flex flex-col justify-between relative glow-purple overflow-hidden">
+        <div class="bto-card bg-gradient-to-b from-[#2A1458]/90 via-[#131B36]/90 to-[#0B1020]/90 backdrop-blur-sm border-2 border-cyan-400 p-8 rounded-3xl flex flex-col justify-between relative glow-purple overflow-hidden">
           <span class="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-purple-500 via-blue-500 to-cyan-400 text-white text-[10px] font-black px-4 py-1 rounded-full uppercase tracking-widest shadow-lg whitespace-nowrap z-20">
             ⭐ Más Elegido por Familias
           </span>
@@ -496,7 +611,7 @@
           </a>
         </div>
 
-        <div class="bto-card bg-[#0E1526] border border-white/15 p-8 rounded-3xl flex flex-col justify-between relative overflow-hidden">
+        <div class="bto-card bg-[#0E1526]/90 backdrop-blur-sm border border-white/15 p-8 rounded-3xl flex flex-col justify-between relative overflow-hidden">
           <div>
             <span class="text-blue-400 text-xs font-bold uppercase">Máximo Ahorro</span>
             <h3 class="text-2xl font-black text-white mt-1 mb-1">Pase Trimestral Individual VIP</h3>
@@ -519,7 +634,7 @@
     </section>
 
     <!-- MÉTODOS DE PAGO -->
-    <section id="pagos" class="py-20 px-4 sm:px-8 bg-[#0A0F1E]/80 border-t border-white/10">
+    <section id="pagos" class="py-20 px-4 sm:px-8 bg-[#0A0F1E]/90 backdrop-blur-md border-t border-white/10 relative z-10">
       <div class="max-w-6xl mx-auto text-center">
         <span class="text-cyan-400 text-xs font-extrabold uppercase tracking-widest">Pagos Seguros y Entrega de PIN al Instante</span>
         <h2 class="text-3xl sm:text-4xl font-black text-white mt-2 mb-3">Métodos de Pago Oficiales</h2>
@@ -579,7 +694,7 @@
     </section>
 
     <!-- CERTIFICADO LEGAL -->
-    <section id="certificado-legal" class="py-14 px-4 sm:px-8 border-t border-purple-900/40 bg-[#05070C]">
+    <section id="certificado-legal" class="py-14 px-4 sm:px-8 border-t border-purple-900/40 bg-[#05070C] relative z-10">
       <div class="max-w-6xl mx-auto">
         <div class="bg-[#0B1120] border border-cyan-500/25 rounded-3xl p-6 sm:p-8 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
           <div class="flex items-start gap-4">
