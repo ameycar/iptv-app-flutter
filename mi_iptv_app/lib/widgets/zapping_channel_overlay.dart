@@ -18,6 +18,7 @@ class ZappingChannelOverlay extends StatefulWidget {
   final VoidCallback onNext;
   final VoidCallback onPrevious;
   final VoidCallback? onOpenEpg;
+  final VoidCallback? onSearch; // NUEVO: Botón de búsqueda (Lupa)
   final VoidCallback? onToggleFullScreen;
   final VoidCallback? onRewind15s;
   final VoidCallback? onForward15s;
@@ -38,6 +39,7 @@ class ZappingChannelOverlay extends StatefulWidget {
     required this.onNext,
     required this.onPrevious,
     this.onOpenEpg,
+    this.onSearch,
     this.onToggleFullScreen,
     this.onRewind15s,
     this.onForward15s,
@@ -315,7 +317,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                             const SizedBox(width: 8),
                             
                             Focus(
-                              autofocus: true, // El foco siempre entra por aquí
+                              autofocus: true,
                               onKeyEvent: (node, event) {
                                 if (event is KeyDownEvent &&
                                     (event.logicalKey == LogicalKeyboardKey.select ||
@@ -447,6 +449,18 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                           scrollDirection: Axis.horizontal,
                           child: Row(
                             children: [
+                              // NUEVO BOTÓN DE BÚSQUEDA IA
+                              if (widget.onSearch != null) ...[
+                                _buildCompactControlChip(
+                                  icon: Icons.search,
+                                  label: 'BÚSQUEDA IA',
+                                  borderColor: const Color(0xFF00E5FF).withOpacity(0.6),
+                                  bgColor: const Color(0xFF00E5FF).withOpacity(0.2),
+                                  iconColor: const Color(0xFF00E5FF),
+                                  onTap: widget.onSearch!,
+                                ),
+                                const SizedBox(width: 6),
+                              ],
                               if (widget.onRewind15s != null) ...[
                                 _buildCompactControlChip(
                                   icon: Icons.replay_10,

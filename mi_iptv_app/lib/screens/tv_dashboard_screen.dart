@@ -9,12 +9,10 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 
 import '../models/channel_model.dart';
 import '../widgets/pro_video_player.dart';
 import '../widgets/focusable_tv_card.dart';
-import '../widgets/tv_content_row.dart';
 import '../widgets/zapping_channel_overlay.dart';
 import '../widgets/pin_dialog.dart';
 import '../widgets/alexa_voice_sheet.dart';
@@ -48,7 +46,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   bool _isZappingOverlayVisible = false;
   Timer? _zappingHideTimer;
 
-  String _selectedSection = 'Inicio VIP';
+  // Por defecto iniciamos en el modo Televisión
+  String _selectedSection = 'Televisión';
 
   // LISTAS DE CONTENIDO REAL
   List<ChannelModel> _channels = [];
@@ -64,8 +63,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   int _currentPlaybackPosition = 0;
   List<dynamic> _savedPlaylists = [];
 
-  // VARIABLES DE PANTALLA COMPLETA, DVR Y OSD
-  bool _isFullScreenMode = false;
+  // VARIABLES DE DVR Y OSD (La pantalla siempre es Full Screen ahora)
   bool _showOsd = false;
   bool _isPlayerPaused = false;
   bool _isBehindLive = false;
@@ -383,7 +381,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
       setState(() {
         _selectedChannelIndex = index;
-        _isFullScreenMode = true;
         _showOsd = true;
         _isPlayerPaused = false;
         _isBehindLive = false;
@@ -611,6 +608,10 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     _zappingHideTimer = Timer(const Duration(seconds: 5), () {
       if (mounted) {
         setState(() => _isZappingOverlayVisible = false);
+        // Regresa el foco al TV cuando desaparece el carrusel
+        if (FocusScope.of(context).focusedChild == _zappingFocusNode) {
+          FocusScope.of(context).requestFocus(_tvFocusScope);
+        }
       }
     });
   }
@@ -633,13 +634,14 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     final activeChannel = _channels.isNotEmpty
         ? _channels[_selectedChannelIndex]
         : null;
+        
+    final bool isTvMode = _selectedSection != 'Ajustes';
 
     return PopScope(
-      canPop: !_isFullScreenMode,
+      canPop: !isTvMode,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && _isFullScreenMode) {
+        if (!didPop && isTvMode && _showOsd) {
           setState(() {
-            _isFullScreenMode = false;
             _showOsd = false;
           });
         }
@@ -651,38 +653,48 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           if (event is KeyDownEvent) {
             final key = event.logicalKey;
 
-            if (_isFullScreenMode) {
-              if (key == LogicalKeyboardKey.select ||
-                  key == LogicalKeyboardKey.enter ||
-                  key == LogicalKeyboardKey.gameButtonA) {
-                if (!_showOsd) {
-                  _toggleOsd();
-                  return KeyEventResult.handled;
-                }
-              }
+            // Si estamos en el menú de Ajustes, ignoramos los controles de TV
+            if (!isTvMode) return KeyEventResult.ignored;
+            
+            // Si el sidebar está abierto, dejamos que él mismo se maneje
+            if (_isSidebarExpanded) return KeyEventResult.ignored;
 
+            // Mostrar el OSD o Menú Lateral (D-Pad Control)
+            if (key == LogicalKeyboardKey.arrowLeft && !_showOsd) {
+               setState(() => _isSidebarExpanded = true);
+               FocusScope.of(context).requestFocus(_sidebarFocusNode);
+               return KeyEventResult.handled;
+            }
+
+            if (key == LogicalKeyboardKey.select ||
+                key == LogicalKeyboardKey.enter ||
+                key == LogicalKeyboardKey.gameButtonA) {
               if (!_showOsd) {
-                if (key == LogicalKeyboardKey.arrowUp ||
-                    key == LogicalKeyboardKey.channelUp) {
-                  _previousChannel();
-                  return KeyEventResult.handled;
-                }
-                if (key == LogicalKeyboardKey.arrowDown ||
-                    key == LogicalKeyboardKey.channelDown) {
-                  _nextChannel();
-                  return KeyEventResult.handled;
-                }
-                if (key == LogicalKeyboardKey.arrowLeft ||
-                    key == LogicalKeyboardKey.arrowRight) {
-                  _toggleOsd();
-                  return KeyEventResult.handled;
-                }
-              }
-
-              if (key == LogicalKeyboardKey.mediaPlayPause) {
-                setState(() => _isPlayerPaused = !_isPlayerPaused);
+                _toggleOsd();
                 return KeyEventResult.handled;
               }
+            }
+
+            if (!_showOsd) {
+              if (key == LogicalKeyboardKey.arrowUp ||
+                  key == LogicalKeyboardKey.channelUp) {
+                _triggerZappingOverlay();
+                return KeyEventResult.handled;
+              }
+              if (key == LogicalKeyboardKey.arrowDown ||
+                  key == LogicalKeyboardKey.channelDown) {
+                _triggerZappingOverlay();
+                return KeyEventResult.handled;
+              }
+              if (key == LogicalKeyboardKey.arrowRight) {
+                _toggleOsd();
+                return KeyEventResult.handled;
+              }
+            }
+
+            if (key == LogicalKeyboardKey.mediaPlayPause) {
+              setState(() => _isPlayerPaused = !_isPlayerPaused);
+              return KeyEventResult.handled;
             }
           }
           return KeyEventResult.ignored;
@@ -691,6 +703,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           backgroundColor: const Color(0xFF070A10),
           body: Stack(
             children: [
+              // 1. EL CORAZÓN: Reproductor siempre de fondo a pantalla completa
               Positioned.fill(
                 child: ProVideoPlayer(
                   key: _playerKey,
@@ -702,15 +715,16 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 ),
               ),
 
-              if (!_isFullScreenMode) ...[
+              // 2. DIMMER DE FONDO (Solo oscurece si abres ajustes o el sidebar)
+              if (!isTvMode || _isSidebarExpanded)
                 Positioned.fill(
                   child: Container(
-                    color: _selectedSection == 'Ajustes'
-                        ? const Color(0xFF070A10).withOpacity(0.88)
-                        : Colors.black.withOpacity(0.45),
+                    color: Colors.black.withOpacity(0.55),
                   ),
                 ),
 
+              // 3. CAPA DE AJUSTES
+              if (!isTvMode)
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 300),
                   curve: Curves.easeOutCubic,
@@ -720,30 +734,36 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   bottom: 0,
                   child: FocusTraversalGroup(
                     policy: WidgetOrderTraversalPolicy(),
-                    child: _selectedSection == 'Ajustes'
-                        ? _buildTvSettingsContent()
-                        : _buildMainVODContent(),
+                    child: _buildTvSettingsContent(),
                   ),
                 ),
 
-                Positioned(
-                  top: 32,
-                  right: 32,
-                  child: _buildSearchButton(),
-                ),
-
-                AnimatedPositioned(
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOutCubic,
-                  bottom: _isZappingOverlayVisible ? 0 : -200,
-                  left: _isSidebarExpanded ? 240 : 70,
-                  right: 0,
-                  height: 160,
-                  child: ClipRRect(
-                    borderRadius:
-                        const BorderRadius.only(topLeft: Radius.circular(24)),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              // 4. OVERLAY DE ZAPPING (Riel Inferior de Canales)
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOutCubic,
+                bottom: _isZappingOverlayVisible ? 0 : -200,
+                left: _isSidebarExpanded ? 240 : 70,
+                right: 0,
+                height: 160,
+                child: ClipRRect(
+                  borderRadius:
+                      const BorderRadius.only(topLeft: Radius.circular(24)),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                    child: Focus(
+                      focusNode: _zappingFocusNode,
+                      onKeyEvent: (node, event) {
+                        if (event is KeyDownEvent) {
+                          if (event.logicalKey == LogicalKeyboardKey.arrowUp || 
+                              event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                            setState(() => _isZappingOverlayVisible = false);
+                            FocusScope.of(context).requestFocus(_tvFocusScope);
+                            return KeyEventResult.handled;
+                          }
+                        }
+                        return KeyEventResult.ignored;
+                      },
                       child: Container(
                         decoration: BoxDecoration(
                           color: Colors.black.withOpacity(0.65),
@@ -754,247 +774,201 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                         ),
                         padding:
                             const EdgeInsets.only(top: 16, bottom: 16, left: 16),
-                        child: Focus(
-                          focusNode: _zappingFocusNode,
-                          child: ListView.builder(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: _liveTv.length,
-                            itemBuilder: (context, index) {
-                              final liveChannel = _liveTv[index];
-                              final isCurrentPlaying = _channels.isNotEmpty &&
-                                  _channels[_selectedChannelIndex].id ==
-                                      liveChannel.id;
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _liveTv.length,
+                          itemBuilder: (context, index) {
+                            final liveChannel = _liveTv[index];
+                            final isCurrentPlaying = _channels.isNotEmpty &&
+                                _channels[_selectedChannelIndex].id ==
+                                    liveChannel.id;
 
-                              return Padding(
-                                padding: const EdgeInsets.only(right: 16),
-                                child: FocusableTvCard(
-                                  focusedScale: 1.1,
-                                  focusedBorderColor: const Color(0xFF00E5FF),
-                                  onTap: () {
-                                    _triggerZappingOverlay();
-                                    _playContent(liveChannel);
-                                  },
-                                  child: Container(
-                                    width: 180,
-                                    decoration: BoxDecoration(
-                                      border: isCurrentPlaying
-                                          ? Border.all(
-                                              color: const Color(0xFF00E5FF)
-                                                  .withOpacity(0.5),
-                                              width: 2)
-                                          : null,
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
-                                        colors: [
-                                          const Color(0xFF1E2336),
-                                          Colors.black.withOpacity(0.8)
-                                        ],
-                                      ),
-                                    ),
-                                    child: Stack(
-                                      children: [
-                                        if (liveChannel.logoUrl.isNotEmpty)
-                                          Center(
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.all(24.0),
-                                              child: Image.network(
-                                                  liveChannel.logoUrl,
-                                                  errorBuilder: (c, e, s) =>
-                                                      const Icon(Icons.tv,
-                                                          color: Colors.white24,
-                                                          size: 48)),
-                                            ),
-                                          )
-                                        else
-                                          const Center(
-                                              child: Icon(Icons.tv,
-                                                  color: Colors.white24,
-                                                  size: 48)),
-                                        Positioned(
-                                          bottom: 12,
-                                          left: 12,
-                                          right: 12,
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Text(
-                                                  'CH ${liveChannel.number}',
-                                                  style: const TextStyle(
-                                                      color: Color(0xFF00E5FF),
-                                                      fontSize: 12,
-                                                      fontWeight:
-                                                          FontWeight.bold)),
-                                              Text(liveChannel.name,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 14,
-                                                      fontWeight:
-                                                          FontWeight.w600)),
-                                            ],
-                                          ),
-                                        ),
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 16),
+                              child: FocusableTvCard(
+                                focusedScale: 1.1,
+                                focusedBorderColor: const Color(0xFF00E5FF),
+                                onTap: () {
+                                  _triggerZappingOverlay();
+                                  _playContent(liveChannel);
+                                },
+                                child: Container(
+                                  width: 180,
+                                  decoration: BoxDecoration(
+                                    border: isCurrentPlaying
+                                        ? Border.all(
+                                            color: const Color(0xFF00E5FF)
+                                                .withOpacity(0.5),
+                                            width: 2)
+                                        : null,
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        const Color(0xFF1E2336),
+                                        Colors.black.withOpacity(0.8)
                                       ],
                                     ),
                                   ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-
-                AnimatedPositioned(
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeInOut,
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: _isSidebarExpanded ? 240 : 75,
-                  child: ClipRRect(
-                    borderRadius: const BorderRadius.only(
-                        topRight: Radius.circular(16),
-                        bottomRight: Radius.circular(16)),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                      child: FocusTraversalGroup(
-                        policy: WidgetOrderTraversalPolicy(),
-                        child: Focus(
-                          focusNode: _sidebarFocusNode,
-                          onFocusChange: (hasFocus) {
-                            if (mounted) {
-                              setState(() => _isSidebarExpanded = hasFocus);
-                            }
-                          },
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.65),
-                              border: Border(
-                                  right: BorderSide(
-                                      color: Colors.white.withOpacity(0.15),
-                                      width: 1)),
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 24, horizontal: 10),
-                            child: SingleChildScrollView(
-                              physics: const BouncingScrollPhysics(),
-                              child: Column(
-                                crossAxisAlignment: _isSidebarExpanded
-                                    ? CrossAxisAlignment.start
-                                    : CrossAxisAlignment.center,
-                                children: [
-                                  _isSidebarExpanded
-                                      ? Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 14, vertical: 6),
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              const Text('AMEYCAR TV',
-                                                  style: TextStyle(
-                                                      color: Color(0xFF00E5FF),
-                                                      fontSize: 18,
-                                                      fontWeight: FontWeight.w900,
-                                                      letterSpacing: 1.2)),
-                                              const SizedBox(height: 2),
-                                              Text('🕒 $_currentTime',
-                                                  style: const TextStyle(
-                                                      color: Color(0xFFC77DFF),
-                                                      fontSize: 11,
-                                                      fontWeight:
-                                                          FontWeight.bold)),
-                                            ],
+                                  child: Stack(
+                                    children: [
+                                      if (liveChannel.logoUrl.isNotEmpty)
+                                        Center(
+                                          child: Padding(
+                                            padding:
+                                                const EdgeInsets.all(24.0),
+                                            child: Image.network(
+                                                liveChannel.logoUrl,
+                                                errorBuilder: (c, e, s) =>
+                                                    const Icon(Icons.tv,
+                                                        color: Colors.white24,
+                                                        size: 48)),
                                           ),
                                         )
-                                      : const Padding(
-                                          padding: EdgeInsets.only(top: 8.0),
-                                          child: Icon(Icons.tv_rounded,
-                                              color: Color(0xFF00E5FF), size: 32),
+                                      else
+                                        const Center(
+                                            child: Icon(Icons.tv,
+                                                color: Colors.white24,
+                                                size: 48)),
+                                      Positioned(
+                                        bottom: 12,
+                                        left: 12,
+                                        right: 12,
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                                'CH ${liveChannel.number}',
+                                                style: const TextStyle(
+                                                    color: Color(0xFF00E5FF),
+                                                    fontSize: 12,
+                                                    fontWeight:
+                                                        FontWeight.bold)),
+                                            Text(liveChannel.name,
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 14,
+                                                    fontWeight:
+                                                        FontWeight.w600)),
+                                          ],
                                         ),
-                                  const SizedBox(height: 28),
-                                  Builder(builder: (context) {
-                                    return Focus(
-                                      onKeyEvent: (node, event) {
-                                        if (event is KeyDownEvent &&
-                                            (event.logicalKey == LogicalKeyboardKey.select ||
-                                                event.logicalKey == LogicalKeyboardKey.enter ||
-                                                event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-                                          _startVoiceSearch();
-                                          return KeyEventResult.handled;
-                                        }
-                                        return KeyEventResult.ignored;
-                                      },
-                                      onFocusChange: (hasFocus) {
-                                         if (hasFocus) {
-                                           Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 200));
-                                         }
-                                      },
-                                      child: Builder(builder: (context) {
-                                        final hasFocus = Focus.of(context).hasFocus;
-                                        return GestureDetector(
-                                          onTap: _startVoiceSearch,
-                                          child: AnimatedContainer(
-                                            duration: const Duration(milliseconds: 150),
-                                            margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-                                            decoration: BoxDecoration(
-                                              color: hasFocus
-                                                  ? const Color(0xFF00E5FF).withOpacity(0.25)
-                                                  : Colors.transparent,
-                                              borderRadius: BorderRadius.circular(10),
-                                              border: Border.all(
-                                                color: hasFocus ? const Color(0xFF00E5FF) : Colors.transparent,
-                                                width: 2,
-                                              ),
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment: _isSidebarExpanded
-                                                  ? MainAxisAlignment.start
-                                                  : MainAxisAlignment.center,
-                                              children: [
-                                                Icon(Icons.mic,
-                                                    color: hasFocus ? const Color(0xFF00E5FF) : Colors.white60,
-                                                    size: 24),
-                                                if (_isSidebarExpanded) ...[
-                                                  const SizedBox(width: 16),
-                                                  Expanded(
-                                                    child: Text(
-                                                      'Búsqueda IA',
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
-                                                      style: TextStyle(
-                                                        color: hasFocus ? Colors.white : Colors.white60,
-                                                        fontWeight: hasFocus ? FontWeight.bold : FontWeight.normal,
-                                                        fontSize: 15,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ],
-                                            ),
-                                          ),
-                                        );
-                                      }),
-                                    );
-                                  }),
-                                  const Divider(color: Colors.white12, height: 16),
-                                  _buildSidebarItem(Icons.home_filled, 'Inicio VIP', 'Inicio VIP'),
-                                  _buildSidebarItem(Icons.live_tv, 'Televisión', 'Televisión'),
-                                  _buildSidebarItem(Icons.movie, 'Cine IA', 'Cine IA'),
-                                  _buildSidebarItem(Icons.tv, 'Series', 'Series'),
-                                  _buildSidebarItem(Icons.settings, 'Ajustes', 'Ajustes'),
-                                ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // 5. SIDEBAR (Menú Lateral Inteligente)
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: _isSidebarExpanded ? 240 : 75,
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.only(
+                      topRight: Radius.circular(16),
+                      bottomRight: Radius.circular(16)),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                    child: FocusTraversalGroup(
+                      policy: WidgetOrderTraversalPolicy(),
+                      child: Focus(
+                        focusNode: _sidebarFocusNode,
+                        onKeyEvent: (node, event) {
+                          // MAGIA: El puente de escape. Si tocas la derecha en el menú, se cierra y vuelves a la TV.
+                          if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowRight) {
+                            setState(() => _isSidebarExpanded = false);
+                            FocusScope.of(context).requestFocus(_tvFocusScope);
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        onFocusChange: (hasFocus) {
+                          if (mounted) {
+                            setState(() => _isSidebarExpanded = hasFocus);
+                          }
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.65),
+                            border: Border(
+                                right: BorderSide(
+                                    color: Colors.white.withOpacity(0.15),
+                                    width: 1)),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 24, horizontal: 10),
+                          child: SingleChildScrollView(
+                            physics: const BouncingScrollPhysics(),
+                            child: Column(
+                              crossAxisAlignment: _isSidebarExpanded
+                                  ? CrossAxisAlignment.start
+                                  : CrossAxisAlignment.center,
+                              children: [
+                                _isSidebarExpanded
+                                    ? Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 14, vertical: 6),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            const Text('AMEYCAR TV',
+                                                style: TextStyle(
+                                                    color: Color(0xFF00E5FF),
+                                                    fontSize: 18,
+                                                    fontWeight: FontWeight.w900,
+                                                    letterSpacing: 1.2)),
+                                            const SizedBox(height: 2),
+                                            Text('🕒 $_currentTime',
+                                                style: const TextStyle(
+                                                    color: Color(0xFFC77DFF),
+                                                    fontSize: 11,
+                                                    fontWeight:
+                                                        FontWeight.bold)),
+                                          ],
+                                        ),
+                                      )
+                                    : const Padding(
+                                        padding: EdgeInsets.only(top: 8.0),
+                                        child: Icon(Icons.tv_rounded,
+                                            color: Color(0xFF00E5FF), size: 32),
+                                      ),
+                                const SizedBox(height: 28),
+                                const Divider(color: Colors.white12, height: 16),
+                                
+                                // BOTONES DE NAVEGACIÓN SIMPLIFICADOS (Sin carruseles estorbosos)
+                                _buildSidebarItem(Icons.live_tv, 'Televisión', 'Televisión', onTapOverride: () {
+                                  setState(() {
+                                    _selectedSection = 'Televisión';
+                                    _isSidebarExpanded = false;
+                                  });
+                                  FocusScope.of(context).requestFocus(_tvFocusScope);
+                                }),
+                                _buildSidebarItem(Icons.search, 'Búsqueda IA', 'Búsqueda IA', onTapOverride: _startVoiceSearch),
+                                _buildSidebarItem(Icons.movie, 'Cine & Series', 'Cine IA', onTapOverride: _startVoiceSearch),
+                                _buildSidebarItem(Icons.settings, 'Ajustes', 'Ajustes', onTapOverride: () {
+                                  setState(() {
+                                    _selectedSection = 'Ajustes';
+                                    _isSidebarExpanded = false;
+                                  });
+                                }),
+                              ],
                             ),
                           ),
                         ),
@@ -1002,9 +976,10 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     ),
                   ),
                 ),
-              ],
+              ),
 
-              if (_isFullScreenMode && _showOsd && activeChannel != null)
+              // 6. OSD OVERLAY (Aparece al presionar OK o Flechas)
+              if (isTvMode && _showOsd && activeChannel != null)
                 ZappingChannelOverlay(
                   channel: activeChannel,
                   channelIndex: _selectedChannelIndex,
@@ -1020,10 +995,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   },
                   onNext: _nextChannel,
                   onPrevious: _previousChannel,
-                  onToggleFullScreen: () => setState(() {
-                    _isFullScreenMode = false;
-                    _showOsd = false;
-                  }),
+                  onSearch: _startVoiceSearch, // Vinculamos la Lupa aquí
                   onRewind15s: () => _seekRelativeSeconds(-15),
                   onForward15s: () => _seekRelativeSeconds(15),
                   onJumpToLive: _jumpBackToLiveStream,
@@ -1032,152 +1004,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSearchButton() {
-    return Builder(builder: (context) {
-      return Focus(
-        onKeyEvent: (node, event) {
-          if (event is KeyDownEvent &&
-              (event.logicalKey == LogicalKeyboardKey.select ||
-                  event.logicalKey == LogicalKeyboardKey.enter ||
-                  event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-            _startVoiceSearch();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: Builder(builder: (context) {
-          final hasFocus = Focus.of(context).hasFocus;
-          return GestureDetector(
-            onTap: _startVoiceSearch,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: hasFocus ? const Color(0xFF00E5FF) : Colors.black.withOpacity(0.6),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: hasFocus ? Colors.white : Colors.white38,
-                  width: hasFocus ? 2 : 1,
-                ),
-                boxShadow: hasFocus
-                    ? [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.6), blurRadius: 15)]
-                    : [],
-              ),
-              child: Icon(
-                Icons.search,
-                color: hasFocus ? Colors.black : Colors.white,
-                size: 28,
-              ),
-            ),
-          );
-        }),
-      );
-    });
-  }
-
-  Widget _buildMainVODContent() {
-    final bool showAll = _selectedSection == 'Inicio VIP';
-    final bool showLiveOnly = _selectedSection == 'Televisión';
-    final bool showMoviesOnly = _selectedSection == 'Cine IA';
-    final bool showSeriesOnly = _selectedSection == 'Series';
-
-    return SingleChildScrollView(
-      clipBehavior: Clip.none,
-      physics: const BouncingScrollPhysics(),
-      child: Padding(
-        padding: const EdgeInsets.only(top: 32.0, bottom: 80.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    _selectedSection,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 38,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.5,
-                      shadows: [
-                        Shadow(
-                            color: Colors.black87,
-                            blurRadius: 15,
-                            offset: Offset(0, 5))
-                      ],
-                    ),
-                  ),
-                  if (_channels.isNotEmpty)
-                    FocusTraversalGroup(
-                      policy: WidgetOrderTraversalPolicy(),
-                      child: _buildHeroButton(
-                        'Ver Canal Actual',
-                        Icons.fullscreen_rounded,
-                        false,
-                        onTap: () {
-                          setState(() {
-                            _isFullScreenMode = true;
-                            _showOsd = true;
-                          });
-                          _triggerOsdTimer();
-                        },
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            
-            const SizedBox(height: 40), 
-
-            if ((showAll || showLiveOnly) && _liveTv.isNotEmpty) ...[
-              FocusTraversalGroup(
-                policy: WidgetOrderTraversalPolicy(),
-                child: TvContentRow(
-                  title: '🔴 Televisión en Vivo (${_liveTv.length})',
-                  items: _liveTv,
-                  height: 220,
-                  cardWidth: 165,
-                  onItemTap: _playContent,
-                ),
-              ),
-              const SizedBox(height: 32),
-            ],
-
-            if ((showAll || showMoviesOnly) && _movies.isNotEmpty) ...[
-              FocusTraversalGroup(
-                policy: WidgetOrderTraversalPolicy(),
-                child: TvContentRow(
-                  title: '🍿 Películas Premium (${_movies.length})',
-                  items: _movies,
-                  height: 240,
-                  cardWidth: 160,
-                  onItemTap: _playContent,
-                ),
-              ),
-              const SizedBox(height: 32),
-            ],
-
-            if ((showAll || showSeriesOnly) && _series.isNotEmpty) ...[
-              FocusTraversalGroup(
-                policy: WidgetOrderTraversalPolicy(),
-                child: TvContentRow(
-                  title: '📺 Series Destacadas (${_series.length})',
-                  items: _series,
-                  height: 165,
-                  cardWidth: 270,
-                  onItemTap: _playContent,
-                ),
-              ),
-              const SizedBox(height: 32),
-            ],
-          ],
         ),
       ),
     );
@@ -1996,7 +1822,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                   _activeDvrTitle =
                                       '🔴 DVR: ${item.programTitle}';
                                   _activeDvrFilePath = item.filePath;
-                                  _isFullScreenMode = true;
                                   _showOsd = true;
                                 });
                                 _triggerOsdTimer();
@@ -2575,7 +2400,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                               setModalState(() {});
                               final prefs =
                                   await SharedPreferences.getInstance();
-                              await prefs.setStringList('saved_active_alarms',
+                              await prefs.setStringList('saved_active_alarms_$_currentProfileId',
                                   _activeAlarms.toList());
                             },
                           ),
@@ -2669,74 +2494,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     );
   }
 
-  Widget _buildHeroButton(String text, IconData icon, bool isPrimary,
-      {VoidCallback? onTap}) {
-    return Builder(builder: (context) {
-      return Focus(
-        onKeyEvent: (node, event) {
-          if (event is KeyDownEvent &&
-              (event.logicalKey == LogicalKeyboardKey.select ||
-                  event.logicalKey == LogicalKeyboardKey.enter ||
-                  event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-            onTap?.call();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: Builder(builder: (context) {
-          final hasFocus = Focus.of(context).hasFocus;
-          return GestureDetector(
-            onTap: onTap ?? () => debugPrint('$text presionado'),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              decoration: BoxDecoration(
-                color: hasFocus
-                    ? const Color(0xFF00E5FF)
-                    : (isPrimary ? Colors.white : Colors.white.withOpacity(0.08)),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: hasFocus
-                      ? Colors.white
-                      : (isPrimary
-                          ? Colors.transparent
-                          : Colors.white.withOpacity(0.2)),
-                  width: hasFocus ? 3 : 1,
-                ),
-                boxShadow: hasFocus
-                    ? [
-                        BoxShadow(
-                            color: const Color(0xFF00E5FF).withOpacity(0.6),
-                            blurRadius: 20)
-                      ]
-                    : [],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon,
-                      color: hasFocus
-                          ? Colors.black
-                          : (isPrimary ? Colors.black : Colors.white),
-                      size: 24),
-                  const SizedBox(width: 8),
-                  Text(text,
-                      style: TextStyle(
-                          color: hasFocus
-                              ? Colors.black
-                              : (isPrimary ? Colors.black : Colors.white),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15)),
-                ],
-              ),
-            ),
-          );
-        }),
-      );
-    });
-  }
-
-  Widget _buildSidebarItem(IconData icon, String title, String section) {
+  // Se modificó para recibir una función personalizada si es necesario
+  Widget _buildSidebarItem(IconData icon, String title, String section, {VoidCallback? onTapOverride}) {
     final isSelected = _selectedSection == section;
     return Builder(builder: (context) {
       return Focus(
@@ -2745,7 +2504,11 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               (event.logicalKey == LogicalKeyboardKey.select ||
                   event.logicalKey == LogicalKeyboardKey.enter ||
                   event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-            setState(() => _selectedSection = section);
+            if (onTapOverride != null) {
+              onTapOverride();
+            } else {
+              setState(() => _selectedSection = section);
+            }
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;
@@ -2758,7 +2521,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         child: Builder(builder: (context) {
           final hasFocus = Focus.of(context).hasFocus;
           return GestureDetector(
-            onTap: () {
+            onTap: onTapOverride ?? () {
               setState(() => _selectedSection = section);
             },
             child: AnimatedContainer(
