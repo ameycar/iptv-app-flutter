@@ -175,11 +175,11 @@ class DvrRecordingService {
   static Future<Directory> _resolveStorageDirectory() async {
     try {
       final baseParent = Directory.systemTemp.parent;
-      final persistentDir = Directory('${baseParent.path}/app_flutter/ameycar_dvr/$_activeProfileId');
+      final persistentDir = Directory('${baseParent.path}/app_flutter/ameycar_dvr/$_currentProfileId');
       await persistentDir.create(recursive: true);
       return persistentDir;
     } catch (_) {
-      final fallbackDir = Directory('${Directory.systemTemp.path}/ameycar_dvr/$_activeProfileId');
+      final fallbackDir = Directory('${Directory.systemTemp.path}/ameycar_dvr/$_currentProfileId');
       await fallbackDir.create(recursive: true);
       return fallbackDir;
     }
