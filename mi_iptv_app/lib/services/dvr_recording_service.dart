@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_service.dart';
 
 class DvrRecordingItem {
   final String id;
@@ -106,8 +107,18 @@ class ScheduledDvrTask {
 }
 
 class DvrRecordingService {
-  static const String _prefsRecordingsKey = 'ameycar_dvr_recordings_v2';
-  static const String _prefsScheduledTasksKey = 'ameycar_dvr_scheduled_v2';
+ static String get _currentProfileId =>
+    AuthService.currentActiveProfile?.id ??
+    AuthService.currentUser?.id ??
+    'default_profile';
+
+static String get _prefsRecordingsKey => 'ameycar_dvr_recordings_v2_$_currentProfileId';
+static String get _prefsScheduledTasksKey => 'ameycar_dvr_scheduled_v2_$_currentProfileId';
+
+  static String get _prefsRecordingsKey =>
+      '${_basePrefsRecordingsKey}_$_activeProfileId';
+  static String get _prefsScheduledTasksKey =>
+      '${_basePrefsScheduledTasksKey}_$_activeProfileId';
 
   static final ValueNotifier<bool> isRecordingNotifier =
       ValueNotifier<bool>(false);
@@ -168,14 +179,13 @@ class DvrRecordingService {
   }
 
   static Future<Directory> _resolveStorageDirectory() async {
-    // En Android, parent de systemTemp apunta al directorio privado persistente de la app (/data/user/0/<pkg>/)
     try {
       final baseParent = Directory.systemTemp.parent;
-      final persistentDir = Directory('${baseParent.path}/app_flutter/ameycar_dvr');
+      final persistentDir = Directory('${baseParent.path}/app_flutter/ameycar_dvr/$_activeProfileId');
       await persistentDir.create(recursive: true);
       return persistentDir;
     } catch (_) {
-      final fallbackDir = Directory('${Directory.systemTemp.path}/ameycar_dvr');
+      final fallbackDir = Directory('${Directory.systemTemp.path}/ameycar_dvr/$_activeProfileId');
       await fallbackDir.create(recursive: true);
       return fallbackDir;
     }
@@ -189,6 +199,11 @@ class DvrRecordingService {
     });
   }
 
+  /// Recarga las grabaciones y tareas correspondientes al perfil activo actual
+  static Future<void> reloadForActiveProfile() async {
+    await _loadSavedState();
+  }
+
   static Future<void> _loadSavedState() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -199,8 +214,10 @@ class DvrRecordingService {
             .map((e) => DvrRecordingItem.fromJson(Map<String, dynamic>.from(e)))
             .where((item) => File(item.filePath).existsSync())
             .toList();
-        recordingsCountNotifier.value = _recordings.length;
+      } else {
+        _recordings = [];
       }
+      recordingsCountNotifier.value = _recordings.length;
 
       final rawTasks = prefs.getString(_prefsScheduledTasksKey);
       if (rawTasks != null && rawTasks.isNotEmpty) {
@@ -211,6 +228,8 @@ class DvrRecordingService {
             .where((t) =>
                 t.startTime.isAfter(now.subtract(const Duration(minutes: 45))))
             .toList();
+      } else {
+        _scheduledTasks = [];
       }
     } catch (e) {
       debugPrint('Aviso cargando estado DVR: $e');
@@ -266,7 +285,6 @@ class DvrRecordingService {
     for (final task in _scheduledTasks) {
       if (task.triggered) continue;
       final diffSeconds = now.difference(task.startTime).inSeconds;
-      // Inicia desde 20 segundos antes de la hora exacta hasta 25 minutos después
       if (diffSeconds >= -20 && diffSeconds <= 1500) {
         task.triggered = true;
         unawaited(_persistState());
@@ -373,7 +391,6 @@ class DvrRecordingService {
             .where((l) => l.isNotEmpty)
             .toList();
 
-        // Si es Master Playlist con sub-variantes .m3u8, resolvemos la variante activa
         final subPlaylistLine = lines.firstWhere(
           (l) => !l.startsWith('#') && l.contains('.m3u8'),
           orElse: () => '',

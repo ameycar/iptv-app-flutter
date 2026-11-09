@@ -817,12 +817,15 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               ),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed: () async {
+                  onPressed: () async {
                   final famName = familyNameCtrl.text.trim();
-                  final uname = adminUserCtrl.text.trim();
+                  final rawUname = adminUserCtrl.text.trim();
                   final pwd = adminPassCtrl.text.trim();
-                  if (famName.isEmpty || uname.isEmpty || pwd.isEmpty) return;
+                  if (famName.isEmpty || rawUname.isEmpty || pwd.isEmpty) return;
                   
+                  // Genera automáticamente el nombre en MAYÚSCULAS y previene duplicados
+                  final uname = await AuthService.generateUniqueUppercaseUsername(rawUname);
+
                   final cleanName = uname.toUpperCase().replaceAll(' ', '');
                   final refCode = 'AMEY-$cleanName-${Random().nextInt(9999).toString().padLeft(4, '0')}';
 
@@ -916,9 +919,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: () async {
-                  final uname = usernameCtrl.text.trim();
+                  final rawUname = usernameCtrl.text.trim();
                   final pwd = passwordCtrl.text.trim();
-                  if (uname.isEmpty || pwd.isEmpty) return;
+                  if (rawUname.isEmpty || pwd.isEmpty) return;
+
+                  // Genera automáticamente el nombre en MAYÚSCULAS y previene duplicados (ej: PPEREZ1)
+                  final uname = await AuthService.generateUniqueUppercaseUsername(rawUname);
 
                   final id = 'usr_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(9999)}';
                   
@@ -933,7 +939,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                     isActive: true,
                     isVip: isVip,
                     expirationDate: DateTime.now().add(Duration(days: selectedMonths * 30)),
-                    // IMPORTANTE: Dejamos el hardwareId nulo para que el usuario lo vincule al iniciar sesión
                     registeredHardwareId: null,
                     deviceName: null,
                   );

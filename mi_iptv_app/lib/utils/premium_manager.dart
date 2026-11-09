@@ -1,20 +1,40 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/auth_service.dart';
 
 class PremiumManager {
-  // 1. Verificamos si tiene la llave maestra
+  // 1. Verificamos en tiempo real si el usuario o perfil activo es Admin o VIP vigente
   static bool get isPremium {
-    return AuthService.currentUser?.isAdmin == true ||
-           AuthService.currentUser?.username?.toLowerCase() == 'admin';
-           // TODO: Agregar aquí "|| AuthService.currentUser?.isPremium == true" después
+    final user = AuthService.currentUser;
+    final profile = AuthService.currentActiveProfile ?? user;
+
+    if (user == null) return false;
+
+    // SuperAdmin siempre tiene acceso total
+    if (user.isAdmin == true || user.username.toUpperCase() == 'ADMIN') {
+      return true;
+    }
+
+    // Si la suscripción está vencida o inactiva, no tiene acceso VIP
+    if (!user.isActive || user.isExpired) {
+      return false;
+    }
+
+    // Verificamos si el perfil activo o la cuenta raíz tienen rango VIP o Plan Familiar VIP
+    final bool hasVipFlag = (profile?.isVip == true) ||
+        (user.isVip == true) ||
+        (user.familyPlan?.toLowerCase() == 'vip') ||
+        (profile?.familyPlan?.toLowerCase() == 'vip');
+
+    return hasVipFlag;
   }
 
   // 2. El interceptor: Envuelve cualquier función con esto
   static void runIfPremium(BuildContext context, {required VoidCallback action}) {
     if (isPremium) {
-      action(); // Lo deja pasar y ejecuta la función
+      action(); // Lo deja pasar y ejecuta la función inmediatamente
     } else {
-      _showLockedUpsell(context); // Lo bloquea y le vende la suscripción
+      _showLockedUpsell(context); // Lo bloquea y le muestra el banner de actualización
     }
   }
 
@@ -49,7 +69,7 @@ class PremiumManager {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Estás intentando usar una herramienta de nivel profesional. Conviértete en Premium para desbloquear el Timeshift (retroceso en vivo), filtros visuales, ecualizador maestro y cero publicidad.',
+              'Estás intentando usar una herramienta de nivel profesional. Conviértete en Premium VIP para desbloquear hasta 5 listas M3U en la nube, Timeshift (retroceso en vivo), Grabación DVR, filtros visuales y cero publicidad.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
             ),
@@ -62,9 +82,15 @@ class PremiumManager {
                 minimumSize: const Size(double.infinity, 54),
                 elevation: 5,
               ),
-              onPressed: () {
+              onPressed: () async {
                 Navigator.pop(ctx);
-                // TODO: Redirigir a tu pasarela de pagos (WhatsApp, MercadoPago, Stripe)
+                final username = AuthService.currentUser?.username ?? 'Cliente';
+                final msg = Uri.encodeComponent(
+                    '¡Hola AMEYCAR TV! Mi usuario es $username y deseo activar el Plan VIP Premium.');
+                final waUrl = Uri.parse('https://wa.me/51905823660?text=$msg');
+                try {
+                  await launchUrl(waUrl, mode: LaunchMode.externalApplication);
+                } catch (_) {}
               },
               child: const Text('🌟 OBTENER PREMIUM AHORA', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 0.5)),
             ),

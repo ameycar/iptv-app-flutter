@@ -126,7 +126,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final hw = await AuthService.getDeviceHardwareId();
-      final alarms = prefs.getStringList('saved_active_alarms') ?? [];
+      final alarms = prefs.getStringList('saved_active_alarms_$_currentProfileId') ?? [];
       if (mounted) {
         setState(() {
           _selectedLanguage = prefs.getString('app_lang') ?? 'Español (Latinoamérica)';
@@ -1649,8 +1649,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                 }
                               });
                               setModalState(() {});
-                              await prefs.setStringList(
-                                  'saved_active_alarms', _activeAlarms.toList());
+                              await prefs.setStringList('saved_active_alarms_$_currentProfileId', _activeAlarms.toList());
                             }
                           },
                           child: Container(

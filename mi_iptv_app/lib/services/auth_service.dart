@@ -7,6 +7,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
+import 'dvr_recording_service.dart';
 
 enum AuthStatus {
   success,
@@ -69,27 +70,104 @@ class AuthService {
 
   static bool get isLoggedIn => _currentUser != null;
   static bool get isAdmin => _currentUser?.isAdmin ?? false;
-  
+
   static bool get isFamilyAdmin {
     if (_currentUser == null) return false;
     if (_currentUser!.isAdmin) return true;
-    
+
     if (_currentActiveProfile != null) {
       return _currentActiveProfile!.isFamilyAdmin || _currentActiveProfile!.role == 'family_admin';
     }
     return _currentUser!.isFamilyGroupAdmin ?? false;
   }
 
+  /// Normaliza cualquier texto a MAYÚSCULAS ESTRICTAS sin espacios ni acentos
+  static String normalizeUppercaseUsername(String raw) {
+    return raw
+        .trim()
+        .toUpperCase()
+        .replaceAll('Á', 'A')
+        .replaceAll('É', 'E')
+        .replaceAll('Í', 'I')
+        .replaceAll('Ó', 'O')
+        .replaceAll('Ú', 'U')
+        .replaceAll('Ñ', 'N')
+        .replaceAll(RegExp(r'[^A-Z0-9_]'), '');
+  }
+
+  /// Verifica si un nombre de usuario ya existe (insensible a mayúsculas/minúsculas)
+  static Future<bool> doesUsernameExist(String candidate) async {
+    final targetUpper = normalizeUppercaseUsername(candidate);
+    final targetLower = targetUpper.toLowerCase();
+    if (targetUpper.isEmpty) return false;
+
+    if (isFirebaseAvailable) {
+      try {
+        final snapUpper = await FirebaseFirestore.instance
+            .collection(_usersCollection)
+            .where('username', isEqualTo: targetUpper)
+            .limit(1)
+            .get();
+        if (snapUpper.docs.isNotEmpty) return true;
+
+        final snapLower = await FirebaseFirestore.instance
+            .collection(_usersCollection)
+            .where('username', isEqualTo: targetLower)
+            .limit(1)
+            .get();
+        if (snapLower.docs.isNotEmpty) return true;
+      } catch (_) {}
+    }
+
+    final localUsers = await _getLocalUsers();
+    return localUsers.any((u) => u.username.trim().toUpperCase() == targetUpper);
+  }
+
+  /// Genera un usuario único en MAYÚSCULAS (Ej: PPEREZ -> PPEREZ1 -> PPEREZ2)
+  static Future<String> generateUniqueUppercaseUsername(String rawBase) async {
+    String base = normalizeUppercaseUsername(rawBase);
+    if (base.isEmpty) base = 'USUARIO';
+
+    // Si el usuario base termina en números y queremos incrementar limpiamente
+    String candidate = base;
+    int counter = 0;
+
+    while (await doesUsernameExist(candidate)) {
+      counter++;
+      candidate = '$base$counter';
+    }
+    return candidate;
+  }
+
+  /// Devuelve una lista de sugerencias disponibles en MAYÚSCULAS (Ej: PPEREZ1, PPEREZ2, PPEREZ3)
+  static Future<List<String>> getAvailableUsernameSuggestions(String rawBase, {int count = 3}) async {
+    String base = normalizeUppercaseUsername(rawBase);
+    if (base.isEmpty) return [];
+
+    final List<String> suggestions = [];
+    int counter = 0;
+    while (suggestions.length < count && counter < 50) {
+      final candidate = counter == 0 ? base : '$base$counter';
+      if (!await doesUsernameExist(candidate)) {
+        suggestions.add(candidate);
+      }
+      counter++;
+    }
+    return suggestions;
+  }
+
   static Future<void> setActiveProfile(UserModel profile) async {
     _currentActiveProfile = profile;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kActiveProfileKey, profile.id);
+    unawaited(DvrRecordingService.reloadForActiveProfile());
   }
 
   static Future<void> clearActiveProfile() async {
     _currentActiveProfile = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kActiveProfileKey);
+    unawaited(DvrRecordingService.reloadForActiveProfile());
   }
 
   static Future<String> getDeviceHardwareId() async {
@@ -107,7 +185,7 @@ class AuthService {
 
   static Future<bool> validateDeviceScreenLimit(String familyId, String deviceType) async {
     final members = await getFamilyMembers(familyId);
-    
+
     int phonesCount = members.where((m) {
       final name = m.deviceName?.toLowerCase() ?? '';
       return name.contains('celular') || name.contains('phone');
@@ -133,7 +211,7 @@ class AuthService {
       final hardwareId = await getDeviceHardwareId();
       final defaultAdmin = UserModel(
         id: 'admin_master',
-        username: 'admin',
+        username: 'ADMIN',
         password: 'admin2026',
         role: 'admin',
         isActive: true,
@@ -147,13 +225,18 @@ class AuthService {
       );
 
       if (isFirebaseAvailable) {
-        final query = await FirebaseFirestore.instance
+        final queryUpper = await FirebaseFirestore.instance
+            .collection(_usersCollection)
+            .where('username', isEqualTo: 'ADMIN')
+            .limit(1)
+            .get();
+        final queryLower = await FirebaseFirestore.instance
             .collection(_usersCollection)
             .where('username', isEqualTo: 'admin')
             .limit(1)
             .get();
 
-        if (query.docs.isEmpty) {
+        if (queryUpper.docs.isEmpty && queryLower.docs.isEmpty) {
           await FirebaseFirestore.instance
               .collection(_usersCollection)
               .doc(defaultAdmin.id)
@@ -161,7 +244,7 @@ class AuthService {
         }
       } else {
         final localUsers = await _getLocalUsers();
-        final exists = localUsers.any((u) => u.username.toLowerCase() == 'admin');
+        final exists = localUsers.any((u) => u.username.toUpperCase() == 'ADMIN');
         if (!exists) {
           localUsers.add(defaultAdmin);
           await _saveLocalUsers(localUsers);
@@ -178,10 +261,11 @@ class AuthService {
     String? masterKeyOverride,
   }) async {
     try {
-      final cleanUsername = username.trim().toLowerCase();
+      final cleanUpper = username.trim().toUpperCase();
+      final cleanLower = username.trim().toLowerCase();
       final cleanPassword = password.trim();
 
-      if (cleanUsername.isEmpty || cleanPassword.isEmpty) {
+      if (cleanUpper.isEmpty || cleanPassword.isEmpty) {
         return AuthResponse(
           status: AuthStatus.invalidCredentials,
           message: 'Por favor, ingresa tu usuario y contraseña.',
@@ -191,14 +275,23 @@ class AuthService {
       final hardwareId = await getDeviceHardwareId();
 
       if (isFirebaseAvailable) {
-        final snapshot = await FirebaseFirestore.instance
+        // Buscamos primero en MAYÚSCULAS y luego en minúsculas para compatibilidad total
+        var snapshot = await FirebaseFirestore.instance
             .collection(_usersCollection)
-            .where('username', isEqualTo: cleanUsername)
+            .where('username', isEqualTo: cleanUpper)
             .limit(1)
             .get();
 
         if (snapshot.docs.isEmpty) {
-          if (cleanUsername == 'admin' && (cleanPassword == 'admin2026' || cleanPassword == 'admin1234')) {
+          snapshot = await FirebaseFirestore.instance
+              .collection(_usersCollection)
+              .where('username', isEqualTo: cleanLower)
+              .limit(1)
+              .get();
+        }
+
+        if (snapshot.docs.isEmpty) {
+          if (cleanUpper == 'ADMIN' && (cleanPassword == 'admin2026' || cleanPassword == 'admin1234')) {
             await initializeAdminAccount();
             return login(username: username, password: password, masterKeyOverride: masterKeyOverride);
           }
@@ -209,7 +302,16 @@ class AuthService {
         }
 
         final doc = snapshot.docs.first;
-        final user = UserModel.fromMap(doc.id, doc.data());
+        var user = UserModel.fromMap(doc.id, doc.data());
+
+        // Si el usuario estaba en minúsculas en la BD, lo normalizamos a MAYÚSCULAS silenciosamente
+        if (user.username != user.username.toUpperCase() && !user.isAdmin) {
+          final upperName = user.username.toUpperCase();
+          await FirebaseFirestore.instance.collection(_usersCollection).doc(user.id).update({
+            'username': upperName,
+          });
+          user = user.copyWith(username: upperName);
+        }
 
         if (user.password != cleanPassword) {
           return AuthResponse(
@@ -252,18 +354,20 @@ class AuthService {
           _currentUser = user;
           _currentActiveProfile = user;
           await _saveSession(user.id);
+          unawaited(DvrRecordingService.reloadForActiveProfile());
           return AuthResponse(status: AuthStatus.success, user: user, message: 'Bienvenido Administrador');
         }
 
         if (user.registeredHardwareId == null || user.registeredHardwareId!.isEmpty) {
           await FirebaseFirestore.instance.collection(_usersCollection).doc(user.id).update({
             'registeredHardwareId': hardwareId,
-            'deviceName': 'Dispositivo Vinculado',
+            'deviceName': user.deviceName ?? 'Dispositivo Vinculado',
             'lastActiveAt': FieldValue.serverTimestamp(),
           });
           _currentUser = user.copyWith(registeredHardwareId: hardwareId);
           _currentActiveProfile = _currentUser;
           await _saveSession(user.id);
+          unawaited(DvrRecordingService.reloadForActiveProfile());
           return AuthResponse(status: AuthStatus.success, user: _currentUser, message: 'Dispositivo vinculado con éxito.');
         } else if (user.registeredHardwareId != hardwareId) {
           return AuthResponse(
@@ -279,25 +383,26 @@ class AuthService {
         _currentUser = user;
         _currentActiveProfile = user;
         await _saveSession(user.id);
+        unawaited(DvrRecordingService.reloadForActiveProfile());
         return AuthResponse(status: AuthStatus.success, user: user, message: 'Acceso concedido.');
       }
 
       List<UserModel> localUsers = await _getLocalUsers();
 
-      var matched = localUsers.where((u) => u.username.toLowerCase() == cleanUsername);
+      var matched = localUsers.where((u) => u.username.toUpperCase() == cleanUpper);
       if (matched.isEmpty) {
         final cloudUsers = await _fetchUsersFromCloud();
         if (cloudUsers.isNotEmpty) {
           localUsers = cloudUsers;
           await _saveLocalUsers(localUsers);
-          matched = localUsers.where((u) => u.username.toLowerCase() == cleanUsername);
+          matched = localUsers.where((u) => u.username.toUpperCase() == cleanUpper);
         }
       }
 
       if (localUsers.isEmpty) {
         await initializeAdminAccount();
         localUsers = await _getLocalUsers();
-        matched = localUsers.where((u) => u.username.toLowerCase() == cleanUsername);
+        matched = localUsers.where((u) => u.username.toUpperCase() == cleanUpper);
       }
 
       if (matched.isEmpty) {
@@ -339,6 +444,7 @@ class AuthService {
         _currentUser = user;
         _currentActiveProfile = user;
         await _saveSession(user.id);
+        unawaited(DvrRecordingService.reloadForActiveProfile());
         return AuthResponse(status: AuthStatus.success, user: user, message: 'Bienvenido Administrador');
       }
 
@@ -348,6 +454,7 @@ class AuthService {
         _currentUser = updatedUser;
         _currentActiveProfile = updatedUser;
         await _saveSession(user.id);
+        unawaited(DvrRecordingService.reloadForActiveProfile());
         return AuthResponse(status: AuthStatus.success, user: _currentUser, message: 'Dispositivo vinculado.');
       } else if (user.registeredHardwareId != hardwareId) {
         return AuthResponse(
@@ -360,13 +467,15 @@ class AuthService {
       _currentUser = user;
       _currentActiveProfile = user;
       await _saveSession(user.id);
+      unawaited(DvrRecordingService.reloadForActiveProfile());
       return AuthResponse(status: AuthStatus.success, user: user, message: 'Acceso concedido.');
     } catch (e) {
       return AuthResponse(status: AuthStatus.error, message: 'Error al iniciar sesión: $e');
     }
   }
 
-  static Future<void> createFamilyGroup({
+  /// Crea un Grupo Familiar garantizando usuario en MAYÚSCULAS y sin duplicados (PPEREZ, PPEREZ1...)
+  static Future<String> createFamilyGroup({
     required String familyName,
     required String adminUsername,
     required String adminPassword,
@@ -374,23 +483,24 @@ class AuthService {
     required DateTime expirationDate,
   }) async {
     final familyId = 'FAM-${Random().nextInt(900000) + 100000}';
+    final uniqueAdminUsername = await generateUniqueUppercaseUsername(adminUsername);
+    final cleanFamilyName = familyName.trim().toUpperCase();
 
     final familyAdminUser = UserModel(
       id: isFirebaseAvailable ? FirebaseFirestore.instance.collection(_usersCollection).doc().id : 'user_${DateTime.now().millisecondsSinceEpoch}',
-      username: adminUsername.trim().toLowerCase(),
+      username: uniqueAdminUsername,
       password: adminPassword.trim(),
       role: 'family_admin',
       isActive: true,
       isVip: isVip,
       expirationDate: expirationDate,
-      // IMPORTANTE: Dejamos el hardwareId nulo para que el jefe de familia lo asigne al iniciar sesión
-      registeredHardwareId: null, 
-      deviceName: null, 
+      registeredHardwareId: null,
+      deviceName: 'FAMILIA $cleanFamilyName ($uniqueAdminUsername)',
       maxScreens: 5,
       familyId: familyId,
       isFamilyAdmin: true,
       familyPlan: isVip ? 'vip' : 'standard',
-      familyAdminUsername: adminUsername.trim(),
+      familyAdminUsername: uniqueAdminUsername,
       avatarIndex: 0,
       createdAt: DateTime.now(),
       lastActiveAt: DateTime.now(),
@@ -406,9 +516,12 @@ class AuthService {
       list.add(familyAdminUser);
       await _saveLocalUsers(list);
     }
+
+    return uniqueAdminUsername;
   }
 
-  static Future<bool> addFamilyMember({
+  /// Agrega un miembro familiar garantizando MAYÚSCULAS y auto-incremento si ya existe
+  static Future<String> addFamilyMember({
     required String familyId,
     required String username,
     required String password,
@@ -433,24 +546,26 @@ class AuthService {
     final bool isMemberVip = overrideVip ?? isVip ?? familyAdmin.isVip;
     final expDate = expirationDate ?? familyAdmin.expirationDate;
 
+    final uniqueMemberUsername = await generateUniqueUppercaseUsername(username);
+    final cleanDeviceName = (memberName ?? uniqueMemberUsername).trim().toUpperCase();
+
     final memberUser = UserModel(
       id: isFirebaseAvailable
           ? FirebaseFirestore.instance.collection(_usersCollection).doc().id
           : 'member_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
-      username: username.trim().toLowerCase(),
+      username: uniqueMemberUsername,
       password: password.trim(),
       role: 'user',
       isActive: true,
       isVip: isMemberVip,
       expirationDate: expDate,
-      // IMPORTANTE: Dejamos el hardwareId nulo para que la pantalla se vincule en el primer uso
       registeredHardwareId: null,
-      deviceName: null, // El nombre se asignará en el login
+      deviceName: cleanDeviceName,
       maxScreens: 1,
       familyId: familyId,
       isFamilyAdmin: false,
       familyPlan: familyAdmin.familyPlan ?? (isMemberVip ? 'vip' : 'standard'),
-      familyAdminUsername: familyAdminUsername ?? familyAdmin.username,
+      familyAdminUsername: (familyAdminUsername ?? familyAdmin.username).toUpperCase(),
       avatarIndex: avatarIndex,
       pinCode: pinCode,
       createdAt: DateTime.now(),
@@ -458,7 +573,7 @@ class AuthService {
     );
 
     await createClientUser(memberUser);
-    return true;
+    return uniqueMemberUsername;
   }
 
   static Future<List<UserModel>> getFamilyMembers(String familyId) async {
@@ -598,6 +713,13 @@ class AuthService {
           expirationDate: newExpiration,
           isActive: true,
           isVip: pin.isVip ? true : _currentUser?.isVip,
+        );
+      }
+      if (_currentActiveProfile?.id == targetUser.id) {
+        _currentActiveProfile = _currentActiveProfile?.copyWith(
+          expirationDate: newExpiration,
+          isActive: true,
+          isVip: pin.isVip ? true : _currentActiveProfile?.isVip,
         );
       }
 
@@ -843,6 +965,7 @@ class AuthService {
         _currentUser = user.copyWith(registeredHardwareId: hardwareId);
         _currentActiveProfile = _currentUser;
         await _saveSession(user.id);
+        unawaited(DvrRecordingService.reloadForActiveProfile());
         return AuthResponse(status: AuthStatus.success, user: _currentUser, message: '¡Hardware desbloqueado!');
       } else {
         final users = await _getLocalUsers();
@@ -865,6 +988,7 @@ class AuthService {
         _currentUser = user;
         _currentActiveProfile = user;
         await _saveSession(user.id);
+        unawaited(DvrRecordingService.reloadForActiveProfile());
         return AuthResponse(status: AuthStatus.success, user: _currentUser, message: '¡Hardware desbloqueado!');
       }
     } catch (e) {
@@ -941,11 +1065,17 @@ class AuthService {
   }
 
   static Future<void> createClientUser(UserModel newUser) async {
+    final normalizedUser = newUser.copyWith(
+      username: normalizeUppercaseUsername(newUser.username),
+    );
     if (isFirebaseAvailable) {
-      await FirebaseFirestore.instance.collection(_usersCollection).doc(newUser.id).set(newUser.toMap());
+      await FirebaseFirestore.instance
+          .collection(_usersCollection)
+          .doc(normalizedUser.id)
+          .set(normalizedUser.toMap());
     } else {
       final list = await _getLocalUsers();
-      list.add(newUser);
+      list.add(normalizedUser);
       await _saveLocalUsers(list);
     }
   }
@@ -963,6 +1093,18 @@ class AuthService {
   static Future<void> updateClientUser(String userId, Map<String, dynamic> updates) async {
     if (isFirebaseAvailable) {
       await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).update(updates);
+      if (_currentUser?.id == userId) {
+        final doc = await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).get();
+        if (doc.exists) {
+          _currentUser = UserModel.fromMap(doc.id, doc.data()!);
+        }
+      }
+      if (_currentActiveProfile?.id == userId) {
+        final doc = await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).get();
+        if (doc.exists) {
+          _currentActiveProfile = UserModel.fromMap(doc.id, doc.data()!);
+        }
+      }
     } else {
       final list = await _getLocalUsers();
       final idx = list.indexWhere((u) => u.id == userId);
@@ -973,6 +1115,9 @@ class AuthService {
         await _saveLocalUsers(list);
         if (_currentUser?.id == userId) {
           _currentUser = list[idx];
+        }
+        if (_currentActiveProfile?.id == userId) {
+          _currentActiveProfile = list[idx];
         }
       }
     }
@@ -1015,6 +1160,7 @@ class AuthService {
         } else {
           _currentActiveProfile = user;
         }
+        unawaited(DvrRecordingService.reloadForActiveProfile());
         return user;
       } else {
         final users = await _getLocalUsers();
@@ -1040,6 +1186,7 @@ class AuthService {
         } else {
           _currentActiveProfile = user;
         }
+        unawaited(DvrRecordingService.reloadForActiveProfile());
         return user;
       }
     } catch (e) {
@@ -1053,6 +1200,7 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kSessionUserKey);
     await prefs.remove(_kActiveProfileKey);
+    unawaited(DvrRecordingService.reloadForActiveProfile());
   }
 
   static Future<List<UserModel>> _getLocalUsers() async {
@@ -1172,17 +1320,13 @@ class AuthService {
     return [];
   }
 
+  // ============================================================
+  // REGISTRO CORPORATIVO EN MAYÚSCULAS CON ANTI-ABUSO (PPEREZ, PPEREZ1...)
+  // ============================================================
   static Future<AuthResponse> registerUser(String firstName, String lastName, String password) async {
     try {
-      String cleanText(String text) {
-        return text.trim().toLowerCase()
-            .replaceAll('á', 'a').replaceAll('é', 'e').replaceAll('í', 'i')
-            .replaceAll('ó', 'o').replaceAll('ú', 'u').replaceAll('ñ', 'n')
-            .replaceAll(RegExp(r'[^a-z0-9]'), '');
-      }
-
-      final cleanFirst = cleanText(firstName);
-      final cleanLast = cleanText(lastName);
+      final cleanFirst = normalizeUppercaseUsername(firstName);
+      final cleanLast = normalizeUppercaseUsername(lastName);
       final cleanPassword = password.trim();
 
       if (cleanFirst.isEmpty || cleanLast.isEmpty || cleanPassword.isEmpty) {
@@ -1192,50 +1336,43 @@ class AuthService {
         );
       }
 
-      String baseUsername = '${cleanFirst[0]}$cleanLast';
-      String finalUsername = baseUsername;
-      bool userExists = true;
-      int counter = 0;
+      // 1. Generamos el usuario base en MAYÚSCULAS (Ej: P + PEREZ = PPEREZ) y auto-incrementamos si ya existe
+      final String baseUsername = '${cleanFirst[0]}$cleanLast';
+      final String finalUsername = await generateUniqueUppercaseUsername(baseUsername);
 
-      while (userExists) {
-        finalUsername = counter == 0 ? baseUsername : '$baseUsername$counter';
-        userExists = false;
-
-        if (isFirebaseAvailable) {
-          final uCheck = await FirebaseFirestore.instance.collection(_usersCollection).where('username', isEqualTo: finalUsername).get();
-          if (uCheck.docs.isNotEmpty) userExists = true;
-        } else {
-          final localUsers = await _getLocalUsers();
-          if (localUsers.any((u) => u.username.toLowerCase() == finalUsername)) userExists = true;
-        }
-        if (userExists) counter++;
-      }
-
+      // 2. Obtenemos el Hardware ID para el anti-abuso de prueba gratuita
       final hwId = await getDeviceHardwareId();
       bool hasUsedTrial = false;
 
       if (isFirebaseAvailable) {
-        final hwCheck = await FirebaseFirestore.instance.collection(_usersCollection).where('registeredHardwareId', isEqualTo: hwId).limit(1).get();
+        final hwCheck = await FirebaseFirestore.instance
+            .collection(_usersCollection)
+            .where('registeredHardwareId', isEqualTo: hwId)
+            .limit(1)
+            .get();
         if (hwCheck.docs.isNotEmpty) hasUsedTrial = true;
       } else {
         final localUsers = await _getLocalUsers();
         if (localUsers.any((u) => u.registeredHardwareId == hwId)) hasUsedTrial = true;
       }
 
-      final int grantedDays = hasUsedTrial ? 0 : 3;
+      // 3. Veredicto: 3 días VIP si es dispositivo nuevo, o 30 días estándar si ya usó el trial antes
+      final int grantedDays = hasUsedTrial ? 30 : 3;
+      final bool grantedVip = !hasUsedTrial;
       final expirationDate = DateTime.now().add(Duration(days: grantedDays));
 
       final newUser = UserModel(
-        id: isFirebaseAvailable ? FirebaseFirestore.instance.collection(_usersCollection).doc().id : 'user_${DateTime.now().millisecondsSinceEpoch}',
-        username: finalUsername, 
+        id: isFirebaseAvailable
+            ? FirebaseFirestore.instance.collection(_usersCollection).doc().id
+            : 'user_${DateTime.now().millisecondsSinceEpoch}',
+        username: finalUsername,
         password: cleanPassword,
         role: 'user',
         isActive: true,
-        isVip: grantedDays > 0,
+        isVip: grantedVip,
         expirationDate: expirationDate,
-        // IMPORTANTE: Un usuario auto-registrado SÍ vincula el dispositivo inmediatamente
         registeredHardwareId: hwId,
-        deviceName: '$firstName $lastName',
+        deviceName: '${firstName.trim().toUpperCase()} ${lastName.trim().toUpperCase()}',
         maxScreens: 1,
         createdAt: DateTime.now(),
         lastActiveAt: DateTime.now(),
@@ -1247,12 +1384,11 @@ class AuthService {
         status: AuthStatus.success,
         user: newUser,
         message: hasUsedTrial
-            ? 'Cuenta Free creada. Tu usuario es: $finalUsername'
-            : '¡Felicidades! Tu usuario es: $finalUsername. Tienes 3 días VIP.',
+            ? 'Cuenta Estándar creada. Tu usuario es: $finalUsername'
+            : '¡Felicidades! Tu usuario es: $finalUsername. Tienes 3 días VIP de regalo.',
       );
     } catch (e) {
       return AuthResponse(status: AuthStatus.error, message: 'Error creando cuenta: $e');
     }
   }
-
 }
