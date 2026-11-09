@@ -108,18 +108,12 @@ class ScheduledDvrTask {
 
 class DvrRecordingService {
  static String get _currentProfileId =>
-    AuthService.currentActiveProfile?.id ??
-    AuthService.currentUser?.id ??
-    'default_profile';
+      AuthService.currentActiveProfile?.id ??
+      AuthService.currentUser?.id ??
+      'default_profile';
 
-static String get _prefsRecordingsKey => 'ameycar_dvr_recordings_v2_$_currentProfileId';
-static String get _prefsScheduledTasksKey => 'ameycar_dvr_scheduled_v2_$_currentProfileId';
-
-  static String get _prefsRecordingsKey =>
-      '${_basePrefsRecordingsKey}_$_activeProfileId';
-  static String get _prefsScheduledTasksKey =>
-      '${_basePrefsScheduledTasksKey}_$_activeProfileId';
-
+  static String get _prefsRecordingsKey => 'ameycar_dvr_recordings_v2_$_currentProfileId';
+  static String get _prefsScheduledTasksKey => 'ameycar_dvr_scheduled_v2_$_currentProfileId';
   static final ValueNotifier<bool> isRecordingNotifier =
       ValueNotifier<bool>(false);
   static final ValueNotifier<int> recordingElapsedSeconds =
