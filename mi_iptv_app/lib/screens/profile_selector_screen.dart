@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import 'family_panel_screen.dart';
+import '../widgets/pin_dialog.dart';
 
 class ProfileSelectorScreen extends StatefulWidget {
   final VoidCallback? onLogout;
