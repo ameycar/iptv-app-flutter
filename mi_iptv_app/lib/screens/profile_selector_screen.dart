@@ -405,13 +405,29 @@ class _ProfileSelectorScreenState extends State<ProfileSelectorScreen> {
     }
 
     return GestureDetector(
-      onTap: () {
-        if (_isManageMode) {
-          _showEditProfileModal(member);
-        } else {
-          _handleProfileSelection(member);
-        }
-      },
+      onTap: () async {
+  if (_isManageMode) {
+    _showEditProfileModal(member);
+  } else {
+    // 1. Pedir la contraseña o PIN antes de entrar al perfil
+    final password = await showDialog<String>(
+      context: context,
+      builder: (_) => PinDialog(title: 'Ingresa la clave de ${member.username}'),
+    );
+
+    // 2. Validar si la clave ingresada coincide con la del miembro
+    if (password != null && password == member.password) {
+      _handleProfileSelection(member);
+    } else if (password != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Contraseña incorrecta'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+},
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
