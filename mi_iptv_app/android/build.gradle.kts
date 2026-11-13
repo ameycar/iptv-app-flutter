@@ -19,3 +19,10 @@ subprojects {
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+subprojects {
+    plugins.withId("org.jetbrains.kotlin.android") {
+        the<org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension>().compilerOptions {
+            languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_1_9)
+        }
+    }
+}
