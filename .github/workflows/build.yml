@@ -30,7 +30,7 @@ jobs:
       - name: Build APK
         run: |
           cd mi_iptv_app
-          flutter build apk --release --obfuscate --split-debug-info=./debug_info --no-tree-shake-icons
+          flutter build apk --release --obfuscate --split-debug-info=./debug_info --no-tree-shake-icons --android-skip-build-dependency-validation
 
       - name: Rename APK for Artifact Download
         run: |
