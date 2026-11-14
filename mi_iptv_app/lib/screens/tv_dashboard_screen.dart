@@ -452,6 +452,19 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   }
 
   Future<void> _seekRelativeSeconds(int deltaSeconds) async {
+    final activeCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+    
+    // BLOQUEO PREMIUM: Restringir retroceso si es TV en Vivo y el usuario es Gratuito
+    if (deltaSeconds < 0 && activeCh?.contentType == 'live') {
+      PremiumManager.runIfPremium(context, action: () async {
+        await _executeSeekRelative(deltaSeconds);
+      });
+    } else {
+      await _executeSeekRelative(deltaSeconds);
+    }
+  }
+
+  Future<void> _executeSeekRelative(int deltaSeconds) async {
     _triggerOsdTimer();
     try {
       _playerKey.currentState?.seekRelative(deltaSeconds);
@@ -496,6 +509,21 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
         backgroundColor: const Color(0xFF00C853),
       ),
     );
+  }
+
+  void _togglePlayPause() {
+    final activeCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+    
+    // BLOQUEO PREMIUM: Restringir Pausa si es TV en Vivo y el usuario es Gratuito
+    if (activeCh?.contentType == 'live') {
+      PremiumManager.runIfPremium(context, action: () {
+        setState(() => _isPlayerPaused = !_isPlayerPaused);
+        if (_showOsd) _triggerOsdTimer();
+      });
+    } else {
+      setState(() => _isPlayerPaused = !_isPlayerPaused);
+      if (_showOsd) _triggerOsdTimer();
+    }
   }
 
   Future<void> _toggleManualDvrRecording(ChannelModel? activeChannel) async {
@@ -693,7 +721,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             }
 
             if (key == LogicalKeyboardKey.mediaPlayPause) {
-              setState(() => _isPlayerPaused = !_isPlayerPaused);
+              _togglePlayPause();
               return KeyEventResult.handled;
             }
           }
@@ -733,7 +761,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   top: 0,
                   bottom: 0,
                   child: FocusTraversalGroup(
-                    policy: ReadingOrderTraversalPolicy(), // INYECCIÓN PARA SMART TV
+                    policy: ReadingOrderTraversalPolicy(),
                     child: _buildTvSettingsContent(),
                   ),
                 ),
@@ -889,25 +917,25 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                       policy: WidgetOrderTraversalPolicy(),
                       child: Focus(
                         focusNode: _sidebarFocusNode,
-                          onKeyEvent: (node, event) {
-                            // MAGIA: El puente de escape. Si tocas la derecha en el menú, se cierra y vuelves a la TV.
-                            if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowRight) {
-                              setState(() => _isSidebarExpanded = false);
-                              FocusScope.of(context).requestFocus(_tvFocusScope);
-                              return KeyEventResult.handled;
+                        onKeyEvent: (node, event) {
+                          // MAGIA: El puente de escape. Si tocas la derecha en el menú, se cierra y vuelves a la TV.
+                          if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowRight) {
+                            setState(() => _isSidebarExpanded = false);
+                            FocusScope.of(context).requestFocus(_tvFocusScope);
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        onFocusChange: (hasFocus) {
+                          if (mounted) {
+                            setState(() => _isSidebarExpanded = hasFocus);
+                            // INYECCIÓN PARA SMART TV: 
+                            // Si el menú recibe el foco, lo obligamos a bajar al primer botón.
+                            if (hasFocus && _sidebarFocusNode.hasPrimaryFocus) {
+                              _sidebarFocusNode.nextFocus();
                             }
-                            return KeyEventResult.ignored;
-                          },
-                          onFocusChange: (hasFocus) {
-                            if (mounted) {
-                              setState(() => _isSidebarExpanded = hasFocus);
-                              // INYECCIÓN PARA SMART TV: 
-                              // Si el menú recibe el foco, lo obligamos a bajar al primer botón.
-                              if (hasFocus && _sidebarFocusNode.hasPrimaryFocus) {
-                                _sidebarFocusNode.nextFocus();
-                              }
-                            }
-                          },
+                          }
+                        },
                         child: Container(
                           decoration: BoxDecoration(
                             color: Colors.black.withOpacity(0.65),
@@ -994,10 +1022,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   isBehindLive: _isBehindLive,
                   isPlayingDvrRecording: _isPlayingDvrRecording,
                   dvrRecordingTitle: _activeDvrTitle,
-                  onPlayPause: () {
-                    setState(() => _isPlayerPaused = !_isPlayerPaused);
-                    _triggerOsdTimer();
-                  },
+                  onPlayPause: _togglePlayPause,
                   onNext: _nextChannel,
                   onPrevious: _previousChannel,
                   onSearch: _startVoiceSearch, // Vinculamos la Lupa aquí
@@ -2499,7 +2524,6 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     );
   }
 
-  // Se modificó para recibir una función personalizada si es necesario
   Widget _buildSidebarItem(IconData icon, String title, String section, {VoidCallback? onTapOverride}) {
     final isSelected = _selectedSection == section;
     return Builder(builder: (context) {
