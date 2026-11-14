@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
+import '../services/parental_service.dart'; // INYECCIÓN PARA SMART TV: Importe necesario
 
 class AdminPanelScreen extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -464,6 +465,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
                             ],
                           ),
                         ),
+                        IconButton(icon: const Icon(Icons.lock_reset, size: 16, color: Colors.amberAccent), tooltip: 'Reset PIN', onPressed: () => _adminResetParentalPin(m)),
                         IconButton(icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFFFD600)), tooltip: 'Reset HW', onPressed: () => _showErgonomicResetModal(context, m)),
                       ],
                     ),
@@ -557,12 +559,57 @@ class _AdminPanelScreenState extends State<AdminPanelScreen> {
               ),
               TextButton.icon(onPressed: () => _extendSubscription(user, 30), icon: const Icon(Icons.add_circle_outline, size: 16, color: Color(0xFF00E676)), label: const Text('+30 Días', style: TextStyle(color: Color(0xFF00E676), fontSize: 11))),
               IconButton(onPressed: () => _generatePinAndShare(user), icon: const Icon(Icons.pin, size: 18, color: Color(0xFF00E5FF)), tooltip: 'PIN Express'),
+              // INYECCIÓN PARA SMART TV: Botón de Reseteo del PIN Parental
+              IconButton(onPressed: () => _adminResetParentalPin(user), icon: const Icon(Icons.lock_reset, size: 18, color: Colors.amberAccent), tooltip: 'Reset PIN Parental'),
               IconButton(onPressed: () => _deleteUser(user), icon: const Icon(Icons.delete_outline, size: 18, color: Colors.white38), tooltip: 'Eliminar'),
             ],
           ),
         ],
       ),
     );
+  }
+
+  // INYECCIÓN PARA SMART TV: Lógica para formatear el PIN del cliente
+  Future<void> _adminResetParentalPin(UserModel user) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF131A29),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Colors.amberAccent, width: 1.5),
+        ),
+        title: const Text('¿Resetear PIN Parental?', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text('Esto borrará el PIN actual de "${user.username}" de la nube y lo dejará en "0000".\n\n¿Continuar?', style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar', style: TextStyle(color: Colors.white70))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.amberAccent, foregroundColor: Colors.black),
+            child: const Text('Sí, Resetear a 0000', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final success = await ParentalService.adminForceResetPin(user.id);
+      if (success && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF00C853),
+            content: Text('El PIN de ${user.username} ha sido reseteado a 0000.'),
+          ),
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Error al resetear el PIN en la nube.'),
+          ),
+        );
+      }
+    }
   }
 
   void _showErgonomicResetModal(BuildContext context, UserModel user) {

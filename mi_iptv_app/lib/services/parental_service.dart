@@ -56,6 +56,18 @@ class ParentalService {
     return await setPin(newPin.trim());
   }
 
+  // INYECCIÓN PARA SMART TV: Reseteo por fuerza bruta desde el panel de Master Admin
+  static Future<bool> adminForceResetPin(String targetUserId) async {
+    try {
+      await _firestore.collection('users').doc(targetUserId).set({
+        'parental_pin': '0000',
+      }, SetOptions(merge: true));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // Solicitud al CEO / Admin para reiniciar PIN
   static Future<void> requestPinReset() async {
     final uid = _currentUserId;
@@ -141,7 +153,7 @@ class ParentalService {
     await prefs.setInt('sleep_end_m_$uid', endMinute);
   }
 
-  static Future<Map<String, dynamic>> getSleepSchedule() async {
+  static Future> getSleepSchedule() async {
     final uid = _currentUserId;
     if (uid == null || uid.isEmpty) {
       return {'enabled': false, 'startH': 22, 'startM': 0, 'endH': 6, 'endM': 0};
