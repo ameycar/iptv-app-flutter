@@ -155,7 +155,7 @@ class ParentalService {
     await prefs.setInt('sleep_end_m_$uid', endMinute);
   }
 
-  static Future> getSleepSchedule() async {
+  static Future<Map<String, dynamic>> getSleepSchedule() async {
     final uid = _currentUserId;
     if (uid == null || uid.isEmpty) {
       return {'enabled': false, 'startH': 22, 'startM': 0, 'endH': 6, 'endM': 0};
