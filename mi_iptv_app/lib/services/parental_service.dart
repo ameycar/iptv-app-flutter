@@ -1,14 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_service.dart';
 
 class ParentalService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  // INYECCIÓN: Obtenemos el ID dinámicamente de la sesión actual para evitar desincronización
-  static String get _currentUserId {
-    return AuthService.currentUser?.id ?? '';
-  }
-  }
 
+  static String? get _currentUserId => AuthService.currentUser?.id;
+
+  static void setCurrentUser(String userId) {}
   // --- PIN PARENTAL ---
   static Future<bool> setPin(String pin) async {
     final uid = _currentUserId;
@@ -245,4 +244,4 @@ class ParentalService {
     final list = await getHiddenMenuItems();
     return list.contains(itemKey);
   }
- 
+}
