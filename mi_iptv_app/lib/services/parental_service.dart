@@ -44,7 +44,8 @@ class ParentalService {
     final currentPin = await getPin();
     return currentPin == inputPin.trim();
   }
-// Cambia el PIN verificando primero el anterior o clave maestra
+
+  // Cambia el PIN verificando primero el anterior o clave maestra
   static Future<bool> changePinWithOldPin({
     required String oldPin,
     required String newPin,
@@ -80,6 +81,7 @@ class ParentalService {
       }, SetOptions(merge: true));
     } catch (_) {}
   }
+
   // --- CATEGORÍAS BLOQUEADAS ---
   static Future<List<String>> getLockedCategories() async {
     final uid = _currentUserId;
@@ -200,6 +202,7 @@ class ParentalService {
       return nowMinutes >= startMinutes || nowMinutes < endMinutes;
     }
   }
+
   // --- ELEMENTOS DEL MENÚ OCULTOS (ANTI-BYPASS) ---
   static List<String> _cachedHiddenItems = [];
 
