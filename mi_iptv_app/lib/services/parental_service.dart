@@ -3,10 +3,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ParentalService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  static String? _currentUserId;
-
-  static void setCurrentUser(String userId) {
-    _currentUserId = userId.trim();
+  // INYECCIÓN: Obtenemos el ID dinámicamente de la sesión actual para evitar desincronización
+  static String get _currentUserId {
+    return AuthService.currentUser?.id ?? '';
+  }
   }
 
   // --- PIN PARENTAL ---
@@ -245,15 +245,4 @@ class ParentalService {
     final list = await getHiddenMenuItems();
     return list.contains(itemKey);
   }
-  // Reseteo por fuerza bruta desde el panel de Master Admin
-  static Future<bool> adminForceResetPin(String targetUserId) async {
-    try {
-      await _firestore.collection('users').doc(targetUserId).set({
-        'parental_pin': '0000',
-      }, SetOptions(merge: true));
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-}
+ 
