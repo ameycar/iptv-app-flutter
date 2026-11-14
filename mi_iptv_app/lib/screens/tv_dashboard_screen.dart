@@ -733,7 +733,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   top: 0,
                   bottom: 0,
                   child: FocusTraversalGroup(
-                    policy: WidgetOrderTraversalPolicy(),
+                    policy: ReadingOrderTraversalPolicy(), // INYECCIÓN PARA SMART TV
                     child: _buildTvSettingsContent(),
                   ),
                 ),
@@ -889,20 +889,25 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                       policy: WidgetOrderTraversalPolicy(),
                       child: Focus(
                         focusNode: _sidebarFocusNode,
-                        onKeyEvent: (node, event) {
-                          // MAGIA: El puente de escape. Si tocas la derecha en el menú, se cierra y vuelves a la TV.
-                          if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowRight) {
-                            setState(() => _isSidebarExpanded = false);
-                            FocusScope.of(context).requestFocus(_tvFocusScope);
-                            return KeyEventResult.handled;
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        onFocusChange: (hasFocus) {
-                          if (mounted) {
-                            setState(() => _isSidebarExpanded = hasFocus);
-                          }
-                        },
+                          onKeyEvent: (node, event) {
+                            // MAGIA: El puente de escape. Si tocas la derecha en el menú, se cierra y vuelves a la TV.
+                            if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowRight) {
+                              setState(() => _isSidebarExpanded = false);
+                              FocusScope.of(context).requestFocus(_tvFocusScope);
+                              return KeyEventResult.handled;
+                            }
+                            return KeyEventResult.ignored;
+                          },
+                          onFocusChange: (hasFocus) {
+                            if (mounted) {
+                              setState(() => _isSidebarExpanded = hasFocus);
+                              // INYECCIÓN PARA SMART TV: 
+                              // Si el menú recibe el foco, lo obligamos a bajar al primer botón.
+                              if (hasFocus && _sidebarFocusNode.hasPrimaryFocus) {
+                                _sidebarFocusNode.nextFocus();
+                              }
+                            }
+                          },
                         child: Container(
                           decoration: BoxDecoration(
                             color: Colors.black.withOpacity(0.65),
@@ -1104,7 +1109,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           const SizedBox(height: 28),
 
           FocusTraversalGroup(
-            policy: WidgetOrderTraversalPolicy(),
+            policy: ReadingOrderTraversalPolicy(),
             child: GridView.count(
               crossAxisCount: 3,
               shrinkWrap: true,
