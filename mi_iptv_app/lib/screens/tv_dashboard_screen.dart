@@ -450,8 +450,45 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       },
     );
   }
+Future<void> _seekRelativeSeconds(int deltaSeconds) async {
+    final activeCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
 
-  Future<void> _seekRelativeSeconds(int deltaSeconds) async {
+    void executeSeek() {
+      _triggerOsdTimer();
+      try {
+        _playerKey.currentState?.seekRelative(deltaSeconds);
+        if (mounted) {
+          setState(() {
+            if (deltaSeconds < 0) {
+              _isBehindLive = true;
+              _isPlayerPaused = false;
+            }
+          });
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                deltaSeconds < 0
+                    ? '⏪ Retrocediendo ${deltaSeconds.abs()}s...'
+                    : '⏩ Adelantando +${deltaSeconds}s...',
+              ),
+              duration: const Duration(milliseconds: 900),
+              backgroundColor: const Color(0xFF1E293B),
+            ),
+          );
+        }
+      } catch (_) {}
+    }
+
+    // BLOQUEO PREMIUM: Si retrocede (delta < 0) en TV en Vivo, pide VIP
+    if (deltaSeconds < 0 && activeCh?.contentType == 'live') {
+      PremiumManager.runIfPremium(context, action: executeSeek);
+    } else {
+      executeSeek();
+    }
+  }
+
+  Future<void> _executeSeekRelative(int deltaSeconds) async {
     _triggerOsdTimer();
     try {
       _playerKey.currentState?.seekRelative(deltaSeconds);
@@ -497,7 +534,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       ),
     );
   }
-
+ 
   Future<void> _toggleManualDvrRecording(ChannelModel? activeChannel) async {
     PremiumManager.runIfPremium(context, action: () async {
       if (activeChannel == null || kIsWeb) return;
@@ -692,8 +729,16 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
               }
             }
 
-            if (key == LogicalKeyboardKey.mediaPlayPause) {
-              setState(() => _isPlayerPaused = !_isPlayerPaused);
+           if (key == LogicalKeyboardKey.mediaPlayPause) {
+              final activeCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+              if (activeCh?.contentType == 'live') {
+                PremiumManager.runIfPremium(context, action: () {
+                  setState(() => _isPlayerPaused = !_isPlayerPaused);
+                  if (_showOsd) _triggerOsdTimer();
+                });
+              } else {
+                setState(() => _isPlayerPaused = !_isPlayerPaused);
+              }
               return KeyEventResult.handled;
             }
           }
@@ -995,8 +1040,15 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   isPlayingDvrRecording: _isPlayingDvrRecording,
                   dvrRecordingTitle: _activeDvrTitle,
                   onPlayPause: () {
-                    setState(() => _isPlayerPaused = !_isPlayerPaused);
-                    _triggerOsdTimer();
+                    if (activeChannel.contentType == 'live') {
+                      PremiumManager.runIfPremium(context, action: () {
+                        setState(() => _isPlayerPaused = !_isPlayerPaused);
+                        _triggerOsdTimer();
+                      });
+                    } else {
+                      setState(() => _isPlayerPaused = !_isPlayerPaused);
+                      _triggerOsdTimer();
+                    }
                   },
                   onNext: _nextChannel,
                   onPrevious: _previousChannel,

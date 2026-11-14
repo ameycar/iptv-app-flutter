@@ -245,4 +245,15 @@ class ParentalService {
     final list = await getHiddenMenuItems();
     return list.contains(itemKey);
   }
+  // Reseteo por fuerza bruta desde el panel de Master Admin
+  static Future<bool> adminForceResetPin(String targetUserId) async {
+    try {
+      await _firestore.collection('users').doc(targetUserId).set({
+        'parental_pin': '0000',
+      }, SetOptions(merge: true));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 }
