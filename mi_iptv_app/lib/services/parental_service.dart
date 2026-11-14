@@ -1,19 +1,18 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/auth_service.dart';
 
 class ParentalService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static String? _currentUserId;
 
-  // INYECCIÓN: Obtenemos el ID dinámicamente de la sesión actual para evitar desincronización
-  static String get _currentUserId {
-    return AuthService.currentUser?.id ?? '';
+  static void setCurrentUser(String userId) {
+    _currentUserId = userId.trim();
   }
 
   // --- PIN PARENTAL ---
   static Future<bool> setPin(String pin) async {
     final uid = _currentUserId;
-    if (uid.isEmpty) return false;
+    if (uid == null || uid.isEmpty) return false;
     try {
       await _firestore.collection('users').doc(uid).set({
         'parental_pin': pin,
@@ -29,7 +28,7 @@ class ParentalService {
 
   static Future<String> getPin() async {
     final uid = _currentUserId;
-    if (uid.isEmpty) return '0000';
+    if (uid == null || uid.isEmpty) return '0000';
     try {
       final doc = await _firestore.collection('users').doc(uid).get();
       if (doc.exists && doc.data()?.containsKey('parental_pin') == true) {
@@ -58,7 +57,7 @@ class ParentalService {
     return await setPin(newPin.trim());
   }
 
-  // Reseteo por fuerza bruta desde el panel de Master Admin
+  // INYECCIÓN PARA SMART TV: Reseteo por fuerza bruta desde el panel de Master Admin
   static Future<bool> adminForceResetPin(String targetUserId) async {
     try {
       await _firestore.collection('users').doc(targetUserId).set({
@@ -73,7 +72,7 @@ class ParentalService {
   // Solicitud al CEO / Admin para reiniciar PIN
   static Future<void> requestPinReset() async {
     final uid = _currentUserId;
-    if (uid.isEmpty) return;
+    if (uid == null || uid.isEmpty) return;
     try {
       await _firestore.collection('pin_reset_requests').doc(uid).set({
         'userId': uid,
@@ -86,7 +85,7 @@ class ParentalService {
   // --- CATEGORÍAS BLOQUEADAS ---
   static Future<List<String>> getLockedCategories() async {
     final uid = _currentUserId;
-    if (uid.isEmpty) return [];
+    if (uid == null || uid.isEmpty) return [];
     try {
       final doc = await _firestore.collection('users').doc(uid).get();
       if (doc.exists && doc.data()?.containsKey('locked_categories') == true) {
@@ -101,7 +100,7 @@ class ParentalService {
 
   static Future<void> toggleCategoryLock(String categoryName) async {
     final uid = _currentUserId;
-    if (uid.isEmpty) return;
+    if (uid == null || uid.isEmpty) return;
 
     final current = await getLockedCategories();
     if (current.contains(categoryName)) {
@@ -134,7 +133,7 @@ class ParentalService {
     required int endMinute,
   }) async {
     final uid = _currentUserId;
-    if (uid.isEmpty) return;
+    if (uid == null || uid.isEmpty) return;
 
     final scheduleData = {
       'sleep_lock_enabled': enabled,
@@ -156,9 +155,9 @@ class ParentalService {
     await prefs.setInt('sleep_end_m_$uid', endMinute);
   }
 
-  static Future> getSleepSchedule() async {
+  static Future<Map<String, dynamic>> getSleepSchedule() async {
     final uid = _currentUserId;
-    if (uid.isEmpty) {
+    if (uid == null || uid.isEmpty) {
       return {'enabled': false, 'startH': 22, 'startM': 0, 'endH': 6, 'endM': 0};
     }
 
@@ -213,7 +212,7 @@ class ParentalService {
 
   static Future<List<String>> getHiddenMenuItems() async {
     final uid = _currentUserId;
-    if (uid.isEmpty) return _cachedHiddenItems;
+    if (uid == null || uid.isEmpty) return _cachedHiddenItems;
     try {
       final doc = await _firestore.collection('users').doc(uid).get();
       if (doc.exists && doc.data()?.containsKey('hidden_menu_items') == true) {
@@ -231,7 +230,7 @@ class ParentalService {
   static Future<void> setHiddenMenuItems(List<String> items) async {
     _cachedHiddenItems = List.from(items);
     final uid = _currentUserId;
-    if (uid.isEmpty) return;
+    if (uid == null || uid.isEmpty) return;
     try {
       await _firestore.collection('users').doc(uid).set({
         'hidden_menu_items': items,
