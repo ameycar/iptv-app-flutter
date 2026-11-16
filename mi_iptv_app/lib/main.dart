@@ -6944,101 +6944,163 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
 // SISTEMA DE ANUNCIOS GLOBALES Y ALERTAS DE ACTUALIZACIÓN EN TIEMPO REAL
 // =============================================================================
 
-class LiveBroadcastBanner extends StatelessWidget {
+class LiveBroadcastBanner extends StatefulWidget {
+  // Notificador en memoria para que el anuncio aparezca al instante incluso si Firestore tarda o está en modo local
+  static final ValueNotifier> localBroadcastNotifier =
+      ValueNotifier>(<String, dynamic>{});
+
   const LiveBroadcastBanner({super.key});
 
   @override
+  State<LiveBroadcastBanner> createState() => _LiveBroadcastBannerState();
+}
+
+class _LiveBroadcastBannerState extends State<LiveBroadcastBanner> {
+  @override
+  void initState() {
+    super.initState();
+    _loadLocalCachedBroadcast();
+  }
+
+  Future<void> _loadLocalCachedBroadcast() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedMsg = prefs.getString('local_broadcast_msg') ?? '';
+      final cachedActive = prefs.getBool('local_broadcast_active') ?? false;
+      final cachedType = prefs.getString('local_broadcast_type') ?? 'match';
+      final cachedUrl = prefs.getString('local_broadcast_url') ?? '';
+      if (cachedActive && cachedMsg.isNotEmpty) {
+        LiveBroadcastBanner.localBroadcastNotifier.value = {
+          'isActive': true,
+          'message': cachedMsg,
+          'type': cachedType,
+          'actionUrl': cachedUrl,
+        };
+      }
+    } catch (_) {}
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('system_config')
-          .doc('broadcast_announcement')
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData || !snapshot.data!.exists) {
-          return const SizedBox.shrink();
-        }
+    return ValueListenableBuilder>(
+      valueListenable: LiveBroadcastBanner.localBroadcastNotifier,
+      builder: (context, localData, _) {
+        return StreamBuilder<DocumentSnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('system_config')
+              .doc('broadcast_announcement')
+              .snapshots(),
+          builder: (context, snapshot) {
+            Map<String, dynamic> data = {};
+            if (snapshot.hasData && (snapshot.data?.exists ?? false)) {
+              final raw = snapshot.data!.data();
+              if (raw is Map) {
+                data = Map<String, dynamic>.from(raw);
+              }
+            }
 
-        final data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
-        final bool isActive = data['isActive'] == true;
-        final String message = (data['message'] ?? '').toString();
-        final String type = (data['type'] ?? 'info').toString();
-        final String actionUrl = (data['actionUrl'] ?? '').toString().trim();
+            // Si los datos locales son más recientes o Firestore no devolvió documento, usamos el estado sincronizado
+            if (localData.isNotEmpty &&
+                (data.isEmpty || localData['localOverride'] == true)) {
+              data = localData;
+            }
 
-        if (!isActive || message.trim().isEmpty) {
-          return const SizedBox.shrink();
-        }
+            final bool isActive = data['isActive'] == true || data['active'] == true;
+            final String message = (data['message'] ?? data['text'] ?? '').toString();
+            final String type = (data['type'] ?? 'info').toString();
+            final String actionUrl = (data['actionUrl'] ?? data['apkDownloadUrl'] ?? '').toString().trim();
 
-        Color bannerColor = const Color(0xFF7B2CBF);
-        Color borderColor = const Color(0xFF9D4EDD);
-        IconData bannerIcon = Icons.campaign_rounded;
-        bool darkText = false;
+            if (!isActive || message.trim().isEmpty) {
+              return const SizedBox.shrink();
+            }
 
-        if (type == 'match') {
-          bannerColor = const Color(0xFFFF1744);
-          borderColor = const Color(0xFFFF8A80);
-          bannerIcon = Icons.sports_soccer_rounded;
-        } else if (type == 'promo') {
-          bannerColor = const Color(0xFFFFD600);
-          borderColor = const Color(0xFFFFEA00);
-          bannerIcon = Icons.card_giftcard_rounded;
-          darkText = true;
-        } else if (type == 'update') {
-          bannerColor = const Color(0xFF00E5FF);
-          borderColor = Colors.white;
-          bannerIcon = Icons.system_update_rounded;
-          darkText = true;
-        } else if (type == 'warning') {
-          bannerColor = const Color(0xFFFFB703);
-          borderColor = const Color(0xFFFFD54F);
-          bannerIcon = Icons.warning_amber_rounded;
-          darkText = true;
-        }
+            Color bannerColor = const Color(0xFF7B2CBF);
+            Color borderColor = const Color(0xFF9D4EDD);
+            IconData bannerIcon = Icons.campaign_rounded;
+            bool darkText = false;
 
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-          decoration: BoxDecoration(
-            color: bannerColor.withOpacity(0.95),
-            border: Border(bottom: BorderSide(color: borderColor, width: 1.5)),
-          ),
-          child: Row(
-            children: [
-              Icon(bannerIcon, color: darkText ? Colors.black : Colors.white, size: 19),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  message,
-                  style: TextStyle(
-                    color: darkText ? Colors.black : Colors.white,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
+            if (type == 'match') {
+              bannerColor = const Color(0xFFFF1744);
+              borderColor = const Color(0xFFFF8A80);
+              bannerIcon = Icons.sports_soccer_rounded;
+            } else if (type == 'promo') {
+              bannerColor = const Color(0xFFFFD600);
+              borderColor = const Color(0xFFFFEA00);
+              bannerIcon = Icons.card_giftcard_rounded;
+              darkText = true;
+            } else if (type == 'update') {
+              bannerColor = const Color(0xFF00E5FF);
+              borderColor = Colors.white;
+              bannerIcon = Icons.system_update_rounded;
+              darkText = true;
+            } else if (type == 'warning') {
+              bannerColor = const Color(0xFFFFB703);
+              borderColor = const Color(0xFFFFD54F);
+              bannerIcon = Icons.warning_amber_rounded;
+              darkText = true;
+            }
+
+            return Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(
+                color: bannerColor.withOpacity(0.95),
+                border: Border(bottom: BorderSide(color: borderColor, width: 1.5)),
               ),
-              if (actionUrl.isNotEmpty) ...[
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black87,
-                    foregroundColor: const Color(0xFF00E5FF),
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              child: Row(
+                children: [
+                  Icon(bannerIcon, color: darkText ? Colors.black : Colors.white, size: 19),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      message,
+                      style: TextStyle(
+                        color: darkText ? Colors.black : Colors.white,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
-                  onPressed: () async {
-                    final uri = Uri.tryParse(actionUrl);
-                    if (uri != null) {
-                      await launchUrl(uri, mode: LaunchMode.externalApplication);
-                    }
-                  },
-                  child: const Text(
-                    'ACTUALIZAR / VER',
-                    style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold),
+                  if (actionUrl.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black87,
+                        foregroundColor: const Color(0xFF00E5FF),
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      ),
+                      onPressed: () async {
+                        final uri = Uri.tryParse(actionUrl);
+                        if (uri != null) {
+                          await launchUrl(uri, mode: LaunchMode.externalApplication);
+                        }
+                      },
+                      child: const Text(
+                        'ACTUALIZAR / VER',
+                        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(width: 6),
+                  InkWell(
+                    onTap: () async {
+                      LiveBroadcastBanner.localBroadcastNotifier.value = {
+                        'isActive': false,
+                        'message': '',
+                        'localOverride': true,
+                      };
+                    },
+                    child: Icon(
+                      Icons.close,
+                      size: 16,
+                      color: darkText ? Colors.black54 : Colors.white70,
+                    ),
                   ),
-                ),
-              ],
-            ],
-          ),
+                ],
+              ),
+            );
+          },
         );
       },
     );
@@ -7050,6 +7112,7 @@ class BroadcastAdminSheet {
     final msgCtrl = TextEditingController();
     final urlCtrl = TextEditingController();
     String selectedType = 'match';
+    bool isPublishing = false;
 
     showModalBottomSheet(
       context: context,
@@ -7159,13 +7222,56 @@ class BroadcastAdminSheet {
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
-                          onPressed: () async {
-                            await FirebaseFirestore.instance
-                                .collection('system_config')
-                                .doc('broadcast_announcement')
-                                .set({'isActive': false, 'message': ''}, SetOptions(merge: true));
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          },
+                          onPressed: isPublishing
+                              ? null
+                              : () async {
+                                  setModalState(() => isPublishing = true);
+                                  // 1. Apagar de inmediato en pantalla local
+                                  LiveBroadcastBanner.localBroadcastNotifier.value = {
+                                    'isActive': false,
+                                    'active': false,
+                                    'message': '',
+                                    'localOverride': true,
+                                  };
+                                  try {
+                                    final prefs = await SharedPreferences.getInstance();
+                                    await prefs.setBool('local_broadcast_active', false);
+                                    await prefs.setString('local_broadcast_msg', '');
+                                  } catch (_) {}
+
+                                  // 2. Apagar en Firestore (con timeout para que nunca se cuelgue la ventana)
+                                  try {
+                                    final offPayload = {
+                                      'isActive': false,
+                                      'active': false,
+                                      'message': '',
+                                      'text': '',
+                                      'updatedAt': DateTime.now().toIso8601String(),
+                                    };
+                                    await Future.wait([
+                                      FirebaseFirestore.instance
+                                          .collection('system_config')
+                                          .doc('broadcast_announcement')
+                                          .set(offPayload, SetOptions(merge: true)),
+                                      FirebaseFirestore.instance
+                                          .collection('app_config')
+                                          .doc('global_announcement')
+                                          .set(offPayload, SetOptions(merge: true)),
+                                    ]).timeout(const Duration(seconds: 4));
+                                  } catch (e) {
+                                    debugPrint('Aviso apagando anuncio en Firestore: $e');
+                                  }
+
+                                  if (ctx.mounted) Navigator.pop(ctx);
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('⏹ Aviso global desactivado en todas las pantallas.'),
+                                        backgroundColor: Colors.orange,
+                                      ),
+                                    );
+                                  }
+                                },
                           child: const Text('APAGAR AVISO', style: TextStyle(fontWeight: FontWeight.bold)),
                         ),
                       ),
@@ -7179,22 +7285,94 @@ class BroadcastAdminSheet {
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
-                          icon: const Icon(Icons.send_rounded, size: 18),
-                          label: const Text('PUBLICAR AHORA', style: TextStyle(fontWeight: FontWeight.w900)),
-                          onPressed: () async {
-                            if (msgCtrl.text.trim().isEmpty) return;
-                            await FirebaseFirestore.instance
-                                .collection('system_config')
-                                .doc('broadcast_announcement')
-                                .set({
-                              'isActive': true,
-                              'message': msgCtrl.text.trim(),
-                              'type': selectedType,
-                              'actionUrl': urlCtrl.text.trim(),
-                              'updatedAt': FieldValue.serverTimestamp(),
-                            });
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          },
+                          icon: isPublishing
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                                )
+                              : const Icon(Icons.send_rounded, size: 18),
+                          label: Text(
+                            isPublishing ? 'PUBLICANDO...' : 'PUBLICAR AHORA',
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                          onPressed: isPublishing
+                              ? null
+                              : () async {
+                                  final cleanMsg = msgCtrl.text.trim();
+                                  final cleanUrl = urlCtrl.text.trim();
+                                  if (cleanMsg.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('⚠️ Escribe un mensaje antes de publicar.'),
+                                        backgroundColor: Colors.redAccent,
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  setModalState(() => isPublishing = true);
+                                  final nowMs = DateTime.now().millisecondsSinceEpoch;
+                                  final payload = <String, dynamic>{
+                                    'id': 'ann_$nowMs',
+                                    'title': '📢 ANUNCIO OFICIAL AMEYCAR TV',
+                                    'isActive': true,
+                                    'active': true,
+                                    'message': cleanMsg,
+                                    'text': cleanMsg,
+                                    'body': cleanMsg,
+                                    'type': selectedType,
+                                    'actionUrl': cleanUrl,
+                                    'apkDownloadUrl': cleanUrl,
+                                    'timestamp': nowMs,
+                                    'updatedAt': DateTime.now().toIso8601String(),
+                                  };
+
+                                  // 1. Mostrar de inmediato en la barra superior sin esperar red
+                                  LiveBroadcastBanner.localBroadcastNotifier.value = {
+                                    ...payload,
+                                    'localOverride': true,
+                                  };
+
+                                  try {
+                                    final prefs = await SharedPreferences.getInstance();
+                                    await prefs.setBool('local_broadcast_active', true);
+                                    await prefs.setString('local_broadcast_msg', cleanMsg);
+                                    await prefs.setString('local_broadcast_type', selectedType);
+                                    await prefs.setString('local_broadcast_url', cleanUrl);
+                                    await prefs.remove('dismissed_broadcast_id');
+                                  } catch (_) {}
+
+                                  // 2. Sincronizar en Firestore (tanto para Celular/Web como para Smart TV) con timeout seguro
+                                  try {
+                                    final cloudPayload = {
+                                      ...payload,
+                                      'updatedAt': FieldValue.serverTimestamp(),
+                                    };
+                                    await Future.wait([
+                                      FirebaseFirestore.instance
+                                          .collection('system_config')
+                                          .doc('broadcast_announcement')
+                                          .set(cloudPayload, SetOptions(merge: true)),
+                                      FirebaseFirestore.instance
+                                          .collection('app_config')
+                                          .doc('global_announcement')
+                                          .set(cloudPayload, SetOptions(merge: true)),
+                                    ]).timeout(const Duration(seconds: 4));
+                                  } catch (e) {
+                                    debugPrint('Aviso publicando en Firestore: $e');
+                                  }
+
+                                  if (ctx.mounted) Navigator.pop(ctx);
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('📢 ¡Anuncio Global publicado en vivo!'),
+                                        backgroundColor: Color(0xFF00C853),
+                                      ),
+                                    );
+                                  }
+                                },
                         ),
                       ),
                     ],
