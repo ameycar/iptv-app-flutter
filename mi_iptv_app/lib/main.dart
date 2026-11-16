@@ -6945,9 +6945,8 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
 // =============================================================================
 
 class LiveBroadcastBanner extends StatefulWidget {
-  // Notificador en memoria para que el anuncio aparezca al instante incluso si Firestore tarda o está en modo local
-  static final ValueNotifier> localBroadcastNotifier =
-      ValueNotifier>(<String, dynamic>{});
+  // Sin signos < > anidados para que vscode.dev no los recorte al pegar
+  static final ValueNotifier localBroadcastNotifier = ValueNotifier(const {});
 
   const LiveBroadcastBanner({super.key});
 
@@ -6982,24 +6981,25 @@ class _LiveBroadcastBannerState extends State<LiveBroadcastBanner> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder>(
+    return ValueListenableBuilder(
       valueListenable: LiveBroadcastBanner.localBroadcastNotifier,
-      builder: (context, localData, _) {
+      builder: (context, rawLocalData, _) {
+        final Map localData = rawLocalData is Map ? rawLocalData : const {};
+
         return StreamBuilder<DocumentSnapshot>(
           stream: FirebaseFirestore.instance
               .collection('system_config')
               .doc('broadcast_announcement')
               .snapshots(),
           builder: (context, snapshot) {
-            Map<String, dynamic> data = {};
+            Map data = {};
             if (snapshot.hasData && (snapshot.data?.exists ?? false)) {
               final raw = snapshot.data!.data();
               if (raw is Map) {
-                data = Map<String, dynamic>.from(raw);
+                data = Map.from(raw);
               }
             }
 
-            // Si los datos locales son más recientes o Firestore no devolvió documento, usamos el estado sincronizado
             if (localData.isNotEmpty &&
                 (data.isEmpty || localData['localOverride'] == true)) {
               data = localData;
@@ -7084,7 +7084,7 @@ class _LiveBroadcastBannerState extends State<LiveBroadcastBanner> {
                   ],
                   const SizedBox(width: 6),
                   InkWell(
-                    onTap: () async {
+                    onTap: () {
                       LiveBroadcastBanner.localBroadcastNotifier.value = {
                         'isActive': false,
                         'message': '',
@@ -7226,7 +7226,6 @@ class BroadcastAdminSheet {
                               ? null
                               : () async {
                                   setModalState(() => isPublishing = true);
-                                  // 1. Apagar de inmediato en pantalla local
                                   LiveBroadcastBanner.localBroadcastNotifier.value = {
                                     'isActive': false,
                                     'active': false,
@@ -7239,7 +7238,6 @@ class BroadcastAdminSheet {
                                     await prefs.setString('local_broadcast_msg', '');
                                   } catch (_) {}
 
-                                  // 2. Apagar en Firestore (con timeout para que nunca se cuelgue la ventana)
                                   try {
                                     final offPayload = {
                                       'isActive': false,
@@ -7313,7 +7311,7 @@ class BroadcastAdminSheet {
 
                                   setModalState(() => isPublishing = true);
                                   final nowMs = DateTime.now().millisecondsSinceEpoch;
-                                  final payload = <String, dynamic>{
+                                  final payload = {
                                     'id': 'ann_$nowMs',
                                     'title': '📢 ANUNCIO OFICIAL AMEYCAR TV',
                                     'isActive': true,
@@ -7328,7 +7326,6 @@ class BroadcastAdminSheet {
                                     'updatedAt': DateTime.now().toIso8601String(),
                                   };
 
-                                  // 1. Mostrar de inmediato en la barra superior sin esperar red
                                   LiveBroadcastBanner.localBroadcastNotifier.value = {
                                     ...payload,
                                     'localOverride': true,
@@ -7343,7 +7340,6 @@ class BroadcastAdminSheet {
                                     await prefs.remove('dismissed_broadcast_id');
                                   } catch (_) {}
 
-                                  // 2. Sincronizar en Firestore (tanto para Celular/Web como para Smart TV) con timeout seguro
                                   try {
                                     final cloudPayload = {
                                       ...payload,
