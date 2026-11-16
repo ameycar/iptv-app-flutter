@@ -136,7 +136,7 @@ class _LiveBroadcastBannerState extends State<LiveBroadcastBanner> {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+    return StreamBuilder<DocumentSnapshot>>(
       stream: FirebaseFirestore.instance
           .collection('system_config')
           .doc('broadcast_announcement')
@@ -149,10 +149,10 @@ class _LiveBroadcastBannerState extends State<LiveBroadcastBanner> {
         final data = snapshot.data!.data() ?? {};
         _checkAndShowUpdateDialog(data);
 
-        final bool isActive = data['isActive'] == true;
-        final String message = (data['message'] ?? '').toString().trim();
+        final bool isActive = data['isActive'] == true || data['active'] == true;
+        final String message = (data['message'] ?? data['text'] ?? '').toString().trim();
         final String type = (data['type'] ?? 'match').toString();
-        final String broadcastId = (data['updatedAt'] ?? message).toString();
+        final String broadcastId = (data['updatedAt'] ?? data['id'] ?? message).toString();
 
         if (!isActive || message.isEmpty || _dismissedBannerId == broadcastId) {
           return const SizedBox.shrink();
@@ -239,8 +239,52 @@ class _LiveBroadcastBannerState extends State<LiveBroadcastBanner> {
   }
 }
 
+/// Hoja Emergente (BottomSheet / Modal) invocada desde main.dart -> BroadcastAdminSheet.show(context)
+class BroadcastAdminSheet {
+  static Future<void> show(BuildContext context) async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0B0F19),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 44,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const AdminBroadcastControlCard(initiallyExpanded: true),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class AdminBroadcastControlCard extends StatefulWidget {
-  const AdminBroadcastControlCard({super.key});
+  final bool initiallyExpanded;
+
+  const AdminBroadcastControlCard({
+    super.key,
+    this.initiallyExpanded = false,
+  });
 
   @override
   State<AdminBroadcastControlCard> createState() => _AdminBroadcastControlCardState();
@@ -253,15 +297,16 @@ class _AdminBroadcastControlCardState extends State<AdminBroadcastControlCard> {
   final TextEditingController _notesCtrl = TextEditingController();
 
   String _selectedType = 'match';
-  bool _bannerActive = false;
+  bool _bannerActive = true;
   bool _updateActive = false;
   bool _forceUpdate = false;
   bool _isSaving = false;
-  bool _isExpanded = false;
+  late bool _isExpanded;
 
   @override
   void initState() {
     super.initState();
+    _isExpanded = widget.initiallyExpanded;
     _loadCurrentBroadcastConfig();
   }
 
@@ -296,30 +341,91 @@ class _AdminBroadcastControlCardState extends State<AdminBroadcastControlCard> {
     } catch (_) {}
   }
 
-  Future<void> _saveBroadcastConfig() async {
-    setState(() => _isSaving = true);
+  String _getTitleForType(String type) {
+    switch (type) {
+      case 'match':
+        return '⚽ EVENTO EN VIVO • AMEYCAR TV';
+      case 'promo':
+        return '🎁 PROMOCIÓN VIP • AMEYCAR TV';
+      case 'warning':
+        return '🛠️ SOPORTE / RED • AMEYCAR TV';
+      default:
+        return '📢 AVISO OFICIAL • AMEYCAR TV';
+    }
+  }
+
+  Future<void> _saveBroadcastConfig({bool? forceBannerState}) async {
+    final cleanMsg = _msgCtrl.text.trim();
+
+    // CORRECCIÓN CLAVE: Si el administrador escribió un mensaje y presionó "GUARDAR Y TRANSMITIR",
+    // activamos automáticamente el banner para que nunca se quede sin publicar por tener el switch apagado.
+    bool effectiveBannerActive = forceBannerState ?? _bannerActive;
+    if (forceBannerState == null && cleanMsg.isNotEmpty && !_bannerActive && !_updateActive) {
+      effectiveBannerActive = true;
+    }
+
+    if (effectiveBannerActive && cleanMsg.isEmpty && !_updateActive) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⚠️ Escribe el mensaje del anuncio antes de publicar.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+      _bannerActive = effectiveBannerActive;
+    });
+
     try {
-      await FirebaseFirestore.instance
-          .collection('system_config')
-          .doc('broadcast_announcement')
-          .set({
-        'isActive': _bannerActive,
-        'message': _msgCtrl.text.trim(),
+      final nowIso = DateTime.now().toIso8601String();
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final title = _getTitleForType(_selectedType);
+
+      final payload = <String, dynamic>{
+        'id': 'ann_$nowMs',
+        'title': title,
+        'isActive': effectiveBannerActive,
+        'active': effectiveBannerActive,
+        'message': cleanMsg,
+        'text': cleanMsg,
+        'body': cleanMsg,
         'type': _selectedType,
         'updateActive': _updateActive,
         'latestVersion': _versionCtrl.text.trim(),
         'apkDownloadUrl': _apkUrlCtrl.text.trim(),
         'updateNotes': _notesCtrl.text.trim(),
         'forceUpdate': _forceUpdate,
-        'updatedAt': DateTime.now().toIso8601String(),
-      }, SetOptions(merge: true));
+        'updatedAt': nowIso,
+        'timestamp': nowMs,
+      };
+
+      // 1. Guardar en system_config/broadcast_announcement (Usado por LiveBroadcastBanner en main.dart)
+      await FirebaseFirestore.instance
+          .collection('system_config')
+          .doc('broadcast_announcement')
+          .set(payload, SetOptions(merge: true));
+
+      // 2. Guardar también en app_config/global_announcement (Sincronizado con Smart TV Dashboard)
+      await FirebaseFirestore.instance
+          .collection('app_config')
+          .doc('global_announcement')
+          .set(payload, SetOptions(merge: true));
+
+      // 3. Limpiar el ID descartado localmente para que el administrador vea el banner inmediatamente
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('dismissed_broadcast_id');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              _bannerActive || _updateActive
-                  ? '📡 ¡Anuncio / Alerta transmitida en vivo a todas las pantallas!'
+              effectiveBannerActive || _updateActive
+                  ? '📡 ¡Anuncio transmitido en vivo a todas las pantallas!'
                   : '⏹ Transmisión global desactivada.',
             ),
             backgroundColor: const Color(0xFF10B981),
@@ -375,13 +481,15 @@ class _AdminBroadcastControlCardState extends State<AdminBroadcastControlCard> {
                         style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900),
                       ),
                       Text(
-                        _bannerActive
+                        _bannerActive && _msgCtrl.text.trim().isNotEmpty
                             ? '🟢 TRANSMITIENDO EN PANTALLAS: "${_msgCtrl.text}"'
                             : 'Toca aquí para anunciar un partido, promoción o nueva versión de la App',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: _bannerActive ? const Color(0xFF10B981) : Colors.white60,
+                          color: _bannerActive && _msgCtrl.text.trim().isNotEmpty
+                              ? const Color(0xFF10B981)
+                              : Colors.white60,
                           fontSize: 11.5,
                         ),
                       ),
@@ -430,6 +538,11 @@ class _AdminBroadcastControlCardState extends State<AdminBroadcastControlCard> {
             const SizedBox(height: 8),
             TextField(
               controller: _msgCtrl,
+              onChanged: (val) {
+                if (val.trim().isNotEmpty && !_bannerActive) {
+                  setState(() => _bannerActive = true);
+                }
+              },
               style: const TextStyle(color: Colors.white, fontSize: 13),
               decoration: InputDecoration(
                 labelText: 'Mensaje del Banner (Ej: 🔥 HOY 8:00 PM Perú vs Brasil en Vivo por CH 015)',
@@ -515,24 +628,49 @@ class _AdminBroadcastControlCardState extends State<AdminBroadcastControlCard> {
               ),
             ],
             const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFD600),
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            Row(
+              children: [
+                if (_bannerActive || _updateActive) ...[
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.redAccent,
+                      side: const BorderSide(color: Colors.redAccent),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                    label: const Text('APAGAR', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    onPressed: _isSaving
+                        ? null
+                        : () {
+                            setState(() {
+                              _bannerActive = false;
+                              _updateActive = false;
+                            });
+                            _saveBroadcastConfig(forceBannerState: false);
+                          },
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFFD600),
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    icon: _isSaving
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                        : const Icon(Icons.send_and_archive_rounded, size: 18),
+                    label: Text(
+                      _isSaving ? 'PUBLICANDO...' : 'GUARDAR Y TRANSMITIR A TODOS LOS DISPOSITIVOS',
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12.5),
+                    ),
+                    onPressed: _isSaving ? null : () => _saveBroadcastConfig(forceBannerState: true),
+                  ),
                 ),
-                icon: _isSaving
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
-                    : const Icon(Icons.send_and_archive_rounded, size: 18),
-                label: Text(
-                  _isSaving ? 'PUBLICANDO...' : 'GUARDAR Y TRANSMITIR A TODOS LOS DISPOSITIVOS',
-                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12.5),
-                ),
-                onPressed: _isSaving ? null : _saveBroadcastConfig,
-              ),
+              ],
             ),
           ],
         ],

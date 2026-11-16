@@ -11,7 +11,10 @@ class M3USanitizerService {
     EpgService.ensureInitialized();
 
     final List<ChannelModel> sanitizedChannels = [];
-    final cleanContent = rawM3u.replaceAll('\uFEFF', '').replaceAll('\r\n', '\n');
+    final cleanContent = rawM3u
+        .replaceAll('\uFEFF', '')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
 
     // 1. Auto-detección estilo TiviMate del enlace EPG en la cabecera del M3U
     unawaited(EpgService.extractAndSaveEpgUrlFromM3u(cleanContent));
@@ -24,22 +27,17 @@ class M3USanitizerService {
     String tempGroup = 'General';
     String tempTvgId = '';
     String tempTvgName = '';
+    bool awaitingUrlAfterExtInf = false;
     int channelCounter = 1;
 
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i].trim();
+      if (line.isEmpty) continue;
 
       if (line.toUpperCase().startsWith('#EXTM3U')) {
         unawaited(EpgService.extractAndSaveEpgUrlFromM3u(line));
       } else if (line.toUpperCase().startsWith('#EXTINF:')) {
-        final commaIndex = line.lastIndexOf(',');
-        if (commaIndex != -1 && commaIndex < line.length - 1) {
-          rawOriginalName = line.substring(commaIndex + 1).trim();
-        } else {
-          rawOriginalName = 'Canal $channelCounter';
-        }
-
-        tempName = _cleanChannelTitle(rawOriginalName);
+        awaitingUrlAfterExtInf = true;
 
         final logoMatch = RegExp(r'tvg-logo="([^"]*)"', caseSensitive: false).firstMatch(line);
         tempLogo = logoMatch?.group(1)?.trim() ?? '';
@@ -52,10 +50,57 @@ class M3USanitizerService {
 
         final tvgNameMatch = RegExp(r'tvg-name="([^"]*)"', caseSensitive: false).firstMatch(line);
         tempTvgName = tvgNameMatch?.group(1)?.trim() ?? '';
-      } else if (line.isNotEmpty && !line.startsWith('#')) {
-        String cleanUrl = line.replaceAll(RegExp(r'\s+'), '');
 
-        if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
+        final extractedTitle = _extractTitleAfterAttributes(line);
+        if (extractedTitle.isNotEmpty) {
+          rawOriginalName = extractedTitle;
+        } else if (tempTvgName.isNotEmpty) {
+          rawOriginalName = tempTvgName;
+        } else {
+          rawOriginalName = 'Canal $channelCounter';
+        }
+
+        tempName = _cleanChannelTitle(rawOriginalName);
+      } else if (line.toUpperCase().startsWith('#EXTGRP:')) {
+        final grp = line.substring(8).trim();
+        if (grp.isNotEmpty && tempGroup == 'General') {
+          tempGroup = grp;
+        }
+      } else if (!line.startsWith('#')) {
+        final lowerLine = line.toLowerCase();
+        final isUrl = lowerLine.startsWith('http://') ||
+            lowerLine.startsWith('https://') ||
+            lowerLine.startsWith('rtmp://') ||
+            lowerLine.startsWith('rtsp://') ||
+            lowerLine.startsWith('mms://');
+
+        // Si en el M3U hubo un salto de línea accidental entre #EXTINF y el nombre de la película, lo rescata aquí
+        if (!isUrl && awaitingUrlAfterExtInf) {
+          final continuationTitle = line.replaceAll(RegExp(r'^,+\s*'), '').trim();
+          if (continuationTitle.isNotEmpty) {
+            rawOriginalName = continuationTitle;
+            tempName = _cleanChannelTitle(rawOriginalName);
+          }
+          continue;
+        }
+
+        if (isUrl) {
+          String cleanUrl = _normalizeStreamUrl(line);
+
+          // Respaldo inteligente para que nunca quede como "Canal sin nombre"
+          if (tempName == 'Canal sin nombre' || tempName.startsWith('Canal ')) {
+            if (tempTvgName.isNotEmpty) {
+              rawOriginalName = tempTvgName;
+              tempName = _cleanChannelTitle(rawOriginalName);
+            } else {
+              final urlFallbackName = _extractNameFromUrl(cleanUrl);
+              if (urlFallbackName.isNotEmpty) {
+                rawOriginalName = urlFallbackName;
+                tempName = _cleanChannelTitle(rawOriginalName);
+              }
+            }
+          }
+
           final contentType = _determineContentType(tempName, tempGroup, cleanUrl);
           final category = _determineCategory(tempName, tempGroup, contentType);
           final year = _extractYear(tempName);
@@ -95,11 +140,68 @@ class M3USanitizerService {
           tempGroup = 'General';
           tempTvgId = '';
           tempTvgName = '';
+          awaitingUrlAfterExtInf = false;
         }
       }
     }
 
     return sanitizedChannels.isNotEmpty ? sanitizedChannels : getCuratedChannels();
+  }
+
+  /// Extrae el título después de la coma de cierre de #EXTINF ignorando comas dentro de comillas
+  static String _extractTitleAfterAttributes(String extInfLine) {
+    bool inQuotes = false;
+    int lastValidComma = -1;
+
+    for (int i = 0; i < extInfLine.length; i++) {
+      final char = extInfLine[i];
+      if (char == '"') {
+        inQuotes = !inQuotes;
+      } else if (char == ',' && !inQuotes) {
+        lastValidComma = i;
+      }
+    }
+
+    if (lastValidComma != -1 && lastValidComma < extInfLine.length - 1) {
+      return extInfLine.substring(lastValidComma + 1).trim();
+    }
+    return '';
+  }
+
+  /// Limpia la URL codificando espacios en %20 y asegurando HTTPS en Archive.org
+  static String _normalizeStreamUrl(String rawUrl) {
+    var trimmed = rawUrl.trim();
+    if (trimmed.contains(' ')) {
+      trimmed = trimmed.replaceAll(' ', '%20');
+    }
+    if (trimmed.startsWith('http://') && trimmed.contains('archive.org/')) {
+      trimmed = trimmed.replaceFirst('http://', 'https://');
+    }
+    return trimmed;
+  }
+
+  /// Extrae el nombre de la película desde el archivo de la URL si el M3U no traía título
+  static String _extractNameFromUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      if (uri.pathSegments.isNotEmpty) {
+        String lastSeg = Uri.decodeComponent(uri.pathSegments.last);
+        lastSeg = lastSeg.replaceAll(
+          RegExp(r'\.(mp4|mkv|avi|mov|webm|m3u8|ts|mpd)$', caseSensitive: false),
+          '',
+        );
+        lastSeg = lastSeg.replaceAll(RegExp(r'[_.-]+'), ' ').trim();
+        final lower = lastSeg.toLowerCase();
+        if (lastSeg.length > 2 &&
+            lower != 'master' &&
+            lower != 'playlist' &&
+            lower != 'index' &&
+            !lower.startsWith('24h')) {
+          return lastSeg;
+        }
+      }
+    } catch (_) {}
+    return '';
   }
 
   /// CLASIFICADOR ESTRICTO: NO confunde canales continuos con películas bajo demanda
@@ -108,13 +210,25 @@ class M3USanitizerService {
     final lowerName = name.toLowerCase();
     final lowerGroup = group.toLowerCase();
 
-    final isVODExtension = lowerUrl.endsWith('.mp4') || lowerUrl.endsWith('.mkv') || lowerUrl.endsWith('.avi');
-    final isXtreamMovie = lowerUrl.contains('/movie/') || lowerUrl.contains('/movies/') || lowerUrl.contains('/vod/');
+    final isVODExtension = lowerUrl.endsWith('.mp4') ||
+        lowerUrl.endsWith('.mkv') ||
+        lowerUrl.endsWith('.avi') ||
+        lowerUrl.endsWith('.mov') ||
+        lowerUrl.endsWith('.webm');
+    final isXtreamMovie = lowerUrl.contains('/movie/') ||
+        lowerUrl.contains('/movies/') ||
+        lowerUrl.contains('/vod/');
     final isXtreamSeries = lowerUrl.contains('/series/');
-    final hasEpisodeFormat = RegExp(r'[st]\d+.*[ec]\d+', caseSensitive: false).hasMatch(name);
+    final hasEpisodeFormat = RegExp(
+      r'\b(?:s\d+\s*e\d+|t\d+\s*e\d+|[st]\d+.*[ec]\d+)\b',
+      caseSensitive: false,
+    ).hasMatch(name);
 
-    // 1. Series VOD reales (archivos de series o formato de capítulo)
-    if (isXtreamSeries || (hasEpisodeFormat && isVODExtension)) {
+    // 1. Series VOD reales (archivos de series, formato de capítulo S01E01 o grupo explícito Series)
+    if (isXtreamSeries ||
+        hasEpisodeFormat ||
+        ((lowerGroup == 'series' || lowerGroup.startsWith('serie')) &&
+            !lowerGroup.contains('24/7'))) {
       return 'series';
     }
 
@@ -123,9 +237,16 @@ class M3USanitizerService {
       return 'movie';
     }
 
-    // Si el grupo dice VOD explícitamente pero no es stream en vivo
-    if (lowerGroup.startsWith('vod') || lowerGroup.contains('vod |') || lowerGroup.contains('vod:')) {
-      if (!lowerUrl.endsWith('.m3u8')) return 'movie';
+    // Si el grupo dice Películas o VOD explícitamente (y no es un canal 24/7)
+    if ((lowerGroup == 'peliculas' ||
+            lowerGroup == 'películas' ||
+            lowerGroup == 'movies' ||
+            lowerGroup.startsWith('vod') ||
+            lowerGroup.contains('vod |') ||
+            lowerGroup.contains('vod:')) &&
+        !lowerGroup.contains('24/7') &&
+        !lowerName.contains('24/7')) {
+      return 'movie';
     }
 
     // 3. Todo lo demás (.m3u8, canales 24/7 de cine como 4ever Cinema, Pluto, etc.) son CANALES EN VIVO
@@ -228,6 +349,18 @@ class M3USanitizerService {
         contentType: 'movie',
         year: '2024',
         rating: '9.1',
+      ),
+      ChannelModel(
+        id: 'mov_3',
+        number: 103,
+        name: 'Sylvanian Families: El Regalo de Freya',
+        streamUrl: 'https://ia902200.us.archive.org/26/items/Peliculas-wii/Sylvanian%20Families%20La%20Pelicula%20-%20El%20regalo%20de%20Freya.mp4',
+        logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/c/c5/Big_buck_bunny_poster_big.jpg',
+        groupCategory: 'Animación',
+        resolution: '1080p FHD',
+        contentType: 'movie',
+        year: '2023',
+        rating: '8.9',
       ),
       ChannelModel(
         id: 'ser_1',

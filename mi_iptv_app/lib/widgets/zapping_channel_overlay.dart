@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/epg_service.dart';
 import '../services/dvr_recording_service.dart';
+import '../services/player_settings_service.dart';
 import 'advanced_player_settings_sheet.dart';
 
 class ZappingChannelOverlay extends StatefulWidget {
@@ -109,6 +110,18 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
       }
     } catch (_) {}
     return 'FHD';
+  }
+
+  String _getCcShortBadge(String subSetting) {
+    final lower = subSetting.toLowerCase();
+    if (lower == 'desactivado' || lower.isEmpty) return 'CC';
+    if (lower.contains('espa')) return 'CC • ES';
+    if (lower.contains('ingl') || lower.contains('eng')) return 'CC • EN';
+    if (lower.contains('port')) return 'CC • PT';
+    if (lower.contains('fran')) return 'CC • FR';
+    if (lower.contains('ital')) return 'CC • IT';
+    if (lower.contains('alem')) return 'CC • DE';
+    return 'CC • ON';
   }
 
   @override
@@ -534,17 +547,22 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                                 ),
                                 const SizedBox(width: 6),
                               ],
-                              _buildCompactControlChip(
-                                icon: Icons.closed_caption,
-                                label: 'CC',
-                                borderColor: Colors.white24,
-                                bgColor: Colors.white10,
-                                onTap: () {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('CC: Los subtítulos automáticos se activarán si el canal los incluye.'),
-                                      duration: Duration(seconds: 2),
-                                    ),
+                              // BOTÓN CC CONECTADO AL MODAL DE TRADUCCIÓN EN VIVO E IDIOMAS
+                              ValueListenableBuilder<String>(
+                                valueListenable: PlayerSettingsService.subtitleTrackNotifier,
+                                builder: (context, activeSubLang, _) {
+                                  final bool isCcActive = activeSubLang != 'Desactivado' && activeSubLang.isNotEmpty;
+                                  return _buildCompactControlChip(
+                                    icon: Icons.closed_caption,
+                                    label: _getCcShortBadge(activeSubLang),
+                                    borderColor: isCcActive ? const Color(0xFF00E5FF) : Colors.white24,
+                                    bgColor: isCcActive
+                                        ? const Color(0xFF00E5FF).withOpacity(0.24)
+                                        : Colors.white10,
+                                    iconColor: isCcActive ? const Color(0xFF00E5FF) : Colors.white70,
+                                    onTap: () {
+                                      PlayerSettingsService.showLiveCcLanguageModal(context);
+                                    },
                                   );
                                 },
                               ),

@@ -21,6 +21,7 @@ import '../services/auth_service.dart';
 import '../services/epg_service.dart';
 import '../services/dvr_recording_service.dart';
 import '../services/parental_service.dart';
+import '../services/player_settings_service.dart';
 import '../utils/premium_manager.dart';
 import 'profile_selector_screen.dart';
 import 'remote_control_screen.dart';
@@ -48,6 +49,10 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   // Por defecto iniciamos en el modo Televisión
   String _selectedSection = 'Televisión';
+
+  // Pestañas y filtros para el Catálogo de Cine & Series (VOD)
+  String _selectedVodTab = 'Películas';
+  String _selectedVodCategory = 'Todos';
 
   // LISTAS DE CONTENIDO REAL
   List<ChannelModel> _channels = [];
@@ -81,6 +86,12 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   Timer? _clockTimer;
   String _currentTime = '';
 
+  // VARIABLES DE ANUNCIOS GLOBALES EN TIEMPO REAL
+  StreamSubscription? _globalAnnouncementSub;
+  String _activeGlobalAnnouncement = '';
+  String _activeGlobalAnnouncementTitle = '';
+  String _lastDismissedAnnouncementId = '';
+
   String get _currentProfileId =>
       AuthService.currentActiveProfile?.id ??
       AuthService.currentUser?.id ??
@@ -98,9 +109,42 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   void initState() {
     super.initState();
     EpgService.ensureInitialized();
+    PlayerSettingsService.initialize();
     _startClockTimer();
     _loadInitialPreferences();
     _loadChannels();
+    _listenToGlobalAnnouncements();
+  }
+
+  void _listenToGlobalAnnouncements() {
+    if (!AuthService.isFirebaseAvailable) return;
+    try {
+      _globalAnnouncementSub = FirebaseFirestore.instance
+          .collection('app_config')
+          .doc('global_announcement')
+          .snapshots()
+          .listen((doc) {
+        if (!doc.exists || !mounted) return;
+        final data = doc.data();
+        if (data == null) return;
+
+        final bool isActive = data['active'] == true || data['isActive'] == true;
+        final String msg = (data['message'] ?? data['text'] ?? data['body'] ?? '').toString().trim();
+        final String title = (data['title'] ?? '📢 ANUNCIO OFICIAL AMEYCAR TV').toString().trim();
+        final String id = (data['id'] ?? data['timestamp']?.toString() ?? msg).toString();
+
+        if (isActive && msg.isNotEmpty && id != _lastDismissedAnnouncementId) {
+          setState(() {
+            _activeGlobalAnnouncement = msg;
+            _activeGlobalAnnouncementTitle = title;
+          });
+        } else if (!isActive && mounted) {
+          setState(() {
+            _activeGlobalAnnouncement = '';
+          });
+        }
+      }, onError: (_) {});
+    } catch (_) {}
   }
 
   void _startClockTimer() {
@@ -305,7 +349,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             _startProgressSync(_channels[0].streamUrl);
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('¡${parsed.length} canales sincronizados en "${playlistName ?? "Lista"}"!'),
+                content: Text('¡${parsed.length} elementos sincronizados en "${playlistName ?? "Lista"}"!'),
                 backgroundColor: const Color(0xFF00C853),
               ),
             );
@@ -374,12 +418,23 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       }
     }
 
-    final int index = _channels.indexOf(channel);
+    int index = _channels.indexWhere((c) => c.id == channel.id && c.streamUrl == channel.streamUrl);
+    if (index == -1) {
+      index = _channels.indexOf(channel);
+    }
+    if (index == -1) {
+      setState(() {
+        _channels.add(channel);
+        index = _channels.length - 1;
+      });
+    }
+
     if (index != -1) {
       unawaited(_syncProgressToCloud());
       _currentPlaybackPosition = 0;
 
       setState(() {
+        _selectedSection = 'Televisión';
         _selectedChannelIndex = index;
         _showOsd = true;
         _isPlayerPaused = false;
@@ -415,12 +470,12 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
   void _startVoiceSearch() {
     List<ChannelModel> searchPool;
-    if (_selectedSection == 'Cine IA' && _movies.isNotEmpty) {
-      searchPool = _movies;
+    if (_selectedSection == 'Cine IA' && (_movies.isNotEmpty || _series.isNotEmpty)) {
+      searchPool = [..._movies, ..._series];
     } else if (_selectedSection == 'Series' && _series.isNotEmpty) {
       searchPool = _series;
     } else {
-      searchPool = _liveTv.isNotEmpty ? _liveTv : _channels;
+      searchPool = _channels;
     }
 
     AlexaVoiceSheet.show(
@@ -450,7 +505,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       },
     );
   }
-Future<void> _seekRelativeSeconds(int deltaSeconds) async {
+
+  Future<void> _seekRelativeSeconds(int deltaSeconds) async {
     final activeCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
 
     void executeSeek() {
@@ -525,6 +581,7 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
       _activeDvrFilePath = null;
       _isPlayerPaused = false;
     });
+    _playerKey.currentState?.jumpToLiveEdge();
     _triggerOsdTimer();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -534,7 +591,7 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
       ),
     );
   }
- 
+
   Future<void> _toggleManualDvrRecording(ChannelModel? activeChannel) async {
     PremiumManager.runIfPremium(context, action: () async {
       if (activeChannel == null || kIsWeb) return;
@@ -657,6 +714,7 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
   void dispose() {
     _clockTimer?.cancel();
     _progressSyncTimer?.cancel();
+    _globalAnnouncementSub?.cancel();
     unawaited(_syncProgressToCloud());
     _zappingHideTimer?.cancel();
     _osdHideTimer?.cancel();
@@ -671,16 +729,22 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
     final activeChannel = _channels.isNotEmpty
         ? _channels[_selectedChannelIndex]
         : null;
-        
-    final bool isTvMode = _selectedSection != 'Ajustes';
+
+    final bool isTvMode = _selectedSection == 'Televisión';
 
     return PopScope(
       canPop: !isTvMode,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && isTvMode && _showOsd) {
-          setState(() {
-            _showOsd = false;
-          });
+        if (!didPop) {
+          if (isTvMode && _showOsd) {
+            setState(() {
+              _showOsd = false;
+            });
+          } else if (!isTvMode) {
+            setState(() {
+              _selectedSection = 'Televisión';
+            });
+          }
         }
       },
       child: FocusScope(
@@ -690,17 +754,17 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
           if (event is KeyDownEvent) {
             final key = event.logicalKey;
 
-            // Si estamos en el menú de Ajustes, ignoramos los controles de TV
+            // Si estamos en el menú de Ajustes o Catálogo VOD, ignoramos los controles directos de TV
             if (!isTvMode) return KeyEventResult.ignored;
-            
+
             // Si el sidebar está abierto, dejamos que él mismo se maneje
             if (_isSidebarExpanded) return KeyEventResult.ignored;
 
             // Mostrar el OSD o Menú Lateral (D-Pad Control)
             if (key == LogicalKeyboardKey.arrowLeft && !_showOsd) {
-               setState(() => _isSidebarExpanded = true);
-               FocusScope.of(context).requestFocus(_sidebarFocusNode);
-               return KeyEventResult.handled;
+              setState(() => _isSidebarExpanded = true);
+              FocusScope.of(context).requestFocus(_sidebarFocusNode);
+              return KeyEventResult.handled;
             }
 
             if (key == LogicalKeyboardKey.select ||
@@ -729,7 +793,7 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
               }
             }
 
-           if (key == LogicalKeyboardKey.mediaPlayPause) {
+            if (key == LogicalKeyboardKey.mediaPlayPause) {
               final activeCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
               if (activeCh?.contentType == 'live') {
                 PremiumManager.runIfPremium(context, action: () {
@@ -760,16 +824,31 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
                 ),
               ),
 
-              // 2. DIMMER DE FONDO (Solo oscurece si abres ajustes o el sidebar)
+              // 2. DIMMER DE FONDO (Oscurece si abres Ajustes, Cine & Series o el Sidebar)
               if (!isTvMode || _isSidebarExpanded)
                 Positioned.fill(
                   child: Container(
-                    color: Colors.black.withOpacity(0.55),
+                    color: Colors.black.withOpacity(_selectedSection == 'Cine IA' ? 0.85 : 0.55),
                   ),
                 ),
 
-              // 3. CAPA DE AJUSTES
-              if (!isTvMode)
+              // 3A. CAPA DE CATÁLOGO CINE & SERIES (VOD)
+              if (_selectedSection == 'Cine IA')
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOutCubic,
+                  left: _isSidebarExpanded ? 250 : 85,
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: FocusTraversalGroup(
+                    policy: ReadingOrderTraversalPolicy(),
+                    child: _buildVodCatalogContent(),
+                  ),
+                ),
+
+              // 3B. CAPA DE AJUSTES
+              if (_selectedSection == 'Ajustes')
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 300),
                   curve: Curves.easeOutCubic,
@@ -780,6 +859,72 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
                   child: FocusTraversalGroup(
                     policy: ReadingOrderTraversalPolicy(), // INYECCIÓN PARA SMART TV
                     child: _buildTvSettingsContent(),
+                  ),
+                ),
+
+              // 3C. BANNER DE ANUNCIO GLOBAL EN TIEMPO REAL
+              if (_activeGlobalAnnouncement.isNotEmpty)
+                Positioned(
+                  top: 18,
+                  left: _isSidebarExpanded ? 260 : 95,
+                  right: 24,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF1A103C), Color(0xFF0F172A)],
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFFFD600), width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.65),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.campaign_rounded, color: Color(0xFFFFD600), size: 30),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _activeGlobalAnnouncementTitle,
+                                style: const TextStyle(
+                                  color: Color(0xFFFFD600),
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 13,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _activeGlobalAnnouncement,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _lastDismissedAnnouncementId = _activeGlobalAnnouncement;
+                              _activeGlobalAnnouncement = '';
+                            });
+                          },
+                          icon: const Icon(Icons.close, color: Colors.white70),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
 
@@ -800,7 +945,7 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
                       focusNode: _zappingFocusNode,
                       onKeyEvent: (node, event) {
                         if (event is KeyDownEvent) {
-                          if (event.logicalKey == LogicalKeyboardKey.arrowUp || 
+                          if (event.logicalKey == LogicalKeyboardKey.arrowUp ||
                               event.logicalKey == LogicalKeyboardKey.arrowDown) {
                             setState(() => _isZappingOverlayVisible = false);
                             FocusScope.of(context).requestFocus(_tvFocusScope);
@@ -934,25 +1079,25 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
                       policy: WidgetOrderTraversalPolicy(),
                       child: Focus(
                         focusNode: _sidebarFocusNode,
-                          onKeyEvent: (node, event) {
-                            // MAGIA: El puente de escape. Si tocas la derecha en el menú, se cierra y vuelves a la TV.
-                            if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowRight) {
-                              setState(() => _isSidebarExpanded = false);
-                              FocusScope.of(context).requestFocus(_tvFocusScope);
-                              return KeyEventResult.handled;
+                        onKeyEvent: (node, event) {
+                          // MAGIA: El puente de escape. Si tocas la derecha en el menú, se cierra y vuelves a la TV.
+                          if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowRight) {
+                            setState(() => _isSidebarExpanded = false);
+                            FocusScope.of(context).requestFocus(_tvFocusScope);
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        onFocusChange: (hasFocus) {
+                          if (mounted) {
+                            setState(() => _isSidebarExpanded = hasFocus);
+                            // INYECCIÓN PARA SMART TV:
+                            // Si el menú recibe el foco, lo obligamos a bajar al primer botón.
+                            if (hasFocus && _sidebarFocusNode.hasPrimaryFocus) {
+                              _sidebarFocusNode.nextFocus();
                             }
-                            return KeyEventResult.ignored;
-                          },
-                          onFocusChange: (hasFocus) {
-                            if (mounted) {
-                              setState(() => _isSidebarExpanded = hasFocus);
-                              // INYECCIÓN PARA SMART TV: 
-                              // Si el menú recibe el foco, lo obligamos a bajar al primer botón.
-                              if (hasFocus && _sidebarFocusNode.hasPrimaryFocus) {
-                                _sidebarFocusNode.nextFocus();
-                              }
-                            }
-                          },
+                          }
+                        },
                         child: Container(
                           decoration: BoxDecoration(
                             color: Colors.black.withOpacity(0.65),
@@ -1001,8 +1146,8 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
                                       ),
                                 const SizedBox(height: 28),
                                 const Divider(color: Colors.white12, height: 16),
-                                
-                                // BOTONES DE NAVEGACIÓN SIMPLIFICADOS (Sin carruseles estorbosos)
+
+                                // BOTONES DE NAVEGACIÓN
                                 _buildSidebarItem(Icons.live_tv, 'Televisión', 'Televisión', onTapOverride: () {
                                   setState(() {
                                     _selectedSection = 'Televisión';
@@ -1011,7 +1156,18 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
                                   FocusScope.of(context).requestFocus(_tvFocusScope);
                                 }),
                                 _buildSidebarItem(Icons.search, 'Búsqueda IA', 'Búsqueda IA', onTapOverride: _startVoiceSearch),
-                                _buildSidebarItem(Icons.movie, 'Cine & Series', 'Cine IA', onTapOverride: _startVoiceSearch),
+                                _buildSidebarItem(Icons.movie, 'Cine & Series', 'Cine IA', onTapOverride: () {
+                                  setState(() {
+                                    _selectedSection = 'Cine IA';
+                                    _selectedVodTab = _movies.isNotEmpty || _series.isEmpty ? 'Películas' : 'Series';
+                                    _selectedVodCategory = 'Todos';
+                                    _isSidebarExpanded = false;
+                                  });
+                                }),
+                                _buildSidebarItem(Icons.closed_caption_rounded, 'Traductor CC', 'CC', onTapOverride: () {
+                                  setState(() => _isSidebarExpanded = false);
+                                  PlayerSettingsService.showLiveCcLanguageModal(context);
+                                }),
                                 _buildSidebarItem(Icons.settings, 'Ajustes', 'Ajustes', onTapOverride: () {
                                   setState(() {
                                     _selectedSection = 'Ajustes';
@@ -1060,6 +1216,270 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
                   onOpenEpg: () => _openTvEpgModal(activeChannel),
                 ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Construye el Catálogo Visual de Películas y Series (VOD)
+  Widget _buildVodCatalogContent() {
+    final List<ChannelModel> currentPool = _selectedVodTab == 'Películas'
+        ? _movies
+        : (_selectedVodTab == 'Series' ? _series : _liveTv);
+
+    final Set<String> categorySet = {'Todos'};
+    for (final item in currentPool) {
+      if (item.groupCategory.trim().isNotEmpty) {
+        categorySet.add(item.groupCategory.trim());
+      }
+    }
+    final List<String> categories = categorySet.toList();
+
+    final List<ChannelModel> filteredItems = _selectedVodCategory == 'Todos'
+        ? currentPool
+        : currentPool.where((c) => c.groupCategory.trim() == _selectedVodCategory).toList();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 28, 32, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.movie_filter_rounded, color: Color(0xFF00E5FF), size: 32),
+              const SizedBox(width: 12),
+              const Text(
+                'Catálogo Cine & Series VOD',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const Spacer(),
+              _buildVodTabButton('En Vivo (${_liveTv.length})', 'En Vivo'),
+              const SizedBox(width: 10),
+              _buildVodTabButton('Películas (${_movies.length})', 'Películas'),
+              const SizedBox(width: 10),
+              _buildVodTabButton('Series (${_series.length})', 'Series'),
+              const SizedBox(width: 14),
+              FocusableTvCard(
+                focusedScale: 1.06,
+                focusedBorderColor: const Color(0xFF00E5FF),
+                onTap: () => PlayerSettingsService.showLiveCcLanguageModal(context),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E293B),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.closed_caption, color: Color(0xFF00E5FF), size: 18),
+                      SizedBox(width: 6),
+                      Text('CC Idioma', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 40,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: categories.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final cat = categories[index];
+                final isSelected = _selectedVodCategory == cat;
+                return FocusableTvCard(
+                  focusedScale: 1.05,
+                  focusedBorderColor: const Color(0xFF00E5FF),
+                  onTap: () {
+                    setState(() => _selectedVodCategory = cat);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: isSelected ? const Color(0xFF00E5FF) : const Color(0xFF161F33),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Center(
+                      child: Text(
+                        cat,
+                        style: TextStyle(
+                          color: isSelected ? Colors.black : Colors.white70,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 20),
+          Expanded(
+            child: filteredItems.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.videocam_off_outlined, color: Colors.white38, size: 54),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No hay elementos en "$_selectedVodTab" dentro de tu lista activa.\nPuedes agregar o sincronizar tu lista VOD desde Ajustes > Gestor Multi-Lista M3U.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white60, fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  )
+                : GridView.builder(
+                    physics: const BouncingScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 5,
+                      mainAxisSpacing: 18,
+                      crossAxisSpacing: 18,
+                      childAspectRatio: 0.68,
+                    ),
+                    itemCount: filteredItems.length,
+                    itemBuilder: (context, index) {
+                      final item = filteredItems[index];
+                      return FocusableTvCard(
+                        focusedScale: 1.05,
+                        focusedBorderColor: const Color(0xFF00E5FF),
+                        onTap: () => _playContent(item),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF111827),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    if (item.logoUrl.isNotEmpty)
+                                      Image.network(
+                                        item.logoUrl,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Container(
+                                          color: const Color(0xFF161F33),
+                                          child: const Icon(Icons.movie_creation_outlined,
+                                              color: Color(0xFF00E5FF), size: 42),
+                                        ),
+                                      )
+                                    else
+                                      Container(
+                                        color: const Color(0xFF161F33),
+                                        child: const Icon(Icons.movie_creation_outlined,
+                                            color: Color(0xFF00E5FF), size: 42),
+                                      ),
+                                    Positioned(
+                                      top: 8,
+                                      right: 8,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black87,
+                                          borderRadius: BorderRadius.circular(6),
+                                          border: Border.all(color: const Color(0xFF00E5FF), width: 0.8),
+                                        ),
+                                        child: Text(
+                                          item.resolution,
+                                          style: const TextStyle(
+                                            color: Color(0xFF00E5FF),
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.all(10),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item.name,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      item.groupCategory,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white54,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVodTabButton(String label, String tabValue) {
+    final bool isSelected = _selectedVodTab == tabValue;
+    return FocusableTvCard(
+      focusedScale: 1.05,
+      focusedBorderColor: const Color(0xFF00E5FF),
+      onTap: () {
+        if (tabValue == 'En Vivo') {
+          setState(() {
+            _selectedSection = 'Televisión';
+          });
+        } else {
+          setState(() {
+            _selectedVodTab = tabValue;
+            _selectedVodCategory = 'Todos';
+          });
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF7B2CBF) : const Color(0xFF161F33),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF00E5FF) : Colors.white12,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.white70,
+            fontWeight: FontWeight.bold,
+            fontSize: 13,
           ),
         ),
       ),
@@ -1170,6 +1590,24 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
               crossAxisSpacing: 18,
               childAspectRatio: 2.35,
               children: [
+                if (rootUser?.isAdmin == true)
+                  _buildTvSettingsCard(
+                    icon: Icons.campaign_rounded,
+                    color: const Color(0xFFFFD600),
+                    title: 'Publicar Anuncio Global (En Vivo)',
+                    subtitle: 'Enviar comunicado instantáneo a todas las pantallas',
+                    onTap: _openGlobalAnnouncementPublisherModal,
+                  ),
+                _buildTvSettingsCard(
+                  icon: Icons.closed_caption_rounded,
+                  color: const Color(0xFF00E5FF),
+                  title: 'Subtítulos y Traducción CC en Vivo',
+                  subtitle: 'Modo actual: ${PlayerSettingsService.subtitleTrackNotifier.value}',
+                  onTap: () async {
+                    await PlayerSettingsService.showLiveCcLanguageModal(context);
+                    if (mounted) setState(() {});
+                  },
+                ),
                 _buildTvSettingsCard(
                   icon: Icons.confirmation_number_outlined,
                   color: const Color(0xFF00E676),
@@ -1358,6 +1796,196 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Modal de Administración para Publicar o Desactivar Anuncios Globales en Tiempo Real
+  void _openGlobalAnnouncementPublisherModal() {
+    final titleCtrl = TextEditingController(
+      text: _activeGlobalAnnouncementTitle.isNotEmpty
+          ? _activeGlobalAnnouncementTitle
+          : '📢 COMUNICADO OFICIAL AMEYCAR TV',
+    );
+    final msgCtrl = TextEditingController(text: _activeGlobalAnnouncement);
+    bool isPublishing = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) => Dialog(
+          backgroundColor: const Color(0xFF0E1320),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFFFFD600), width: 1.5),
+          ),
+          child: Container(
+            width: 560,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.campaign_rounded, color: Color(0xFFFFD600), size: 30),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Publicar Anuncio Global en Vivo',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 19,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: titleCtrl,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  decoration: InputDecoration(
+                    labelText: 'Título del Anuncio',
+                    labelStyle: const TextStyle(color: Color(0xFFFFD600)),
+                    filled: true,
+                    fillColor: Colors.black26,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: msgCtrl,
+                  maxLines: 3,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Mensaje para todos los usuarios conectados',
+                    hintText: 'Ej: Nuevas películas 4K agregadas al catálogo esta noche...',
+                    hintStyle: const TextStyle(color: Colors.white30),
+                    labelStyle: const TextStyle(color: Colors.white70),
+                    filled: true,
+                    fillColor: Colors.black26,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.redAccent,
+                          side: const BorderSide(color: Colors.redAccent),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: const Icon(Icons.visibility_off),
+                        label: const Text('QUITAR ANUNCIO ACTIVO'),
+                        onPressed: isPublishing
+                            ? null
+                            : () async {
+                                setModalState(() => isPublishing = true);
+                                try {
+                                  if (AuthService.isFirebaseAvailable) {
+                                    await FirebaseFirestore.instance
+                                        .collection('app_config')
+                                        .doc('global_announcement')
+                                        .set({
+                                      'active': false,
+                                      'isActive': false,
+                                      'message': '',
+                                      'updatedAt': FieldValue.serverTimestamp(),
+                                    }, SetOptions(merge: true));
+                                  }
+                                } catch (_) {}
+                                if (mounted) {
+                                  setState(() => _activeGlobalAnnouncement = '');
+                                }
+                                setModalState(() => isPublishing = false);
+                                if (ctx.mounted) Navigator.pop(ctx);
+                              },
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFFD600),
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: const Icon(Icons.send_rounded),
+                        label: Text(
+                          isPublishing ? 'PUBLICANDO...' : 'PUBLICAR AHORA',
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        onPressed: isPublishing
+                            ? null
+                            : () async {
+                                final text = msgCtrl.text.trim();
+                                final title = titleCtrl.text.trim().isEmpty
+                                    ? '📢 ANUNCIO OFICIAL AMEYCAR TV'
+                                    : titleCtrl.text.trim();
+                                if (text.isEmpty) return;
+
+                                setModalState(() => isPublishing = true);
+                                final nowId = 'ann_${DateTime.now().millisecondsSinceEpoch}';
+                                final payload = {
+                                  'id': nowId,
+                                  'title': title,
+                                  'message': text,
+                                  'text': text,
+                                  'body': text,
+                                  'active': true,
+                                  'isActive': true,
+                                  'author': AuthService.currentUser?.username ?? 'Admin',
+                                  'timestamp': DateTime.now().millisecondsSinceEpoch,
+                                  'createdAt': FieldValue.serverTimestamp(),
+                                };
+
+                                try {
+                                  if (AuthService.isFirebaseAvailable) {
+                                    await FirebaseFirestore.instance
+                                        .collection('app_config')
+                                        .doc('global_announcement')
+                                        .set(payload, SetOptions(merge: true));
+                                    await FirebaseFirestore.instance
+                                        .collection('global_announcements')
+                                        .doc(nowId)
+                                        .set(payload);
+                                  }
+                                } catch (e) {
+                                  debugPrint('Aviso publicando anuncio en Firestore: $e');
+                                }
+
+                                if (mounted) {
+                                  setState(() {
+                                    _lastDismissedAnnouncementId = '';
+                                    _activeGlobalAnnouncementTitle = title;
+                                    _activeGlobalAnnouncement = text;
+                                  });
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('📢 ¡Anuncio Global publicado en vivo para todos los dispositivos!'),
+                                      backgroundColor: Color(0xFF00C853),
+                                    ),
+                                  );
+                                }
+                                setModalState(() => isPublishing = false);
+                                if (ctx.mounted) Navigator.pop(ctx);
+                              },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1874,6 +2502,7 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
                               final file = File(item.filePath);
                               if (file.existsSync()) {
                                 setState(() {
+                                  _selectedSection = 'Televisión';
                                   _isPlayingDvrRecording = true;
                                   _isBehindLive = true;
                                   _activeDvrTitle =
@@ -2004,6 +2633,7 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
                 onTap: () async {
                   final prefs = await SharedPreferences.getInstance();
                   await prefs.setString('color_blind_mode', m);
+                  await PlayerSettingsService.setColorFilter(m);
                   setState(() => _selectedColorBlindMode = m);
                   if (ctx.mounted) Navigator.pop(ctx);
                 },
@@ -2523,7 +3153,7 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF131A29),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Idioma de la Interfaz',
+        title: const Text('Idioma de la Interfaz y Audio/CC',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         content: SizedBox(
           width: 380,
@@ -2540,6 +3170,23 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
                 onTap: () async {
                   final prefs = await SharedPreferences.getInstance();
                   await prefs.setString('app_lang', l);
+                  await prefs.setString('selected_language', l);
+                  if (l.contains('English')) {
+                    await PlayerSettingsService.setAudioTrack('Inglés');
+                    if (PlayerSettingsService.subtitleTrackNotifier.value != 'Desactivado') {
+                      await PlayerSettingsService.setSubtitleTrack('Inglés');
+                    }
+                  } else if (l.contains('Português')) {
+                    await PlayerSettingsService.setAudioTrack('Portugués');
+                    if (PlayerSettingsService.subtitleTrackNotifier.value != 'Desactivado') {
+                      await PlayerSettingsService.setSubtitleTrack('Portugués');
+                    }
+                  } else {
+                    await PlayerSettingsService.setAudioTrack('Español (Predeterminado)');
+                    if (PlayerSettingsService.subtitleTrackNotifier.value != 'Desactivado') {
+                      await PlayerSettingsService.setSubtitleTrack('Español');
+                    }
+                  }
                   setState(() => _selectedLanguage = l);
                   if (ctx.mounted) Navigator.pop(ctx);
                 },
@@ -2572,7 +3219,7 @@ Future<void> _seekRelativeSeconds(int deltaSeconds) async {
         },
         onFocusChange: (hasFocus) {
           if (hasFocus) {
-             Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 200));
+            Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 200));
           }
         },
         child: Builder(builder: (context) {
