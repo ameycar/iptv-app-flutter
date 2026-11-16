@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -37,6 +38,7 @@ class AuthResponse {
 class AuthService {
   static const String _usersCollection = 'users';
   static const String _pinsCollection = 'activation_pins';
+  static const String _trialsCollection = 'claimed_trial_devices';
   static const String _kLocalUsersDbKey = 'local_mock_users_db_v2';
   static const String _kActivationPinsKey = 'ameycar_activation_pins_db_v1';
   static const String _kSessionUserKey = 'current_logged_user_id';
@@ -128,7 +130,6 @@ class AuthService {
     String base = normalizeUppercaseUsername(rawBase);
     if (base.isEmpty) base = 'USUARIO';
 
-    // Si el usuario base termina en números y queremos incrementar limpiamente
     String candidate = base;
     int counter = 0;
 
@@ -170,8 +171,22 @@ class AuthService {
     unawaited(DvrRecordingService.reloadForActiveProfile());
   }
 
+  /// Genera un Hardware ID determinista basado en la huella física de la placa del equipo (Android / Smart TV)
+  /// para que NO cambie aunque desinstalen y vuelvan a instalar la aplicación.
   static Future<String> getDeviceHardwareId() async {
     final prefs = await SharedPreferences.getInstance();
+
+    if (!kIsWeb) {
+      try {
+        final String rawFingerprint = await _extractNativeHardwareFingerprint();
+        if (rawFingerprint.isNotEmpty) {
+          final deterministicId = 'AMEYCAR-TV-${_hashFingerprintToHex(rawFingerprint)}';
+          await prefs.setString('device_unique_hw_id', deterministicId);
+          return deterministicId;
+        }
+      } catch (_) {}
+    }
+
     String? hwId = prefs.getString('device_unique_hw_id');
     if (hwId == null || hwId.isEmpty) {
       final random = Random.secure();
@@ -181,6 +196,68 @@ class AuthService {
       await prefs.setString('device_unique_hw_id', hwId);
     }
     return hwId;
+  }
+
+  /// Extrae identificadores físicos reales de la placa en Android / Smart TV / Linux sin depender de SharedPreferences
+  static Future<String> _extractNativeHardwareFingerprint() async {
+    final List<String> parts = [];
+
+    if (Platform.isAndroid) {
+      final props = [
+        'ro.boot.serialno',
+        'ro.serialno',
+        'ro.product.board',
+        'ro.board.platform',
+        'ro.hardware',
+        'ro.product.model',
+        'ro.product.brand',
+        'ro.product.device',
+        'ro.build.fingerprint',
+      ];
+      for (final prop in props) {
+        try {
+          final res = await Process.run('getprop', [prop]);
+          final val = res.stdout.toString().trim();
+          if (val.isNotEmpty && val.toLowerCase() != 'unknown') {
+            parts.add('$prop:$val');
+          }
+        } catch (_) {}
+      }
+      try {
+        final cpuFile = File('/proc/cpuinfo');
+        if (cpuFile.existsSync()) {
+          final content = cpuFile.readAsStringSync();
+          for (final line in content.split('\n')) {
+            if (line.toLowerCase().contains('serial') || line.toLowerCase().contains('hardware')) {
+              parts.add(line.trim());
+            }
+          }
+        }
+      } catch (_) {}
+    } else {
+      parts.add(Platform.operatingSystem);
+      parts.add(Platform.localHostname);
+      parts.add(Platform.numberOfProcessors.toString());
+    }
+
+    return parts.join('|').trim();
+  }
+
+  /// Convierte la huella física del dispositivo en un código hexadecimal fijo de 16 caracteres
+  static String _hashFingerprintToHex(String input) {
+    int hash1 = 0x811c9dc5;
+    int hash2 = 0xcbf29ce4;
+    final units = utf8.encode(input);
+    for (var i = 0; i < units.length; i++) {
+      final b = units[i];
+      hash1 ^= b;
+      hash1 = (hash1 * 0x01000193) & 0xFFFFFFFF;
+      hash2 ^= (b + i);
+      hash2 = (hash2 * 0x1000193B) & 0xFFFFFFFF;
+    }
+    final hex1 = hash1.toRadixString(16).padLeft(8, '0').toUpperCase();
+    final hex2 = hash2.toRadixString(16).padLeft(8, '0').toUpperCase();
+    return '$hex1$hex2';
   }
 
   static Future<bool> validateDeviceScreenLimit(String familyId, String deviceType) async {
@@ -275,7 +352,6 @@ class AuthService {
       final hardwareId = await getDeviceHardwareId();
 
       if (isFirebaseAvailable) {
-        // Buscamos primero en MAYÚSCULAS y luego en minúsculas para compatibilidad total
         var snapshot = await FirebaseFirestore.instance
             .collection(_usersCollection)
             .where('username', isEqualTo: cleanUpper)
@@ -304,7 +380,6 @@ class AuthService {
         final doc = snapshot.docs.first;
         var user = UserModel.fromMap(doc.id, doc.data());
 
-        // Si el usuario estaba en minúsculas en la BD, lo normalizamos a MAYÚSCULAS silenciosamente
         if (user.username != user.username.toUpperCase() && !user.isAdmin) {
           final upperName = user.username.toUpperCase();
           await FirebaseFirestore.instance.collection(_usersCollection).doc(user.id).update({
@@ -1321,7 +1396,7 @@ class AuthService {
   }
 
   // ============================================================
-  // REGISTRO CORPORATIVO EN MAYÚSCULAS CON ANTI-ABUSO (PPEREZ, PPEREZ1...)
+  // REGISTRO CORPORATIVO EN MAYÚSCULAS CON CANDADO ANTI-REINSTALACIÓN (1 SOLA VEZ POR EQUIPO)
   // ============================================================
   static Future<AuthResponse> registerUser(String firstName, String lastName, String password) async {
     try {
@@ -1336,30 +1411,64 @@ class AuthService {
         );
       }
 
-      // 1. Generamos el usuario base en MAYÚSCULAS (Ej: P + PEREZ = PPEREZ) y auto-incrementamos si ya existe
-      final String baseUsername = '${cleanFirst[0]}$cleanLast';
-      final String finalUsername = await generateUniqueUppercaseUsername(baseUsername);
-
-      // 2. Obtenemos el Hardware ID para el anti-abuso de prueba gratuita
+      // 1. Obtenemos el Hardware ID físico del equipo
       final hwId = await getDeviceHardwareId();
-      bool hasUsedTrial = false;
+      final prefs = await SharedPreferences.getInstance();
+      bool hasUsedTrial = prefs.getBool('trial_claimed_$hwId') ?? false;
+      String existingUsernameOnDevice = prefs.getString('trial_username_$hwId') ?? '';
 
+      // 2. Verificamos en Firestore (tanto en la bóveda permanente claimed_trial_devices como en users)
       if (isFirebaseAvailable) {
-        final hwCheck = await FirebaseFirestore.instance
-            .collection(_usersCollection)
-            .where('registeredHardwareId', isEqualTo: hwId)
-            .limit(1)
-            .get();
-        if (hwCheck.docs.isNotEmpty) hasUsedTrial = true;
-      } else {
-        final localUsers = await _getLocalUsers();
-        if (localUsers.any((u) => u.registeredHardwareId == hwId)) hasUsedTrial = true;
+        try {
+          final trialDoc = await FirebaseFirestore.instance
+              .collection(_trialsCollection)
+              .doc(hwId)
+              .get();
+          if (trialDoc.exists) {
+            hasUsedTrial = true;
+            existingUsernameOnDevice = (trialDoc.data()?['username'] ?? '').toString();
+          }
+
+          if (!hasUsedTrial) {
+            final hwCheck = await FirebaseFirestore.instance
+                .collection(_usersCollection)
+                .where('registeredHardwareId', isEqualTo: hwId)
+                .limit(1)
+                .get();
+            if (hwCheck.docs.isNotEmpty) {
+              hasUsedTrial = true;
+              existingUsernameOnDevice = (hwCheck.docs.first.data()['username'] ?? '').toString();
+            }
+          }
+        } catch (_) {}
       }
 
-      // 3. Veredicto: 3 días VIP si es dispositivo nuevo, o 30 días estándar si ya usó el trial antes
-      final int grantedDays = hasUsedTrial ? 30 : 3;
-      final bool grantedVip = !hasUsedTrial;
-      final expirationDate = DateTime.now().add(Duration(days: grantedDays));
+      // 3. Verificamos también en la lista local/RTDB
+      if (!hasUsedTrial) {
+        final localUsers = await _getLocalUsers();
+        final match = localUsers.where((u) => u.registeredHardwareId == hwId);
+        if (match.isNotEmpty) {
+          hasUsedTrial = true;
+          existingUsernameOnDevice = match.first.username;
+        }
+      }
+
+      // 4. CANDADO ESTRICTO: Si este equipo ya usó su prueba gratis, NO le creamos otra cuenta
+      if (hasUsedTrial) {
+        final userHint = existingUsernameOnDevice.isNotEmpty
+            ? ' (Usuario registrado: $existingUsernameOnDevice)'
+            : '';
+        return AuthResponse(
+          status: AuthStatus.subscriptionExpired,
+          message:
+              '⛔ Este dispositivo ya utilizó su prueba gratuita única de 3 días$userHint. Inicia sesión con tu cuenta o contáctanos para adquirir tu PIN VIP.',
+        );
+      }
+
+      // 5. Es un dispositivo 100% virgen: generamos su usuario en MAYÚSCULAS y otorgamos los 3 días VIP únicos
+      final String baseUsername = '${cleanFirst[0]}$cleanLast';
+      final String finalUsername = await generateUniqueUppercaseUsername(baseUsername);
+      final expirationDate = DateTime.now().add(const Duration(days: 3));
 
       final newUser = UserModel(
         id: isFirebaseAvailable
@@ -1369,7 +1478,7 @@ class AuthService {
         password: cleanPassword,
         role: 'user',
         isActive: true,
-        isVip: grantedVip,
+        isVip: true,
         expirationDate: expirationDate,
         registeredHardwareId: hwId,
         deviceName: '${firstName.trim().toUpperCase()} ${lastName.trim().toUpperCase()}',
@@ -1380,12 +1489,26 @@ class AuthService {
 
       await createClientUser(newUser);
 
+      // 6. Sellamos el Hardware ID en la bóveda permanente de Firestore y en local para que jamás pueda volver a pedir prueba
+      await prefs.setBool('trial_claimed_$hwId', true);
+      await prefs.setString('trial_username_$hwId', finalUsername);
+
+      if (isFirebaseAvailable) {
+        try {
+          await FirebaseFirestore.instance.collection(_trialsCollection).doc(hwId).set({
+            'hardwareId': hwId,
+            'userId': newUser.id,
+            'username': finalUsername,
+            'deviceName': newUser.deviceName,
+            'claimedAt': FieldValue.serverTimestamp(),
+          });
+        } catch (_) {}
+      }
+
       return AuthResponse(
         status: AuthStatus.success,
         user: newUser,
-        message: hasUsedTrial
-            ? 'Cuenta Estándar creada. Tu usuario es: $finalUsername'
-            : '¡Felicidades! Tu usuario es: $finalUsername. Tienes 3 días VIP de regalo.',
+        message: '¡Felicidades! Tu usuario es: $finalUsername. Tienes 3 días VIP de regalo.',
       );
     } catch (e) {
       return AuthResponse(status: AuthStatus.error, message: 'Error creando cuenta: $e');

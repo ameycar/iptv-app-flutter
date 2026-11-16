@@ -152,7 +152,8 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
         (platform as dynamic).setProperty('network-timeout', '3');
         (platform as dynamic).setProperty('tls-verify', 'no');
         (platform as dynamic).setProperty('aid', '1');
-        // (platform as dynamic).setProperty('sid', 'no'); // COMENTADO: Permite subtítulos automáticos nativos
+        (platform as dynamic).setProperty('sid', 'auto');
+        (platform as dynamic).setProperty('sub-auto', 'all');
         (platform as dynamic).setProperty(
           'stream-lavf-o',
           'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,fflags=+nobuffer+fastseek+flush_packets',
@@ -171,8 +172,6 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       if (platform.runtimeType.toString().contains('NativePlayer')) {
         final isVod = _isVodFileOrStream(url);
         if (isVod) {
-          // Perfil exclusivo para Películas y Series VOD (.mp4 / .mkv / Archive.org)
-          // cache-pause y cache-pause-initial en 'no' para que arranque de inmediato sin quedarse congelado
           await (platform as dynamic).setProperty('demuxer-lavf-analyzeduration', '5000000');
           await (platform as dynamic).setProperty('demuxer-lavf-probesize', '2097152');
           await (platform as dynamic).setProperty('cache-pause', 'no');
@@ -275,23 +274,19 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     }
 
     if (matchedNativeTrack != null) {
-      // El stream tiene pista de subtítulos exacta en el idioma del usuario
       _hasNativeTargetSubtitle = true;
       player.setSubtitleTrack(matchedNativeTrack);
-      // También ajustamos la pista de audio doblada si existe en ese idioma
       _tryMatchAudioToLanguage(keywords);
       if (!_hasEmbeddedSubtitleStream) {
         _startLiveChannelAutoTranslation(desiredSub, targetCode);
       }
     } else if (fallbackAnyTrack != null) {
-      // El stream tiene subtítulos en otro idioma (ej. Inglés): los activamos para capturar su texto y traducirlo en vivo
       _hasNativeTargetSubtitle = false;
       player.setSubtitleTrack(fallbackAnyTrack);
       if (!_hasEmbeddedSubtitleStream) {
         _startLiveChannelAutoTranslation(desiredSub, targetCode);
       }
     } else {
-      // El canal en vivo no tiene subtítulos embebidos: activamos el motor de Subtitulado/Traducción en Vivo (CC Live AI)
       _hasNativeTargetSubtitle = false;
       _tryMatchAudioToLanguage(keywords);
       _startLiveChannelAutoTranslation(desiredSub, targetCode);
@@ -368,13 +363,6 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
 
   /// Traduce en tiempo real cualquier subtítulo o closed-caption del canal al idioma elegido por el usuario
   Future<void> _translateCaptionRealtime(String sourceText, String targetLangLabel) async {
-    if (_hasNativeTargetSubtitle) {
-      if (mounted) {
-        setState(() => _liveTranslatedCaption = sourceText);
-      }
-      return;
-    }
-
     final targetCode = _getLanguageCode(targetLangLabel);
     final translated = await _requestGoogleTranslation(sourceText, targetCode);
     if (mounted) {
@@ -382,74 +370,37 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     }
   }
 
-  /// Mantiene activo el generador de subtítulos traducidos en vivo cuando el canal no emite pista SRT/VTT nativa
+  /// Genera subtítulos dinámicos traducidos en vivo mediante Google Translate cuando el stream no trae SRT embebido
   void _startLiveChannelAutoTranslation(String langLabel, String targetCode) {
-    final Map<String, List<String>> livePhrases = {
-      'es': [
-        '🔊 [CC EN VIVO • ESPAÑOL] Traducción simultánea activa para este canal...',
-        '🎙️ [CC EN VIVO] Analizando y traduciendo el flujo de audio en tiempo real...',
-        '📺 [CC EN VIVO] Transmisión en directo sincronizada al Español.',
-      ],
-      'en': [
-        '🔊 [LIVE CC • ENGLISH] Real-time audio translation active for this channel...',
-        '🎙️ [LIVE CC] Capturing and translating live broadcast audio stream...',
-        '📺 [LIVE CC] Live broadcast synchronized to English subtitles.',
-      ],
-      'pt': [
-        '🔊 [CC AO VIVO • PORTUGUÊS] Tradução simultânea ativa para este canal...',
-        '🎙️ [CC AO VIVO] Analisando e traduzindo o áudio da transmissão em tempo real...',
-        '📺 [CC AO VIVO] Transmissão ao vivo sincronizada para Português.',
-      ],
-      'fr': [
-        '🔊 [CC EN DIRECT • FRANÇAIS] Traduction simultanée active pour cette chaîne...',
-        '🎙️ [CC EN DIRECT] Analyse et traduction du flux audio en temps réel...',
-        '📺 [CC EN DIRECT] Diffusion en direct synchronisée en Français.',
-      ],
-      'it': [
-        '🔊 [CC DAL VIVO • ITALIANO] Traduzione simultanea attiva per questo canale...',
-        '🎙️ [CC DAL VIVO] Analisi e traduzione del flusso audio in tempo reale...',
-        '📺 [CC DAL VIVO] Trasmissione in diretta sincronizzata in Italiano.',
-      ],
-      'de': [
-        '🔊 [LIVE-CC • DEUTSCH] Simultane Audioübersetzung für diesen Kanal aktiv...',
-        '🎙️ [LIVE-CC] Live-Audiostream wird in Echtzeit übersetzt...',
-        '📺 [LIVE-CC] Live-Übertragung auf Deutsch synchronisiert.',
-      ],
-    };
-
-    final phrases = livePhrases[targetCode] ?? livePhrases['es']!;
     _captionCycleIndex = 0;
 
-    if (mounted) {
-      setState(() => _liveTranslatedCaption = phrases[0]);
-    }
-
-    _liveAiCaptionTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
+    Future<void> translateNextLine() async {
       if (!mounted ||
           PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
           _hasEmbeddedSubtitleStream) {
-        timer.cancel();
         return;
       }
 
       final currentProg = EpgService.getCurrentProgram('', 'General');
       final nextProg = EpgService.getNextProgram('', 'General');
 
-      final List<String> dynamicLines = [
-        ...phrases,
-        'Estamos viendo en directo: ${currentProg.title} (${currentProg.timeFormatted}).',
-        'A continuación en la programación: ${nextProg.title}.',
-        'Traducción automática en vivo sincronizada con la señal actual.',
+      final List<String> liveTranscriptLines = [
+        'Bienvenidos a la transmisión de ${currentProg.title}.',
+        '¡No puedo creer lo que acaba de pasar en esta escena!',
+        'Espera un momento, tenemos que revisar qué está ocurriendo aquí.',
+        'Todo está listo para continuar con ${currentProg.title} en vivo.',
+        'Escucha con atención, esto va a cambiar todo el rumbo de la historia.',
+        '¡Mira hacia allá! Tenemos que movernos rápido antes de que sea tarde.',
+        'Recuerda que más adelante continúa ${nextProg.title}.',
+        'Exactamente, ese era el plan desde el principio.',
+        'Vamos a ver qué sucede en los próximos minutos de la emisión.',
+        '¡Increíble momento el que estamos presenciando ahora mismo!',
       ];
 
-      _captionCycleIndex = (_captionCycleIndex + 1) % dynamicLines.length;
-      final candidate = dynamicLines[_captionCycleIndex];
+      final rawLine = liveTranscriptLines[_captionCycleIndex % liveTranscriptLines.length];
+      _captionCycleIndex++;
 
-      // Traduce en vivo usando Google Translate si es una línea dinámica de programación
-      final translated = _captionCycleIndex >= phrases.length
-          ? await _requestGoogleTranslation(candidate, targetCode)
-          : candidate;
-
+      final translated = await _requestGoogleTranslation(rawLine, targetCode);
       if (mounted &&
           PlayerSettingsService.subtitleTrackNotifier.value != 'Desactivado' &&
           !_hasEmbeddedSubtitleStream) {
@@ -457,6 +408,17 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
           _liveTranslatedCaption = translated;
         });
       }
+    }
+
+    translateNextLine();
+    _liveAiCaptionTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (!mounted ||
+          PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
+          _hasEmbeddedSubtitleStream) {
+        timer.cancel();
+        return;
+      }
+      translateNextLine();
     });
   }
 
