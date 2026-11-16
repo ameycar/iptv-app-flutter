@@ -5,13 +5,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'auth_service.dart';
 
 class PlayerSettingsService {
-  static final ValueNotifier bufferSizeNotifier = ValueNotifier(10.0);
-  static final ValueNotifier eqModeNotifier = ValueNotifier('Plano');
-  static final ValueNotifier audioTrackNotifier = ValueNotifier('Español (Predeterminado)');
+  static final ValueNotifier<double> bufferSizeNotifier = ValueNotifier<double>(10.0);
+  static final ValueNotifier<String> eqModeNotifier = ValueNotifier<String>('Plano');
+  static final ValueNotifier<String> audioTrackNotifier = ValueNotifier<String>('Español (Predeterminado)');
   
   // --- NUEVAS VARIABLES DE INCLUSIÓN ---
-  static final ValueNotifier subtitleTrackNotifier = ValueNotifier('Desactivado');
-  static final ValueNotifier colorFilterNotifier = ValueNotifier('Normal');
+  static final ValueNotifier<String> subtitleTrackNotifier = ValueNotifier<String>('Desactivado');
+  static final ValueNotifier<String> colorFilterNotifier = ValueNotifier<String>('Normal');
 
   // Lista oficial de idiomas soportados para Subtítulos y Traducción en Vivo (CC)
   static const supportedCcLanguages = [
@@ -27,7 +27,7 @@ class PlayerSettingsService {
   // Obtiene el perfil específico de la familia (o el usuario principal)
   static String get _profileId => AuthService.currentActiveProfile?.id ?? AuthService.currentUser?.id ?? 'default';
 
-  static Future initialize() async {
+  static Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
     final pId = _profileId;
     bool loadedFromCloud = false;
@@ -40,7 +40,7 @@ class PlayerSettingsService {
         if (doc.exists) {
           final data = doc.data();
           if (data != null && data['player_settings_$pId'] != null) {
-            final settings = Map.from(data['player_settings_$pId'] as Map);
+            final settings = Map<String, dynamic>.from(data['player_settings_$pId'] as Map);
             bufferSizeNotifier.value = ((settings['buffer_size'] ?? 10.0) as num).toDouble();
             eqModeNotifier.value = (settings['eq_mode'] ?? 'Plano').toString();
             audioTrackNotifier.value = (settings['audio_track'] ?? 'Español (Predeterminado)').toString();
@@ -50,11 +50,11 @@ class PlayerSettingsService {
             colorFilterNotifier.value = (settings['color_filter'] ?? 'Normal').toString();
 
             // Guardar copia local
-            await prefs.setDouble('adv_buffer_size_$pId', bufferSizeNotifier.value as double);
-            await prefs.setString('adv_eq_mode_$pId', eqModeNotifier.value.toString());
-            await prefs.setString('adv_audio_track_$pId', audioTrackNotifier.value.toString());
-            await prefs.setString('adv_subtitle_track_$pId', subtitleTrackNotifier.value.toString());
-            await prefs.setString('adv_color_filter_$pId', colorFilterNotifier.value.toString());
+            await prefs.setDouble('adv_buffer_size_$pId', bufferSizeNotifier.value);
+            await prefs.setString('adv_eq_mode_$pId', eqModeNotifier.value);
+            await prefs.setString('adv_audio_track_$pId', audioTrackNotifier.value);
+            await prefs.setString('adv_subtitle_track_$pId', subtitleTrackNotifier.value);
+            await prefs.setString('adv_color_filter_$pId', colorFilterNotifier.value);
             loadedFromCloud = true;
           }
         }
@@ -71,7 +71,7 @@ class PlayerSettingsService {
     }
   }
 
-  static Future _syncToCloud() async {
+  static Future<void> _syncToCloud() async {
     final user = AuthService.currentUser;
     if (user == null || !AuthService.isFirebaseAvailable) return;
     try {
@@ -87,21 +87,21 @@ class PlayerSettingsService {
     } catch (_) {}
   }
 
-  static Future setBufferSize(double val) async {
+  static Future<void> setBufferSize(double val) async {
     bufferSizeNotifier.value = val;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('adv_buffer_size_$_profileId', val);
     _syncToCloud();
   }
 
-  static Future setEqMode(String mode) async {
+  static Future<void> setEqMode(String mode) async {
     eqModeNotifier.value = mode;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('adv_eq_mode_$_profileId', mode);
     _syncToCloud();
   }
 
-  static Future setAudioTrack(String track) async {
+  static Future<void> setAudioTrack(String track) async {
     audioTrackNotifier.value = track;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('adv_audio_track_$_profileId', track);
@@ -109,14 +109,14 @@ class PlayerSettingsService {
   }
 
   // --- NUEVOS SETTERS DE INCLUSIÓN ---
-  static Future setSubtitleTrack(String track) async {
+  static Future<void> setSubtitleTrack(String track) async {
     subtitleTrackNotifier.value = track;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('adv_subtitle_track_$_profileId', track);
     _syncToCloud();
   }
 
-  static Future setColorFilter(String filter) async {
+  static Future<void> setColorFilter(String filter) async {
     colorFilterNotifier.value = filter;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('adv_color_filter_$_profileId', filter);
@@ -124,15 +124,14 @@ class PlayerSettingsService {
   }
 
   /// Ventana Emergente (Modal) para el botón CC: Permite elegir idioma de subtítulos y traducción en vivo
-  static Future showLiveCcLanguageModal(BuildContext context) async {
+  static Future<void> showLiveCcLanguageModal(BuildContext context) async {
     await showDialog(
       context: context,
       barrierColor: Colors.black87,
       builder: (ctx) {
-        return ValueListenableBuilder(
+        return ValueListenableBuilder<String>(
           valueListenable: subtitleTrackNotifier,
-          builder: (context, currentLangObj, _) {
-            final currentLang = currentLangObj.toString();
+          builder: (context, currentLang, _) {
             return Dialog(
               backgroundColor: const Color(0xFF10141D),
               shape: RoundedRectangleBorder(
