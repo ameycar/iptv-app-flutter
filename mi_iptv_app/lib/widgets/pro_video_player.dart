@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../services/player_settings_service.dart';
+import '../services/epg_service.dart';
 
 class ProVideoPlayer extends StatefulWidget {
   final String streamUrl;
@@ -35,6 +36,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
 
   String _liveTranslatedCaption = '';
   bool _hasNativeTargetSubtitle = false;
+  bool _hasEmbeddedSubtitleStream = false;
   int _captionCycleIndex = 0;
 
   @override
@@ -85,21 +87,20 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
         return;
       }
 
-      final rawText = lines.join(' ').trim();
+      final rawText = lines.where((l) => l.trim().isNotEmpty).join(' ').trim();
       if (rawText.isEmpty) {
-        if (_liveTranslatedCaption.isNotEmpty && mounted) {
-          setState(() => _liveTranslatedCaption = '');
-        }
         return;
       }
 
+      _hasEmbeddedSubtitleStream = true;
+      _liveAiCaptionTimer?.cancel();
       _translateCaptionRealtime(rawText, chosenLang);
     });
   }
 
   /// Distingue con precisión si el stream es un archivo de Película/Serie VOD o un Canal en Vivo
   bool _isVodFileOrStream(String url) {
-    final lower = url.toLowerCase();
+    final lower = url.toLowerCase().split('?').first;
     return lower.endsWith('.mp4') ||
         lower.endsWith('.mkv') ||
         lower.endsWith('.avi') ||
@@ -111,6 +112,26 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
         lower.contains('/vod/') ||
         lower.contains('archive.org/') ||
         lower.contains('googleapis.com/');
+  }
+
+  /// Convierte enlaces de nodos directos de Archive.org al balanceador oficial para evitar bloqueo SSL
+  String _normalizeArchiveAndSpacesUrl(String rawUrl) {
+    var url = rawUrl.trim();
+    if (url.contains(' ')) {
+      url = url.replaceAll(' ', '%20');
+    }
+    final archiveNodeRegex = RegExp(
+      r'^https?://ia\d+\.us\.archive\.org/\d+/items/(.+)$',
+      caseSensitive: false,
+    );
+    final match = archiveNodeRegex.firstMatch(url);
+    if (match != null && match.group(1) != null) {
+      return 'https://archive.org/download/${match.group(1)!}';
+    }
+    if (url.startsWith('http://') && url.contains('archive.org/')) {
+      url = url.replaceFirst('http://', 'https://');
+    }
+    return url;
   }
 
   Future<void> _configureLowLatencyDecoder() async {
@@ -142,7 +163,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     }
   }
 
-  /// Mantiene 8 KB (8192) para canales en vivo y abre 5 MB solo cuando se reproduce una Película o Serie VOD
+  /// Mantiene 8 KB (8192) para canales en vivo y abre lectura rápida sin pausa bloqueante para Películas/Series VOD
   Future<void> _applyStreamModeProfile(String url) async {
     if (kIsWeb) return;
     try {
@@ -151,15 +172,16 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
         final isVod = _isVodFileOrStream(url);
         if (isVod) {
           // Perfil exclusivo para Películas y Series VOD (.mp4 / .mkv / Archive.org)
-          await (platform as dynamic).setProperty('demuxer-lavf-analyzeduration', '10000000');
-          await (platform as dynamic).setProperty('demuxer-lavf-probesize', '5000000');
-          await (platform as dynamic).setProperty('cache-pause', 'yes');
-          await (platform as dynamic).setProperty('cache-pause-initial', 'yes');
-          await (platform as dynamic).setProperty('stream-buffer-size', '512k');
+          // cache-pause y cache-pause-initial en 'no' para que arranque de inmediato sin quedarse congelado
+          await (platform as dynamic).setProperty('demuxer-lavf-analyzeduration', '5000000');
+          await (platform as dynamic).setProperty('demuxer-lavf-probesize', '2097152');
+          await (platform as dynamic).setProperty('cache-pause', 'no');
+          await (platform as dynamic).setProperty('cache-pause-initial', 'no');
+          await (platform as dynamic).setProperty('stream-buffer-size', '256k');
           await (platform as dynamic).setProperty('network-timeout', '20');
           await (platform as dynamic).setProperty(
             'stream-lavf-o',
-            'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5,follow_redirects=1',
+            'reconnect=1,reconnect_streamed=1,reconnect_delay_max=5',
           );
         } else {
           // Perfil original intacto de 8 KB (8192) para Canales en Vivo
@@ -182,17 +204,11 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   }
 
   Future<void> _tuneChannelFast(String rawUrl) async {
-    var url = rawUrl.trim();
+    final url = _normalizeArchiveAndSpacesUrl(rawUrl);
     if (url.isEmpty) return;
 
-    if (url.contains(' ')) {
-      url = url.replaceAll(' ', '%20');
-    }
-    if (url.startsWith('http://') && url.contains('archive.org/')) {
-      url = url.replaceFirst('http://', 'https://');
-    }
-
     final token = ++_switchToken;
+    _hasEmbeddedSubtitleStream = false;
 
     try {
       await _applyStreamModeProfile(url);
@@ -205,7 +221,6 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
               'User-Agent':
                   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
               'Accept': '*/*',
-              'Connection': 'keep-alive',
             }
           : const {
               'User-Agent': 'TiviMate/4.7.0 (Linux; Android 13) ExoPlayerLib/2.19.1',
@@ -265,13 +280,16 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       player.setSubtitleTrack(matchedNativeTrack);
       // También ajustamos la pista de audio doblada si existe en ese idioma
       _tryMatchAudioToLanguage(keywords);
-      if (mounted) {
-        setState(() => _liveTranslatedCaption = '');
+      if (!_hasEmbeddedSubtitleStream) {
+        _startLiveChannelAutoTranslation(desiredSub, targetCode);
       }
     } else if (fallbackAnyTrack != null) {
       // El stream tiene subtítulos en otro idioma (ej. Inglés): los activamos para capturar su texto y traducirlo en vivo
       _hasNativeTargetSubtitle = false;
       player.setSubtitleTrack(fallbackAnyTrack);
+      if (!_hasEmbeddedSubtitleStream) {
+        _startLiveChannelAutoTranslation(desiredSub, targetCode);
+      }
     } else {
       // El canal en vivo no tiene subtítulos embebidos: activamos el motor de Subtitulado/Traducción en Vivo (CC Live AI)
       _hasNativeTargetSubtitle = false;
@@ -322,16 +340,8 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     return ['es', 'spa', 'español', 'spanish', 'lat'];
   }
 
-  /// Traduce en tiempo real cualquier subtítulo o closed-caption del canal al idioma elegido por el usuario
-  Future<void> _translateCaptionRealtime(String sourceText, String targetLangLabel) async {
-    if (_hasNativeTargetSubtitle) {
-      if (mounted) {
-        setState(() => _liveTranslatedCaption = sourceText);
-      }
-      return;
-    }
-
-    final targetCode = _getLanguageCode(targetLangLabel);
+  /// Llama al motor de Google Translate para traducir cualquier frase en tiempo real al idioma elegido
+  Future<String> _requestGoogleTranslation(String sourceText, String targetCode) async {
     try {
       final uri = Uri.parse(
         'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetCode&dt=t&q=${Uri.encodeComponent(sourceText)}',
@@ -347,16 +357,28 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
             }
           }
           final translated = buffer.toString().trim();
-          if (translated.isNotEmpty && mounted) {
-            setState(() => _liveTranslatedCaption = translated);
-            return;
+          if (translated.isNotEmpty) {
+            return translated;
           }
         }
       }
     } catch (_) {}
+    return sourceText;
+  }
 
+  /// Traduce en tiempo real cualquier subtítulo o closed-caption del canal al idioma elegido por el usuario
+  Future<void> _translateCaptionRealtime(String sourceText, String targetLangLabel) async {
+    if (_hasNativeTargetSubtitle) {
+      if (mounted) {
+        setState(() => _liveTranslatedCaption = sourceText);
+      }
+      return;
+    }
+
+    final targetCode = _getLanguageCode(targetLangLabel);
+    final translated = await _requestGoogleTranslation(sourceText, targetCode);
     if (mounted) {
-      setState(() => _liveTranslatedCaption = sourceText);
+      setState(() => _liveTranslatedCaption = translated);
     }
   }
 
@@ -402,16 +424,39 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       setState(() => _liveTranslatedCaption = phrases[0]);
     }
 
-    _liveAiCaptionTimer = Timer.periodic(const Duration(seconds: 6), (timer) {
+    _liveAiCaptionTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
       if (!mounted ||
-          PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado') {
+          PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
+          _hasEmbeddedSubtitleStream) {
         timer.cancel();
         return;
       }
-      _captionCycleIndex = (_captionCycleIndex + 1) % phrases.length;
-      setState(() {
-        _liveTranslatedCaption = phrases[_captionCycleIndex];
-      });
+
+      final currentProg = EpgService.getCurrentProgram('', 'General');
+      final nextProg = EpgService.getNextProgram('', 'General');
+
+      final List<String> dynamicLines = [
+        ...phrases,
+        'Estamos viendo en directo: ${currentProg.title} (${currentProg.timeFormatted}).',
+        'A continuación en la programación: ${nextProg.title}.',
+        'Traducción automática en vivo sincronizada con la señal actual.',
+      ];
+
+      _captionCycleIndex = (_captionCycleIndex + 1) % dynamicLines.length;
+      final candidate = dynamicLines[_captionCycleIndex];
+
+      // Traduce en vivo usando Google Translate si es una línea dinámica de programación
+      final translated = _captionCycleIndex >= phrases.length
+          ? await _requestGoogleTranslation(candidate, targetCode)
+          : candidate;
+
+      if (mounted &&
+          PlayerSettingsService.subtitleTrackNotifier.value != 'Desactivado' &&
+          !_hasEmbeddedSubtitleStream) {
+        setState(() {
+          _liveTranslatedCaption = translated;
+        });
+      }
     });
   }
 

@@ -4,7 +4,7 @@ import '../models/channel_model.dart';
 import 'epg_service.dart';
 
 class M3USanitizerService {
-  /// Limpia y separa con precisión: Canales de TV (.m3u8) vs Películas/Series VOD (.mp4, /movie/)
+  /// Limpia y separa con precisión estricta: Canales de TV (.m3u8) vs Películas/Series VOD (.mp4, .mkv, /movie/)
   /// Y registra automáticamente el EPG (url-tvg / x-tvg-url) y los tvg-id estilo TiviMate
   static List<ChannelModel> parseAndSanitize(String rawM3u) {
     // Asegura que el motor EPG (Caché en Disco + Satélite + Deportes en Vivo) esté activo
@@ -74,7 +74,7 @@ class M3USanitizerService {
             lowerLine.startsWith('rtsp://') ||
             lowerLine.startsWith('mms://');
 
-        // Si en el M3U hubo un salto de línea accidental entre #EXTINF y el nombre de la película, lo rescata aquí
+        // Si hubo un salto de línea entre los atributos #EXTINF y el nombre del canal/película, lo recupera
         if (!isUrl && awaitingUrlAfterExtInf) {
           final continuationTitle = line.replaceAll(RegExp(r'^,+\s*'), '').trim();
           if (continuationTitle.isNotEmpty) {
@@ -107,7 +107,6 @@ class M3USanitizerService {
           final finalChannelName = tempName.isEmpty ? 'Elemento $channelCounter' : tempName;
 
           // 2. Registrar en el Normalizador Canónico de Doble Llave de EpgService
-          // Así el banner sabe el tvg-id exacto y el país original (Argentina, México, Colombia, España, etc.)
           EpgService.registerChannelMetadata(
             cleanName: finalChannelName,
             originalName: rawOriginalName,
@@ -148,7 +147,7 @@ class M3USanitizerService {
     return sanitizedChannels.isNotEmpty ? sanitizedChannels : getCuratedChannels();
   }
 
-  /// Extrae el título después de la coma de cierre de #EXTINF ignorando comas dentro de comillas
+  /// Extrae el título después de la última coma que esté fuera de las comillas
   static String _extractTitleAfterAttributes(String extInfLine) {
     bool inQuotes = false;
     int lastValidComma = -1;
@@ -168,19 +167,22 @@ class M3USanitizerService {
     return '';
   }
 
-  /// Limpia la URL codificando espacios en %20 y asegurando HTTPS en Archive.org
+  /// Limpia la URL codificando espacios sin romper nodos HTTP directos de Archive.org
   static String _normalizeStreamUrl(String rawUrl) {
     var trimmed = rawUrl.trim();
     if (trimmed.contains(' ')) {
       trimmed = trimmed.replaceAll(' ', '%20');
     }
-    if (trimmed.startsWith('http://') && trimmed.contains('archive.org/')) {
-      trimmed = trimmed.replaceFirst('http://', 'https://');
+    // Convertir enlaces de nodos internos ia902200.us.archive.org/26/items/ al balanceador oficial archive.org/download/
+    final archiveNodeRegex = RegExp(r'^https?://ia\d+\.us\.archive\.org/\d+/items/(.+)$', caseSensitive: false);
+    final match = archiveNodeRegex.firstMatch(trimmed);
+    if (match != null && match.group(1) != null) {
+      trimmed = 'https://archive.org/download/${match.group(1)!}';
     }
     return trimmed;
   }
 
-  /// Extrae el nombre de la película desde el archivo de la URL si el M3U no traía título
+  /// Extrae el nombre de la película desde el archivo de la URL si el M3U no traía título después de la coma
   static String _extractNameFromUrl(String url) {
     try {
       final uri = Uri.parse(url);
@@ -204,52 +206,40 @@ class M3USanitizerService {
     return '';
   }
 
-  /// CLASIFICADOR ESTRICTO: NO confunde canales continuos con películas bajo demanda
+  /// CLASIFICADOR ESTRICTO: NUNCA mete canales de TV (.m3u8) como AMC, AXN, Atreseries o Pluto en Películas o Series
   static String _determineContentType(String name, String group, String url) {
-    final lowerUrl = url.toLowerCase();
-    final lowerName = name.toLowerCase();
+    final lowerUrl = url.toLowerCase().split('?').first;
     final lowerGroup = group.toLowerCase();
+
+    // Si termina en .m3u8 o .ts, es un stream continuo de Televisión en Vivo (salvo que esté en carpeta /movie/ o /series/ de Xtream Codes)
+    final isHlsLiveStream = lowerUrl.endsWith('.m3u8') || lowerUrl.endsWith('.ts') || lowerUrl.contains('/live/');
 
     final isVODExtension = lowerUrl.endsWith('.mp4') ||
         lowerUrl.endsWith('.mkv') ||
         lowerUrl.endsWith('.avi') ||
         lowerUrl.endsWith('.mov') ||
         lowerUrl.endsWith('.webm');
-    final isXtreamMovie = lowerUrl.contains('/movie/') ||
-        lowerUrl.contains('/movies/') ||
-        lowerUrl.contains('/vod/');
-    final isXtreamSeries = lowerUrl.contains('/series/');
-    final hasEpisodeFormat = RegExp(
-      r'\b(?:s\d+\s*e\d+|t\d+\s*e\d+|[st]\d+.*[ec]\d+)\b',
-      caseSensitive: false,
-    ).hasMatch(name);
 
-    // 1. Series VOD reales (archivos de series, formato de capítulo S01E01 o grupo explícito Series)
-    if (isXtreamSeries ||
-        hasEpisodeFormat ||
-        ((lowerGroup == 'series' || lowerGroup.startsWith('serie')) &&
-            !lowerGroup.contains('24/7'))) {
+    final isXtreamMovie = lowerUrl.contains('/movie/') || lowerUrl.contains('/movies/') || lowerUrl.contains('/vod/');
+    final isXtreamSeries = lowerUrl.contains('/series/');
+    final hasEpisodeFormat = RegExp(r'[st]\d+.*[ec]\d+', caseSensitive: false).hasMatch(name);
+
+    // 1. Series VOD reales (únicamente archivos de video o rutas /series/ con capítulo, NUNCA canales .m3u8 como Atreseries o Pluto)
+    if (isXtreamSeries || (hasEpisodeFormat && isVODExtension)) {
       return 'series';
     }
 
-    // 2. Películas VOD reales (archivos de video específicos)
+    // 2. Películas VOD reales (únicamente archivos .mp4/.mkv/.avi o rutas /movie/ de servidores VOD)
     if (isVODExtension || isXtreamMovie) {
       return 'movie';
     }
 
-    // Si el grupo dice Películas o VOD explícitamente (y no es un canal 24/7)
-    if ((lowerGroup == 'peliculas' ||
-            lowerGroup == 'películas' ||
-            lowerGroup == 'movies' ||
-            lowerGroup.startsWith('vod') ||
-            lowerGroup.contains('vod |') ||
-            lowerGroup.contains('vod:')) &&
-        !lowerGroup.contains('24/7') &&
-        !lowerName.contains('24/7')) {
+    // Si el grupo dice explícitamente VOD y NO es un stream .m3u8 en vivo
+    if ((lowerGroup.startsWith('vod') || lowerGroup.contains('vod |') || lowerGroup.contains('vod:')) && !isHlsLiveStream) {
       return 'movie';
     }
 
-    // 3. Todo lo demás (.m3u8, canales 24/7 de cine como 4ever Cinema, Pluto, etc.) son CANALES EN VIVO
+    // 3. Todo lo demás (.m3u8, canales de cine/series como AMC, AXN, Atreseries, Pluto, etc.) va a EN VIVO
     return 'live';
   }
 
@@ -274,26 +264,35 @@ class M3USanitizerService {
 
     if (contentType == 'movie') {
       if (lowerGroup.contains('accion') || lowerName.contains('accion')) return 'Acción';
-      if (lowerGroup.contains('terror') || lowerGroup.contains('horror')) return 'Terror';
+      if (lowerGroup.contains('terror') || lowerName.contains('horror')) return 'Terror';
       if (lowerGroup.contains('comedia') || lowerName.contains('comedia')) return 'Comedia';
       if (lowerGroup.contains('animacion') || lowerName.contains('infantil')) return 'Animación';
       if (lowerGroup.contains('ciencia') || lowerName.contains('ficcion')) return 'Ciencia Ficción';
-      return rawGroup.isNotEmpty && rawGroup != 'General' ? rawGroup : 'Películas';
+      return rawGroup.isNotEmpty && rawGroup != 'General' && rawGroup.toLowerCase() != 'undefined'
+          ? rawGroup
+          : 'Películas';
     }
 
     if (contentType == 'series') {
-      return rawGroup.isNotEmpty && rawGroup != 'General' ? rawGroup : 'Series';
+      return rawGroup.isNotEmpty && rawGroup != 'General' && rawGroup.toLowerCase() != 'undefined'
+          ? rawGroup
+          : 'Series';
     }
 
     // Categorías de Canales en Vivo
     if (lowerGroup.contains('deport') || lowerGroup.contains('sport') || lowerGroup.contains('futbol')) return 'Deportes';
     if (lowerGroup.contains('noticia') || lowerGroup.contains('news')) return 'Noticias';
-    if (lowerGroup.contains('cine') || lowerGroup.contains('movie') || lowerGroup.contains('film')) return 'Cine & Series 24/7';
+    if (lowerGroup.contains('cine') ||
+        lowerGroup.contains('movie') ||
+        lowerGroup.contains('film') ||
+        lowerGroup.contains('serie')) return 'Cine & Series 24/7';
     if (lowerGroup.contains('docu') || lowerGroup.contains('cultura')) return 'Documentales';
     if (lowerGroup.contains('infantil') || lowerGroup.contains('kid')) return 'Infantil';
     if (lowerGroup.contains('music')) return 'Música';
 
-    return rawGroup.isNotEmpty && rawGroup != 'General' ? rawGroup : 'Entretenimiento';
+    return rawGroup.isNotEmpty && rawGroup != 'General' && rawGroup.toLowerCase() != 'undefined'
+        ? rawGroup
+        : 'Entretenimiento';
   }
 
   static String _detectResolution(String name, String url) {
@@ -354,7 +353,7 @@ class M3USanitizerService {
         id: 'mov_3',
         number: 103,
         name: 'Sylvanian Families: El Regalo de Freya',
-        streamUrl: 'https://ia902200.us.archive.org/26/items/Peliculas-wii/Sylvanian%20Families%20La%20Pelicula%20-%20El%20regalo%20de%20Freya.mp4',
+        streamUrl: 'https://archive.org/download/Peliculas-wii/Sylvanian%20Families%20La%20Pelicula%20-%20El%20regalo%20de%20Freya.mp4',
         logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/c/c5/Big_buck_bunny_poster_big.jpg',
         groupCategory: 'Animación',
         resolution: '1080p FHD',
