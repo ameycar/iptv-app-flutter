@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -46,6 +47,7 @@ class AuthService {
   static const String _kAdminDeviceIdKey = 'authorized_superadmin_hwid';
   static const String _kExplicitLoginKey = 'explicit_login_confirmed';
 
+  static const MethodChannel _deviceChannel = MethodChannel('ameycar.tv/device');
   static const String _cloudSyncBaseUrl = 'https://ameycar-tv-default-rtdb.firebaseio.com';
 
   static const String superAdminMasterKey = 'AMEYCAR-ROOT-2026';
@@ -176,8 +178,7 @@ class AuthService {
     unawaited(DvrRecordingService.reloadForActiveProfile());
   }
 
-  /// Genera un Hardware ID determinista, rápido y persistente tras desinstalar/reinstalar
-  /// sin ejecutar comandos que congelen el arranque en Android 10-15 / Smart TV.
+  /// Obtiene un Hardware ID 100% persistente usando ANDROID_ID nativo (sobrevive desinstalación y reinstalación)
   static Future<String> getDeviceHardwareId() async {
     if (_cachedHardwareId != null && _cachedHardwareId!.isNotEmpty) {
       return _cachedHardwareId!;
@@ -209,76 +210,29 @@ class AuthService {
     return hwId;
   }
 
-  /// Extrae identificadores físicos reales de la placa en 1 sola llamada rápida con timeout seguro
-  /// + /proc/cpuinfo + constantes nativas de Dart (nunca se congela ni queda vacío).
+  /// Lee el Settings.Secure.ANDROID_ID + hardware desde MainActivity.kt (instantáneo, sin permisos y sin Process.run)
   static Future<String> _extractNativeHardwareFingerprint() async {
-    final List<String> parts = [];
-
     if (Platform.isAndroid) {
-      const targetProps = {
-        'ro.boot.serialno',
-        'ro.serialno',
-        'ro.product.manufacturer',
-        'ro.product.brand',
-        'ro.product.model',
-        'ro.product.device',
-        'ro.product.board',
-        'ro.board.platform',
-        'ro.hardware',
-        'ro.build.id',
-        'ro.build.display.id',
-        'ro.build.version.incremental',
-        'ro.build.fingerprint',
-      };
-
       try {
-        final res = await Process.run('getprop', const [])
-            .timeout(const Duration(milliseconds: 800));
-        final output = res.stdout.toString();
-        if (output.isNotEmpty) {
-          final propRegex = RegExp(r'^\[([^\]]+)\]:\s*\[([^\]]*)\]$');
-          for (final line in output.split('\n')) {
-            final match = propRegex.firstMatch(line.trim());
-            if (match != null) {
-              final key = match.group(1) ?? '';
-              final val = (match.group(2) ?? '').trim();
-              if (targetProps.contains(key) &&
-                  val.isNotEmpty &&
-                  val.toLowerCase() != 'unknown') {
-                parts.add('$key:$val');
-              }
-            }
-          }
-          parts.sort();
+        final nativeResult = await _deviceChannel
+            .invokeMethod('getPersistentDeviceId')
+            .timeout(const Duration(seconds: 2));
+        final nativeStr = (nativeResult ?? '').toString().trim();
+        if (nativeStr.isNotEmpty) {
+          return nativeStr;
         }
-      } catch (_) {}
-
-      try {
-        final cpuFile = File('/proc/cpuinfo');
-        if (cpuFile.existsSync()) {
-          final content = cpuFile.readAsStringSync();
-          for (final line in content.split('\n')) {
-            final lower = line.toLowerCase();
-            if (lower.contains('serial') || lower.contains('hardware')) {
-              final trimmed = line.trim();
-              if (trimmed.isNotEmpty) parts.add(trimmed);
-            }
-          }
-        }
-      } catch (_) {}
-
-      parts.add('os:${Platform.operatingSystem}');
-      parts.add('version:${Platform.version}');
-      parts.add('cores:${Platform.numberOfProcessors}');
-      parts.add('host:${Platform.localHostname}');
-    } else {
-      parts.add('os:${Platform.operatingSystem}');
-      parts.add('host:${Platform.localHostname}');
-      parts.add('version:${Platform.version}');
-      parts.add('cores:${Platform.numberOfProcessors}');
+      } catch (e) {
+        debugPrint('Aviso leyendo ANDROID_ID nativo: $e');
+      }
     }
 
-    return parts.join('|').trim();
+    final List<String> fallbackParts = [
+      'os:${Platform.operatingSystem}',
+      'host:${Platform.localHostname}',
+      'version:${Platform.version}',
+      'cores:${Platform.numberOfProcessors}',
+    ];
+    return fallbackParts.join('|').trim();
   }
 
   /// Convierte la huella física del dispositivo en un código hexadecimal fijo de 16 caracteres
@@ -1473,7 +1427,7 @@ class AuthService {
         );
       }
 
-      // 1. Obtenemos el Hardware ID físico determinista del equipo
+      // 1. Obtenemos el Hardware ID basado en el ANDROID_ID nativo (inmutable tras desinstalar)
       final hwId = await getDeviceHardwareId();
       final prefs = await SharedPreferences.getInstance();
       bool hasUsedTrial = prefs.getBool('trial_claimed_$hwId') ?? false;
@@ -1587,10 +1541,14 @@ class AuthService {
 
       if (isFirebaseAvailable) {
         try {
-          await FirebaseFirestore.instance.collection(_trialsCollection).doc(hwId).set({
-            ...trialPayload,
-            'claimedAt': FieldValue.serverTimestamp(),
-          });
+          await FirebaseFirestore.instance
+              .collection(_trialsCollection)
+              .doc(hwId)
+              .set({
+                ...trialPayload,
+                'claimedAt': FieldValue.serverTimestamp(),
+              })
+              .timeout(const Duration(seconds: 4));
         } catch (_) {}
       }
 
