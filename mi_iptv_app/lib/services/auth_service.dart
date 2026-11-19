@@ -171,8 +171,7 @@ class AuthService {
     unawaited(DvrRecordingService.reloadForActiveProfile());
   }
 
-  /// Genera un Hardware ID determinista basado en la huella física de la placa del equipo (Android / Smart TV)
-  /// para que NO cambie aunque desinstalen y vuelvan a instalar la aplicación.
+  /// Genera un Hardware ID 100% persistente tras desinstalar y reinstalar en Android 10-15 / Smart TV
   static Future<String> getDeviceHardwareId() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -198,23 +197,37 @@ class AuthService {
     return hwId;
   }
 
-  /// Extrae identificadores físicos reales de la placa en Android / Smart TV / Linux sin depender de SharedPreferences
+  /// Extrae el ANDROID_ID persistente del sistema + propiedades públicas de compilación del equipo
+  /// que NUNCA cambian aunque el usuario borre datos o desinstale la app.
   static Future<String> _extractNativeHardwareFingerprint() async {
     final List<String> parts = [];
 
     if (Platform.isAndroid) {
-      final props = [
-        'ro.boot.serialno',
-        'ro.serialno',
+      try {
+        final aidRes = await Process.run('settings', ['get', 'secure', 'android_id']);
+        final androidId = aidRes.stdout.toString().trim();
+        if (androidId.isNotEmpty &&
+            androidId.toLowerCase() != 'null' &&
+            androidId.toLowerCase() != 'unknown' &&
+            androidId.length >= 8) {
+          parts.add('android_id:$androidId');
+        }
+      } catch (_) {}
+
+      final publicProps = [
+        'ro.product.manufacturer',
+        'ro.product.brand',
+        'ro.product.model',
+        'ro.product.device',
         'ro.product.board',
         'ro.board.platform',
         'ro.hardware',
-        'ro.product.model',
-        'ro.product.brand',
-        'ro.product.device',
+        'ro.build.id',
+        'ro.build.display.id',
+        'ro.build.version.incremental',
         'ro.build.fingerprint',
       ];
-      for (final prop in props) {
+      for (final prop in publicProps) {
         try {
           final res = await Process.run('getprop', [prop]);
           final val = res.stdout.toString().trim();
@@ -223,20 +236,13 @@ class AuthService {
           }
         } catch (_) {}
       }
-      try {
-        final cpuFile = File('/proc/cpuinfo');
-        if (cpuFile.existsSync()) {
-          final content = cpuFile.readAsStringSync();
-          for (final line in content.split('\n')) {
-            if (line.toLowerCase().contains('serial') || line.toLowerCase().contains('hardware')) {
-              parts.add(line.trim());
-            }
-          }
-        }
-      } catch (_) {}
+
+      parts.add('kernel:${Platform.version}');
+      parts.add('cores:${Platform.numberOfProcessors}');
     } else {
       parts.add(Platform.operatingSystem);
       parts.add(Platform.localHostname);
+      parts.add(Platform.version);
       parts.add(Platform.numberOfProcessors.toString());
     }
 
@@ -1201,28 +1207,39 @@ class AuthService {
   static Future<void> _saveSession(String userId) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kSessionUserKey, userId);
+    await prefs.setBool('explicit_login_confirmed', true);
   }
 
+  /// Al instalar la app por primera vez, NUNCA restaura sesión de ADMIN ni entra sin pedir usuario
   static Future<UserModel?> checkAutoLogin() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getString(_kSessionUserKey);
-      if (userId == null) return null;
+      final explicitLogin = prefs.getBool('explicit_login_confirmed') ?? false;
+
+      // Si no hay userId guardado, o es un respaldo restaurado de Android sin login explícito, o es admin_master
+      if (userId == null || userId.isEmpty || !explicitLogin || userId == 'admin_master') {
+        await logout();
+        return null;
+      }
 
       final hardwareId = await getDeviceHardwareId();
       final savedActiveProfileId = prefs.getString(_kActiveProfileKey);
 
       if (isFirebaseAvailable) {
         final doc = await FirebaseFirestore.instance.collection(_usersCollection).doc(userId).get();
-        if (!doc.exists) return null;
-
-        final user = UserModel.fromMap(doc.id, doc.data()!);
-        if (!user.isActive || (!user.isAdmin && user.isExpired)) {
+        if (!doc.exists) {
           await logout();
           return null;
         }
 
-        if (!user.isAdmin && user.registeredHardwareId != hardwareId) {
+        final user = UserModel.fromMap(doc.id, doc.data()!);
+        if (user.isAdmin || !user.isActive || user.isExpired) {
+          await logout();
+          return null;
+        }
+
+        if (user.registeredHardwareId != hardwareId) {
           await logout();
           return null;
         }
@@ -1240,15 +1257,18 @@ class AuthService {
       } else {
         final users = await _getLocalUsers();
         final match = users.where((u) => u.id == userId);
-        if (match.isEmpty) return null;
-
-        final user = match.first;
-        if (!user.isActive || (!user.isAdmin && user.isExpired)) {
+        if (match.isEmpty) {
           await logout();
           return null;
         }
 
-        if (!user.isAdmin && user.registeredHardwareId != hardwareId) {
+        final user = match.first;
+        if (user.isAdmin || !user.isActive || user.isExpired) {
+          await logout();
+          return null;
+        }
+
+        if (user.registeredHardwareId != hardwareId) {
           await logout();
           return null;
         }
@@ -1275,6 +1295,7 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kSessionUserKey);
     await prefs.remove(_kActiveProfileKey);
+    await prefs.setBool('explicit_login_confirmed', false);
     unawaited(DvrRecordingService.reloadForActiveProfile());
   }
 
@@ -1411,13 +1432,11 @@ class AuthService {
         );
       }
 
-      // 1. Obtenemos el Hardware ID físico del equipo
       final hwId = await getDeviceHardwareId();
       final prefs = await SharedPreferences.getInstance();
       bool hasUsedTrial = prefs.getBool('trial_claimed_$hwId') ?? false;
       String existingUsernameOnDevice = prefs.getString('trial_username_$hwId') ?? '';
 
-      // 2. Verificamos en Firestore (tanto en la bóveda permanente claimed_trial_devices como en users)
       if (isFirebaseAvailable) {
         try {
           final trialDoc = await FirebaseFirestore.instance
@@ -1443,7 +1462,21 @@ class AuthService {
         } catch (_) {}
       }
 
-      // 3. Verificamos también en la lista local/RTDB
+      if (!hasUsedTrial) {
+        try {
+          final rtdbRes = await http
+              .get(Uri.parse('$_cloudSyncBaseUrl/claimed_trials/$hwId.json'))
+              .timeout(const Duration(seconds: 4));
+          if (rtdbRes.statusCode == 200 && rtdbRes.body.isNotEmpty && rtdbRes.body != 'null') {
+            final decoded = jsonDecode(rtdbRes.body);
+            if (decoded is Map) {
+              hasUsedTrial = true;
+              existingUsernameOnDevice = (decoded['username'] ?? '').toString();
+            }
+          }
+        } catch (_) {}
+      }
+
       if (!hasUsedTrial) {
         final localUsers = await _getLocalUsers();
         final match = localUsers.where((u) => u.registeredHardwareId == hwId);
@@ -1453,8 +1486,11 @@ class AuthService {
         }
       }
 
-      // 4. CANDADO ESTRICTO: Si este equipo ya usó su prueba gratis, NO le creamos otra cuenta
       if (hasUsedTrial) {
+        await prefs.setBool('trial_claimed_$hwId', true);
+        if (existingUsernameOnDevice.isNotEmpty) {
+          await prefs.setString('trial_username_$hwId', existingUsernameOnDevice);
+        }
         final userHint = existingUsernameOnDevice.isNotEmpty
             ? ' (Usuario registrado: $existingUsernameOnDevice)'
             : '';
@@ -1465,7 +1501,6 @@ class AuthService {
         );
       }
 
-      // 5. Es un dispositivo 100% virgen: generamos su usuario en MAYÚSCULAS y otorgamos los 3 días VIP únicos
       final String baseUsername = '${cleanFirst[0]}$cleanLast';
       final String finalUsername = await generateUniqueUppercaseUsername(baseUsername);
       final expirationDate = DateTime.now().add(const Duration(days: 3));
@@ -1489,21 +1524,33 @@ class AuthService {
 
       await createClientUser(newUser);
 
-      // 6. Sellamos el Hardware ID en la bóveda permanente de Firestore y en local para que jamás pueda volver a pedir prueba
       await prefs.setBool('trial_claimed_$hwId', true);
       await prefs.setString('trial_username_$hwId', finalUsername);
+
+      final trialPayload = {
+        'hardwareId': hwId,
+        'userId': newUser.id,
+        'username': finalUsername,
+        'deviceName': newUser.deviceName,
+        'claimedAt': DateTime.now().toIso8601String(),
+      };
 
       if (isFirebaseAvailable) {
         try {
           await FirebaseFirestore.instance.collection(_trialsCollection).doc(hwId).set({
-            'hardwareId': hwId,
-            'userId': newUser.id,
-            'username': finalUsername,
-            'deviceName': newUser.deviceName,
+            ...trialPayload,
             'claimedAt': FieldValue.serverTimestamp(),
           });
         } catch (_) {}
       }
+
+      try {
+        await http.put(
+          Uri.parse('$_cloudSyncBaseUrl/claimed_trials/$hwId.json'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(trialPayload),
+        ).timeout(const Duration(seconds: 4));
+      } catch (_) {}
 
       return AuthResponse(
         status: AuthStatus.success,
