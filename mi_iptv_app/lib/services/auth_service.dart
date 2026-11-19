@@ -45,7 +45,6 @@ class AuthService {
   static const String _kSessionUserKey = 'current_logged_user_id';
   static const String _kActiveProfileKey = 'current_active_profile_id';
   static const String _kAdminDeviceIdKey = 'authorized_superadmin_hwid';
-  static const String _kExplicitLoginKey = 'explicit_login_confirmed';
 
   static const MethodChannel _deviceChannel = MethodChannel('ameycar.tv/device');
   static const String _cloudSyncBaseUrl = 'https://ameycar-tv-default-rtdb.firebaseio.com';
@@ -178,7 +177,7 @@ class AuthService {
     unawaited(DvrRecordingService.reloadForActiveProfile());
   }
 
-  /// Obtiene un Hardware ID 100% persistente usando ANDROID_ID nativo (sobrevive desinstalación y reinstalación)
+  /// Obtiene el Hardware ID persistente usando ANDROID_ID nativo (siempre es el mismo tras reinstalar)
   static Future<String> getDeviceHardwareId() async {
     if (_cachedHardwareId != null && _cachedHardwareId!.isNotEmpty) {
       return _cachedHardwareId!;
@@ -210,7 +209,7 @@ class AuthService {
     return hwId;
   }
 
-  /// Lee el Settings.Secure.ANDROID_ID + hardware desde MainActivity.kt (instantáneo, sin permisos y sin Process.run)
+  /// Lee el Settings.Secure.ANDROID_ID + hardware desde MainActivity.kt (instantáneo y sin permisos)
   static Future<String> _extractNativeHardwareFingerprint() async {
     if (Platform.isAndroid) {
       try {
@@ -1199,20 +1198,14 @@ class AuthService {
   static Future<void> _saveSession(String userId) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kSessionUserKey, userId);
-    await prefs.setBool(_kExplicitLoginKey, true);
   }
 
-  /// Al instalar/reinstalar la app, NUNCA restaura sesión de ADMIN ni entra sin pedir usuario
+  /// Mantiene la sesión activa al minimizar/volver del botón Home (tanto clientes como admin)
   static Future<UserModel?> checkAutoLogin() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getString(_kSessionUserKey);
-      final explicitLogin = prefs.getBool(_kExplicitLoginKey) ?? false;
-
-      if (userId == null || userId.isEmpty || !explicitLogin || userId == 'admin_master') {
-        await logout();
-        return null;
-      }
+      if (userId == null || userId.isEmpty) return null;
 
       final hardwareId = await getDeviceHardwareId();
       final savedActiveProfileId = prefs.getString(_kActiveProfileKey);
@@ -1222,19 +1215,16 @@ class AuthService {
             .collection(_usersCollection)
             .doc(userId)
             .get()
-            .timeout(const Duration(seconds: 4));
-        if (!doc.exists) {
-          await logout();
-          return null;
-        }
+            .timeout(const Duration(seconds: 5));
+        if (!doc.exists) return null;
 
         final user = UserModel.fromMap(doc.id, doc.data()!);
-        if (user.isAdmin || !user.isActive || user.isExpired) {
+        if (!user.isActive || (!user.isAdmin && user.isExpired)) {
           await logout();
           return null;
         }
 
-        if (user.registeredHardwareId != hardwareId) {
+        if (!user.isAdmin && user.registeredHardwareId != hardwareId) {
           await logout();
           return null;
         }
@@ -1252,18 +1242,15 @@ class AuthService {
       } else {
         final users = await _getLocalUsers();
         final match = users.where((u) => u.id == userId);
-        if (match.isEmpty) {
-          await logout();
-          return null;
-        }
+        if (match.isEmpty) return null;
 
         final user = match.first;
-        if (user.isAdmin || !user.isActive || user.isExpired) {
+        if (!user.isActive || (!user.isAdmin && user.isExpired)) {
           await logout();
           return null;
         }
 
-        if (user.registeredHardwareId != hardwareId) {
+        if (!user.isAdmin && user.registeredHardwareId != hardwareId) {
           await logout();
           return null;
         }
@@ -1290,7 +1277,6 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kSessionUserKey);
     await prefs.remove(_kActiveProfileKey);
-    await prefs.setBool(_kExplicitLoginKey, false);
     unawaited(DvrRecordingService.reloadForActiveProfile());
   }
 
@@ -1412,7 +1398,7 @@ class AuthService {
   }
 
   // ============================================================
-  // REGISTRO CORPORATIVO EN MAYÚSCULAS CON CANDADO ANTI-REINSTALACIÓN (1 SOLA VEZ POR EQUIPO)
+  // REGISTRO CORPORATIVO EN MAYÚSCULAS CON CANDADO ESTRICTO POR HARDWARE ID
   // ============================================================
   static Future<AuthResponse> registerUser(String firstName, String lastName, String password) async {
     try {
@@ -1427,67 +1413,78 @@ class AuthService {
         );
       }
 
-      // 1. Obtenemos el Hardware ID basado en el ANDROID_ID nativo (inmutable tras desinstalar)
+      // 1. Obtenemos el Hardware ID fijo del equipo
       final hwId = await getDeviceHardwareId();
       final prefs = await SharedPreferences.getInstance();
       bool hasUsedTrial = prefs.getBool('trial_claimed_$hwId') ?? false;
       String existingUsernameOnDevice = prefs.getString('trial_username_$hwId') ?? '';
 
-      // 2. Verificamos en Firestore (bóveda claimed_trial_devices + colección users)
-      if (isFirebaseAvailable) {
+      // 2. Verificación INDEPENDIENTE #1: Colección 'users' en Firestore (servidor real)
+      if (!hasUsedTrial && isFirebaseAvailable) {
+        try {
+          final hwCheck = await FirebaseFirestore.instance
+              .collection(_usersCollection)
+              .where('registeredHardwareId', isEqualTo: hwId)
+              .limit(1)
+              .get(const GetOptions(source: Source.serverAndCache))
+              .timeout(const Duration(seconds: 8));
+          if (hwCheck.docs.isNotEmpty) {
+            hasUsedTrial = true;
+            existingUsernameOnDevice = (hwCheck.docs.first.data()['username'] ?? '').toString().toUpperCase();
+          }
+        } catch (e) {
+          debugPrint('⚠️ Error verificando Hardware ID en Firestore users: $e');
+          return AuthResponse(
+            status: AuthStatus.error,
+            message: 'No se pudo verificar tu dispositivo con el servidor. Revisa tu internet e intenta nuevamente.',
+          );
+        }
+      }
+
+      // 3. Verificación INDEPENDIENTE #2: Bóveda 'claimed_trial_devices' en Firestore
+      if (!hasUsedTrial && isFirebaseAvailable) {
         try {
           final trialDoc = await FirebaseFirestore.instance
               .collection(_trialsCollection)
               .doc(hwId)
-              .get()
-              .timeout(const Duration(seconds: 4));
+              .get(const GetOptions(source: Source.serverAndCache))
+              .timeout(const Duration(seconds: 6));
           if (trialDoc.exists) {
             hasUsedTrial = true;
-            existingUsernameOnDevice = (trialDoc.data()?['username'] ?? '').toString();
+            existingUsernameOnDevice = (trialDoc.data()?['username'] ?? '').toString().toUpperCase();
           }
-
-          if (!hasUsedTrial) {
-            final hwCheck = await FirebaseFirestore.instance
-                .collection(_usersCollection)
-                .where('registeredHardwareId', isEqualTo: hwId)
-                .limit(1)
-                .get()
-                .timeout(const Duration(seconds: 4));
-            if (hwCheck.docs.isNotEmpty) {
-              hasUsedTrial = true;
-              existingUsernameOnDevice = (hwCheck.docs.first.data()['username'] ?? '').toString();
-            }
-          }
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('Aviso leyendo claimed_trial_devices: $e');
+        }
       }
 
-      // 3. Verificamos en Realtime Database (respaldo permanente tras desinstalar)
+      // 4. Verificación INDEPENDIENTE #3: Realtime Database (respaldo en la nube)
       if (!hasUsedTrial) {
         try {
           final rtdbRes = await http
               .get(Uri.parse('$_cloudSyncBaseUrl/claimed_trials/$hwId.json'))
-              .timeout(const Duration(seconds: 4));
+              .timeout(const Duration(seconds: 5));
           if (rtdbRes.statusCode == 200 && rtdbRes.body.isNotEmpty && rtdbRes.body != 'null') {
             final decoded = jsonDecode(rtdbRes.body);
             if (decoded is Map) {
               hasUsedTrial = true;
-              existingUsernameOnDevice = (decoded['username'] ?? '').toString();
+              existingUsernameOnDevice = (decoded['username'] ?? '').toString().toUpperCase();
             }
           }
         } catch (_) {}
       }
 
-      // 4. Verificamos también en la lista local/RTDB de usuarios
+      // 5. Verificación INDEPENDIENTE #4: Lista local/RTDB de usuarios
       if (!hasUsedTrial) {
         final localUsers = await _getLocalUsers();
         final match = localUsers.where((u) => u.registeredHardwareId == hwId);
         if (match.isNotEmpty) {
           hasUsedTrial = true;
-          existingUsernameOnDevice = match.first.username;
+          existingUsernameOnDevice = match.first.username.toUpperCase();
         }
       }
 
-      // 5. CANDADO ESTRICTO: Si este equipo ya usó su prueba gratis, NO le creamos otra cuenta
+      // 6. CANDADO ESTRICTO: Si este Hardware ID ya existe en la BD, NO otorga 3 días gratis
       if (hasUsedTrial) {
         await prefs.setBool('trial_claimed_$hwId', true);
         if (existingUsernameOnDevice.isNotEmpty) {
@@ -1503,7 +1500,7 @@ class AuthService {
         );
       }
 
-      // 6. Dispositivo 100% nuevo: generamos su usuario en MAYÚSCULAS y otorgamos los 3 días VIP únicos
+      // 7. Dispositivo 100% nuevo: generamos su usuario en MAYÚSCULAS y otorgamos los 3 días VIP únicos
       final String baseUsername = '${cleanFirst[0]}$cleanLast';
       final String finalUsername = await generateUniqueUppercaseUsername(baseUsername);
       final expirationDate = DateTime.now().add(const Duration(days: 3));
@@ -1527,7 +1524,7 @@ class AuthService {
 
       await createClientUser(newUser);
 
-      // 7. Sellamos el Hardware ID en local, Firestore y Realtime Database
+      // 8. Sellamos el Hardware ID en local, Firestore y Realtime Database
       await prefs.setBool('trial_claimed_$hwId', true);
       await prefs.setString('trial_username_$hwId', finalUsername);
 
@@ -1548,7 +1545,7 @@ class AuthService {
                 ...trialPayload,
                 'claimedAt': FieldValue.serverTimestamp(),
               })
-              .timeout(const Duration(seconds: 4));
+              .timeout(const Duration(seconds: 5));
         } catch (_) {}
       }
 
