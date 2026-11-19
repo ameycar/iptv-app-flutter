@@ -178,25 +178,36 @@ class NotificationService {
 void main() async {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
-    MediaKit.ensureInitialized();
-    await Hive.initFlutter();
-    await Hive.openBox('watch_progress_box');
+
+    try {
+      MediaKit.ensureInitialized();
+    } catch (e) {
+      debugPrint('Error seguro en MediaKit.ensureInitialized: $e');
+    }
+
+    try {
+      await Hive.initFlutter().timeout(const Duration(seconds: 3));
+      await Hive.openBox('watch_progress_box').timeout(const Duration(seconds: 3));
+    } catch (e) {
+      debugPrint('Error seguro en Hive: $e');
+    }
+
     try {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
-      );
+      ).timeout(const Duration(seconds: 4));
     } catch (e) {
       debugPrint('Error seguro en Firebase.initializeApp: $e');
     }
 
     if (!kIsWeb) {
       try {
-        await NotificationService.initialize();
+        await NotificationService.initialize().timeout(const Duration(seconds: 2));
       } catch (e) {
         debugPrint('Error seguro en NotificationService: $e');
       }
       try {
-        await DvrRecordingService.initialize();
+        await DvrRecordingService.initialize().timeout(const Duration(seconds: 2));
       } catch (e) {
         debugPrint('Error seguro en DvrRecordingService: $e');
       }
@@ -235,7 +246,8 @@ class _AmeycarTVAppState extends State<AmeycarTVApp> {
 
   Future<void> _verifyInitialSession() async {
     try {
-      final res = await AuthService.checkAutoLogin();
+      final res = await AuthService.checkAutoLogin()
+          .timeout(const Duration(seconds: 4), onTimeout: () => null);
       if (mounted) {
         final bool launchedFromAlarm =
             NotificationService.pendingLaunchPayload != null;
