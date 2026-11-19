@@ -22,6 +22,12 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: Accept Android SDK Licenses
+        run: |
+          set +o pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          yes | flutter doctor --android-licenses || true
+
       - name: Install Dependencies
         run: |
           cd mi_iptv_app
