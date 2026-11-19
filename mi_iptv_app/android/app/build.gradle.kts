@@ -18,7 +18,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.mi_iptv_app"
-        minSdk = 21
+        minSdk = 24
         targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"

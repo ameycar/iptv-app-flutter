@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../services/player_settings_service.dart';
-import '../services/epg_service.dart';
+import '../services/offline_whisper_subtitle_service.dart';
 
 class ProVideoPlayer extends StatefulWidget {
   final String streamUrl;
@@ -31,13 +31,12 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
   late final VideoController controller;
   StreamSubscription? _tracksSub;
   StreamSubscription? _subtitleTextSub;
-  Timer? _liveAiCaptionTimer;
   int _switchToken = 0;
 
   String _liveTranslatedCaption = '';
   bool _hasNativeTargetSubtitle = false;
   bool _hasEmbeddedSubtitleStream = false;
-  int _captionCycleIndex = 0;
+  final Map<String, String> _translationCache = {};
 
   @override
   void initState() {
@@ -93,7 +92,10 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       }
 
       _hasEmbeddedSubtitleStream = true;
-      _liveAiCaptionTimer?.cancel();
+      // Si el canal sí trae subtítulos embebidos reales, apagamos Whisper para ahorrar CPU/RAM
+      if (OfflineWhisperSubtitleService.isRunning) {
+        OfflineWhisperSubtitleService.stop();
+      }
       _translateCaptionRealtime(rawText, chosenLang);
     });
   }
@@ -208,6 +210,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
 
     final token = ++_switchToken;
     _hasEmbeddedSubtitleStream = false;
+    OfflineWhisperSubtitleService.stop();
 
     try {
       await _applyStreamModeProfile(url);
@@ -245,9 +248,8 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     final desiredSub = PlayerSettingsService.subtitleTrackNotifier.value;
     final subTracks = player.state.tracks.subtitle;
 
-    _liveAiCaptionTimer?.cancel();
-
     if (desiredSub == 'Desactivado' || desiredSub.isEmpty) {
+      OfflineWhisperSubtitleService.stop();
       player.setSubtitleTrack(SubtitleTrack.no());
       _hasNativeTargetSubtitle = false;
       if (mounted) {
@@ -278,18 +280,18 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       player.setSubtitleTrack(matchedNativeTrack);
       _tryMatchAudioToLanguage(keywords);
       if (!_hasEmbeddedSubtitleStream) {
-        _startLiveChannelAutoTranslation(desiredSub, targetCode);
+        _startOfflineWhisperCaptions(desiredSub, targetCode);
       }
     } else if (fallbackAnyTrack != null) {
       _hasNativeTargetSubtitle = false;
       player.setSubtitleTrack(fallbackAnyTrack);
       if (!_hasEmbeddedSubtitleStream) {
-        _startLiveChannelAutoTranslation(desiredSub, targetCode);
+        _startOfflineWhisperCaptions(desiredSub, targetCode);
       }
     } else {
       _hasNativeTargetSubtitle = false;
       _tryMatchAudioToLanguage(keywords);
-      _startLiveChannelAutoTranslation(desiredSub, targetCode);
+      _startOfflineWhisperCaptions(desiredSub, targetCode);
     }
   }
 
@@ -335,8 +337,13 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     return ['es', 'spa', 'español', 'spanish', 'lat'];
   }
 
-  /// Llama al motor de Google Translate para traducir cualquier frase en tiempo real al idioma elegido
+  /// Traduce frases en tiempo real con caché en memoria para respuesta instantánea
   Future<String> _requestGoogleTranslation(String sourceText, String targetCode) async {
+    final cacheKey = '$targetCode|$sourceText';
+    if (_translationCache.containsKey(cacheKey)) {
+      return _translationCache[cacheKey]!;
+    }
+
     try {
       final uri = Uri.parse(
         'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetCode&dt=t&q=${Uri.encodeComponent(sourceText)}',
@@ -353,6 +360,10 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
           }
           final translated = buffer.toString().trim();
           if (translated.isNotEmpty) {
+            if (_translationCache.length > 200) {
+              _translationCache.clear();
+            }
+            _translationCache[cacheKey] = translated;
             return translated;
           }
         }
@@ -361,65 +372,44 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     return sourceText;
   }
 
-  /// Traduce en tiempo real cualquier subtítulo o closed-caption del canal al idioma elegido por el usuario
+  /// Traduce en tiempo real cualquier subtítulo embebido o transcrito por Whisper al idioma elegido
   Future<void> _translateCaptionRealtime(String sourceText, String targetLangLabel) async {
     final targetCode = _getLanguageCode(targetLangLabel);
     final translated = await _requestGoogleTranslation(sourceText, targetCode);
-    if (mounted) {
+    if (mounted && PlayerSettingsService.subtitleTrackNotifier.value != 'Desactivado') {
       setState(() => _liveTranslatedCaption = translated);
     }
   }
 
-  /// Genera subtítulos dinámicos traducidos en vivo mediante Google Translate cuando el stream no trae SRT embebido
-  void _startLiveChannelAutoTranslation(String langLabel, String targetCode) {
-    _captionCycleIndex = 0;
+  /// Inicia Whisper Offline (IA local) cuando el canal o película no trae subtítulos embebidos
+  void _startOfflineWhisperCaptions(String langLabel, String targetCode) {
+    if (OfflineWhisperSubtitleService.isRunning) return;
 
-    Future<void> translateNextLine() async {
-      if (!mounted ||
-          PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
-          _hasEmbeddedSubtitleStream) {
-        return;
-      }
-
-      final currentProg = EpgService.getCurrentProgram('', 'General');
-      final nextProg = EpgService.getNextProgram('', 'General');
-
-      final List<String> liveTranscriptLines = [
-        'Bienvenidos a la transmisión de ${currentProg.title}.',
-        '¡No puedo creer lo que acaba de pasar en esta escena!',
-        'Espera un momento, tenemos que revisar qué está ocurriendo aquí.',
-        'Todo está listo para continuar con ${currentProg.title} en vivo.',
-        'Escucha con atención, esto va a cambiar todo el rumbo de la historia.',
-        '¡Mira hacia allá! Tenemos que movernos rápido antes de que sea tarde.',
-        'Recuerda que más adelante continúa ${nextProg.title}.',
-        'Exactamente, ese era el plan desde el principio.',
-        'Vamos a ver qué sucede en los próximos minutos de la emisión.',
-        '¡Increíble momento el que estamos presenciando ahora mismo!',
-      ];
-
-      final rawLine = liveTranscriptLines[_captionCycleIndex % liveTranscriptLines.length];
-      _captionCycleIndex++;
-
-      final translated = await _requestGoogleTranslation(rawLine, targetCode);
-      if (mounted &&
-          PlayerSettingsService.subtitleTrackNotifier.value != 'Desactivado' &&
-          !_hasEmbeddedSubtitleStream) {
-        setState(() {
-          _liveTranslatedCaption = translated;
-        });
-      }
-    }
-
-    translateNextLine();
-    _liveAiCaptionTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-      if (!mounted ||
-          PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
-          _hasEmbeddedSubtitleStream) {
-        timer.cancel();
-        return;
-      }
-      translateNextLine();
-    });
+    OfflineWhisperSubtitleService.start(
+      onStatus: (statusText) {
+        if (!mounted ||
+            PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
+            _hasEmbeddedSubtitleStream) {
+          return;
+        }
+        setState(() => _liveTranslatedCaption = statusText);
+      },
+      onTranscript: (spokenText) async {
+        if (!mounted ||
+            PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
+            _hasEmbeddedSubtitleStream) {
+          return;
+        }
+        final activeLang = PlayerSettingsService.subtitleTrackNotifier.value;
+        final activeCode = _getLanguageCode(activeLang);
+        final translated = await _requestGoogleTranslation(spokenText, activeCode);
+        if (mounted &&
+            PlayerSettingsService.subtitleTrackNotifier.value != 'Desactivado' &&
+            !_hasEmbeddedSubtitleStream) {
+          setState(() => _liveTranslatedCaption = translated);
+        }
+      },
+    );
   }
 
   void _onBufferChanged() async {
@@ -570,9 +560,9 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
 
   @override
   void dispose() {
+    OfflineWhisperSubtitleService.stop();
     _tracksSub?.cancel();
     _subtitleTextSub?.cancel();
-    _liveAiCaptionTimer?.cancel();
     PlayerSettingsService.bufferSizeNotifier.removeListener(_onBufferChanged);
     PlayerSettingsService.eqModeNotifier.removeListener(_onEqChanged);
     PlayerSettingsService.audioTrackNotifier.removeListener(_onAudioTrackChanged);
