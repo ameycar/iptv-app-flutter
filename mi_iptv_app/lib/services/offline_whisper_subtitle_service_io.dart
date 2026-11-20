@@ -1,170 +1,172 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:whisper_flutter_new/whisper_flutter_new.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
-/// Motor de Subtítulos IA Local (Whisper Offline) con seguro de RAM para Smart TV / TV Box
+/// Motor de Subtítulos Automáticos en Vivo (0 USD) usando el reconocedor nativo de Android
+/// Corre fuera de la memoria de Flutter para evitar cierres con video 1080p en media_kit.
 class OfflineWhisperSubtitleService {
-  static const MethodChannel _audioChannel = MethodChannel('ameycar.tv/audio_capture');
-  static const int _minSafeRamMb = 1500;
-
-  static Whisper? _whisperInstance;
+  static final SpeechToText _speech = SpeechToText();
+  static bool _isInitialized = false;
   static bool _isRunning = false;
   static int _sessionToken = 0;
+  static Timer? _restartTimer;
+  static DateTime _lastEmitAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static String _lastEmittedText = '';
 
   static bool get isRunning => _isRunning;
 
-  /// Inicia el bucle de escucha y transcripción local con Whisper Tiny (0 USD en APIs)
+  /// Inicia la escucha continua en vivo y envía el texto reconocido al traductor del reproductor
   static Future<void> start({
     required void Function(String statusText) onStatus,
     required void Function(String transcribedText) onTranscript,
   }) async {
     if (kIsWeb || !Platform.isAndroid) {
-      onStatus('Subtítulos IA Offline disponibles solo en Android.');
+      onStatus('Subtítulos automáticos disponibles solo en Android.');
       return;
     }
 
     stop();
     final int currentToken = ++_sessionToken;
     _isRunning = true;
+    _lastEmittedText = '';
 
     try {
-      // 1. Seguro anti-crasheo para TV Boxes con poca memoria RAM
-      final int totalRamMb = await _getTotalRamMb();
-      if (!_isValidSession(currentToken)) return;
-
-      if (totalRamMb < _minSafeRamMb) {
-        _isRunning = false;
-        onStatus('⚠️ Memoria RAM insuficiente (${totalRamMb}MB) para IA Offline.');
-        return;
-      }
-
-      // 2. Permiso de audio para capturar el sonido que sale del dispositivo
+      // 1. Verificar permiso de micrófono
       final permStatus = await Permission.microphone.request();
       if (!_isValidSession(currentToken)) return;
 
       if (!permStatus.isGranted) {
         _isRunning = false;
-        onStatus('Activa el permiso de micrófono para usar Subtítulos IA Offline.');
+        onStatus('Activa el permiso de micrófono para usar Subtítulos Automáticos.');
         return;
       }
 
-      // 3. Inicializar o descargar modelo Whisper Tiny (solo la primera vez)
-      if (_whisperInstance == null) {
-        onStatus('Cargando IA Offline (Whisper Tiny)...');
-        final supportDir = await getApplicationSupportDirectory();
-        final modelDir = Directory('${supportDir.path}/whisper_models');
-        if (!modelDir.existsSync()) {
-          modelDir.createSync(recursive: true);
-        }
-
-        _whisperInstance = Whisper(
-          model: WhisperModel.tiny,
-          modelDir: modelDir.path,
-          downloadHost: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main',
+      // 2. Inicializar motor nativo de reconocimiento de voz de Android (solo una vez)
+      if (!_isInitialized) {
+        onStatus('Iniciando motor de subtítulos en vivo...');
+        _isInitialized = await _speech.initialize(
+          onStatus: (status) {
+            if (!_isValidSession(currentToken)) return;
+            if (status == 'done' || status == 'notListening') {
+              _scheduleRestart(currentToken, onStatus, onTranscript);
+            }
+          },
+          onError: (error) {
+            debugPrint('Aviso motor de subtítulos: ${error.errorMsg}');
+            if (!_isValidSession(currentToken)) return;
+            _scheduleRestart(currentToken, onStatus, onTranscript, delayMs: 1000);
+          },
         );
       }
 
       if (!_isValidSession(currentToken)) return;
-      onStatus('🎙️ IA Offline escuchando audio...');
 
-      // 4. Bucle continuo de captura WAV (3.5 s) -> Transcripción local Whisper
-      while (_isValidSession(currentToken)) {
-        final String? wavPath = await _captureAudioChunk(durationMs: 3500);
-        if (!_isValidSession(currentToken)) break;
-
-        if (wavPath == null || wavPath.isEmpty) {
-          await Future.delayed(const Duration(milliseconds: 500));
-          continue;
-        }
-
-        try {
-          final response = await _whisperInstance!.transcribe(
-            transcribeRequest: TranscribeRequest(
-              audio: wavPath,
-              isTranslate: false,
-              isNoTimestamps: true,
-              splitOnWord: false,
-            ),
-          );
-
-          if (!_isValidSession(currentToken)) break;
-
-          final cleaned = _sanitizeWhisperText(response.text);
-          if (cleaned.isNotEmpty) {
-            onTranscript(cleaned);
-          }
-        } catch (e) {
-          debugPrint('Aviso transcripción Whisper Offline: $e');
-          await Future.delayed(const Duration(milliseconds: 800));
-        }
+      if (!_isInitialized) {
+        _isRunning = false;
+        onStatus('Servicio de voz no disponible en este dispositivo.');
+        return;
       }
+
+      onStatus('🎙️ Escuchando audio en vivo...');
+      await _startListeningCycle(currentToken, onStatus, onTranscript);
     } catch (e) {
-      debugPrint('Error en OfflineWhisperSubtitleService: $e');
+      debugPrint('Error iniciando subtítulos en vivo: $e');
       if (_isValidSession(currentToken)) {
-        onStatus('No se pudo iniciar Whisper Offline.');
+        onStatus('No se pudo iniciar el motor de subtítulos.');
       }
       _isRunning = false;
     }
   }
 
-  /// Detiene inmediatamente la captura y transcripción para liberar CPU/RAM
+  static Future<void> _startListeningCycle(
+    int token,
+    void Function(String statusText) onStatus,
+    void Function(String transcribedText) onTranscript,
+  ) async {
+    if (!_isValidSession(token)) return;
+
+    try {
+      if (_speech.isListening) {
+        await _speech.stop();
+      }
+      if (!_isValidSession(token)) return;
+
+      await _speech.listen(
+        onResult: (result) {
+          if (!_isValidSession(token)) return;
+          final raw = result.recognizedWords.trim();
+          if (raw.isEmpty) return;
+
+          final compact = _keepRecentWindow(raw);
+          if (compact.isEmpty || compact == _lastEmittedText) return;
+
+          final now = DateTime.now();
+          final elapsedMs = now.difference(_lastEmitAt).inMilliseconds;
+
+          // Emitir inmediatamente al cerrar frase o cada 600ms para traducción fluida en vivo
+          if (result.finalResult || elapsedMs >= 600) {
+            _lastEmitAt = now;
+            _lastEmittedText = compact;
+            onTranscript(compact);
+          }
+        },
+        listenFor: const Duration(seconds: 55),
+        pauseFor: const Duration(seconds: 6),
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          cancelOnError: false,
+          listenMode: ListenMode.dictation,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Aviso ciclo de escucha subtítulos: $e');
+      if (_isValidSession(token)) {
+        _scheduleRestart(token, onStatus, onTranscript, delayMs: 1200);
+      }
+    }
+  }
+
+  static void _scheduleRestart(
+    int token,
+    void Function(String statusText) onStatus,
+    void Function(String transcribedText) onTranscript, {
+    int delayMs = 600,
+  }) {
+    _restartTimer?.cancel();
+    _restartTimer = Timer(Duration(milliseconds: delayMs), () {
+      if (_isValidSession(token) && !_speech.isListening) {
+        _startListeningCycle(token, onStatus, onTranscript);
+      }
+    });
+  }
+
+  /// Mantiene solo las últimas palabras (~110 caracteres) para que el subtítulo sea legible en pantalla
+  static String _keepRecentWindow(String text) {
+    final cleaned = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (cleaned.length <= 110) return cleaned;
+
+    final tail = cleaned.substring(cleaned.length - 110);
+    final firstSpace = tail.indexOf(' ');
+    if (firstSpace > 0 && firstSpace < tail.length - 1) {
+      return tail.substring(firstSpace + 1).trim();
+    }
+    return tail.trim();
+  }
+
+  /// Detiene inmediatamente el reconocimiento de voz
   static void stop() {
     _isRunning = false;
     _sessionToken++;
+    _restartTimer?.cancel();
+    _restartTimer = null;
+    try {
+      if (_speech.isListening) {
+        _speech.stop();
+      }
+    } catch (_) {}
   }
 
   static bool _isValidSession(int token) => _isRunning && token == _sessionToken;
-
-  static Future<int> _getTotalRamMb() async {
-    try {
-      final res = await _audioChannel
-          .invokeMethod('getTotalRamMb')
-          .timeout(const Duration(seconds: 2));
-      if (res is int) return res;
-    } catch (_) {}
-    return 2048;
-  }
-
-  static Future<String?> _captureAudioChunk({int durationMs = 3500}) async {
-    try {
-      final res = await _audioChannel.invokeMethod('captureAudioChunk', {
-        'durationMs': durationMs,
-      }).timeout(Duration(milliseconds: durationMs + 3000));
-      return res?.toString();
-    } catch (e) {
-      debugPrint('Error capturando bloque WAV: $e');
-      return null;
-    }
-  }
-
-  /// Limpia etiquetas de silencio o música que Whisper suele emitir cuando nadie habla
-  static String _sanitizeWhisperText(String raw) {
-    var text = raw
-        .replaceAll(RegExp(r'\[[^\]]*\]'), '')
-        .replaceAll(RegExp(r'\([^\)]*\)'), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-
-    final lower = text.toLowerCase();
-    const ignoredHallucinations = {
-      '',
-      '.',
-      '...',
-      'gracias.',
-      'gracias por ver.',
-      'subtítulos realizados por la comunidad de amara.org',
-      'thank you.',
-      'thanks for watching.',
-      'you',
-    };
-
-    if (text.length < 3 || ignoredHallucinations.contains(lower)) {
-      return '';
-    }
-    return text;
-  }
 }
