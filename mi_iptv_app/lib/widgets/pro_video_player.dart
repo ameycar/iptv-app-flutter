@@ -2,11 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../services/player_settings_service.dart';
-import '../services/offline_whisper_subtitle_service.dart';
 
 class ProVideoPlayer extends StatefulWidget {
   final String streamUrl;
@@ -27,16 +27,25 @@ class ProVideoPlayer extends StatefulWidget {
 }
 
 class ProVideoPlayerState extends State<ProVideoPlayer> {
+  static const MethodChannel _deviceChannel = MethodChannel('ameycar.tv/device');
+
   late final Player player;
   late final VideoController controller;
   StreamSubscription? _tracksSub;
   StreamSubscription? _subtitleTextSub;
+  Timer? _noSubtitleCheckTimer;
+  Timer? _hideHintTimer;
   int _switchToken = 0;
 
   String _liveTranslatedCaption = '';
   bool _hasNativeTargetSubtitle = false;
   bool _hasEmbeddedSubtitleStream = false;
+  bool _showNoSubtitleHint = false;
+  bool _triedVodSidecarSubtitle = false;
   final Map<String, String> _translationCache = {};
+
+  bool get _isAndroidNative =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   @override
   void initState() {
@@ -92,9 +101,10 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       }
 
       _hasEmbeddedSubtitleStream = true;
-      // Si el canal sí trae subtítulos embebidos reales, apagamos Whisper para ahorrar CPU/RAM
-      if (OfflineWhisperSubtitleService.isRunning) {
-        OfflineWhisperSubtitleService.stop();
+      _noSubtitleCheckTimer?.cancel();
+      _hideHintTimer?.cancel();
+      if (_showNoSubtitleHint && mounted) {
+        setState(() => _showNoSubtitleHint = false);
       }
       _translateCaptionRealtime(rawText, chosenLang);
     });
@@ -210,7 +220,15 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
 
     final token = ++_switchToken;
     _hasEmbeddedSubtitleStream = false;
-    OfflineWhisperSubtitleService.stop();
+    _triedVodSidecarSubtitle = false;
+    _noSubtitleCheckTimer?.cancel();
+    _hideHintTimer?.cancel();
+    if (mounted && (_liveTranslatedCaption.isNotEmpty || _showNoSubtitleHint)) {
+      setState(() {
+        _liveTranslatedCaption = '';
+        _showNoSubtitleHint = false;
+      });
+    }
 
     try {
       await _applyStreamModeProfile(url);
@@ -248,17 +266,21 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     final desiredSub = PlayerSettingsService.subtitleTrackNotifier.value;
     final subTracks = player.state.tracks.subtitle;
 
+    _noSubtitleCheckTimer?.cancel();
+    _hideHintTimer?.cancel();
+
     if (desiredSub == 'Desactivado' || desiredSub.isEmpty) {
-      OfflineWhisperSubtitleService.stop();
       player.setSubtitleTrack(SubtitleTrack.no());
       _hasNativeTargetSubtitle = false;
       if (mounted) {
-        setState(() => _liveTranslatedCaption = '');
+        setState(() {
+          _liveTranslatedCaption = '';
+          _showNoSubtitleHint = false;
+        });
       }
       return;
     }
 
-    final targetCode = _getLanguageCode(desiredSub);
     final keywords = _getLanguageKeywords(desiredSub);
     SubtitleTrack? matchedNativeTrack;
     SubtitleTrack? fallbackAnyTrack;
@@ -279,19 +301,97 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       _hasNativeTargetSubtitle = true;
       player.setSubtitleTrack(matchedNativeTrack);
       _tryMatchAudioToLanguage(keywords);
-      if (!_hasEmbeddedSubtitleStream) {
-        _startOfflineWhisperCaptions(desiredSub, targetCode);
+      if (mounted && _showNoSubtitleHint) {
+        setState(() => _showNoSubtitleHint = false);
       }
     } else if (fallbackAnyTrack != null) {
       _hasNativeTargetSubtitle = false;
       player.setSubtitleTrack(fallbackAnyTrack);
-      if (!_hasEmbeddedSubtitleStream) {
-        _startOfflineWhisperCaptions(desiredSub, targetCode);
+      if (mounted && _showNoSubtitleHint) {
+        setState(() => _showNoSubtitleHint = false);
       }
     } else {
       _hasNativeTargetSubtitle = false;
       _tryMatchAudioToLanguage(keywords);
-      _startOfflineWhisperCaptions(desiredSub, targetCode);
+      _scheduleNoSubtitleCheck(_switchToken);
+    }
+  }
+
+  /// Verifica si existe un archivo .srt / .vtt junto al video VOD; si no hay pistas, muestra un aviso temporal
+  void _scheduleNoSubtitleCheck(int token) {
+    _noSubtitleCheckTimer?.cancel();
+    _noSubtitleCheckTimer = Timer(const Duration(seconds: 4), () async {
+      if (!mounted ||
+          token != _switchToken ||
+          PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
+          _hasEmbeddedSubtitleStream) {
+        return;
+      }
+
+      // Intentar cargar subtítulo externo (.srt / .vtt) si es una película/serie VOD
+      final normalizedUrl = _normalizeArchiveAndSpacesUrl(widget.streamUrl);
+      if (_isVodFileOrStream(normalizedUrl) && !_triedVodSidecarSubtitle) {
+        _triedVodSidecarSubtitle = true;
+        final loadedExternal = await _tryLoadVodSidecarSubtitle(normalizedUrl);
+        if (loadedExternal) return;
+      }
+
+      if (!mounted ||
+          token != _switchToken ||
+          PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
+          _hasEmbeddedSubtitleStream) {
+        return;
+      }
+
+      setState(() => _showNoSubtitleHint = true);
+
+      // Ocultar el aviso automáticamente después de 8 segundos para no estorbar el video
+      _hideHintTimer?.cancel();
+      _hideHintTimer = Timer(const Duration(seconds: 8), () {
+        if (mounted && _showNoSubtitleHint) {
+          setState(() => _showNoSubtitleHint = false);
+        }
+      });
+    });
+  }
+
+  /// Busca automáticamente un archivo .srt o .vtt con el mismo nombre del archivo VOD
+  Future<bool> _tryLoadVodSidecarSubtitle(String videoUrl) async {
+    try {
+      final cleanUrl = videoUrl.split('?').first;
+      final dotIndex = cleanUrl.lastIndexOf('.');
+      if (dotIndex <= cleanUrl.lastIndexOf('/')) return false;
+
+      final baseUrl = cleanUrl.substring(0, dotIndex);
+      final candidates = [
+        '$baseUrl.es.srt',
+        '$baseUrl.srt',
+        '$baseUrl.es.vtt',
+        '$baseUrl.vtt',
+        '$baseUrl.en.srt',
+      ];
+
+      for (final subUrl in candidates) {
+        try {
+          final res = await http
+              .head(Uri.parse(subUrl))
+              .timeout(const Duration(seconds: 2));
+          if (res.statusCode == 200) {
+            await player.setSubtitleTrack(SubtitleTrack.uri(subUrl));
+            return true;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<void> _openAndroidLiveCaptionSettings() async {
+    if (!_isAndroidNative) return;
+    try {
+      await _deviceChannel.invokeMethod('openCaptionSettings');
+    } catch (e) {
+      debugPrint('No se pudo abrir ajustes de subtítulos Android: $e');
     }
   }
 
@@ -372,44 +472,13 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     return sourceText;
   }
 
-  /// Traduce en tiempo real cualquier subtítulo embebido o transcrito por Whisper al idioma elegido
+  /// Traduce en tiempo real cualquier subtítulo embebido del canal o película al idioma elegido
   Future<void> _translateCaptionRealtime(String sourceText, String targetLangLabel) async {
     final targetCode = _getLanguageCode(targetLangLabel);
     final translated = await _requestGoogleTranslation(sourceText, targetCode);
     if (mounted && PlayerSettingsService.subtitleTrackNotifier.value != 'Desactivado') {
       setState(() => _liveTranslatedCaption = translated);
     }
-  }
-
-  /// Inicia Whisper Offline (IA local) cuando el canal o película no trae subtítulos embebidos
-  void _startOfflineWhisperCaptions(String langLabel, String targetCode) {
-    if (OfflineWhisperSubtitleService.isRunning) return;
-
-    OfflineWhisperSubtitleService.start(
-      onStatus: (statusText) {
-        if (!mounted ||
-            PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
-            _hasEmbeddedSubtitleStream) {
-          return;
-        }
-        setState(() => _liveTranslatedCaption = statusText);
-      },
-      onTranscript: (spokenText) async {
-        if (!mounted ||
-            PlayerSettingsService.subtitleTrackNotifier.value == 'Desactivado' ||
-            _hasEmbeddedSubtitleStream) {
-          return;
-        }
-        final activeLang = PlayerSettingsService.subtitleTrackNotifier.value;
-        final activeCode = _getLanguageCode(activeLang);
-        final translated = await _requestGoogleTranslation(spokenText, activeCode);
-        if (mounted &&
-            PlayerSettingsService.subtitleTrackNotifier.value != 'Desactivado' &&
-            !_hasEmbeddedSubtitleStream) {
-          setState(() => _liveTranslatedCaption = translated);
-        }
-      },
-    );
   }
 
   void _onBufferChanged() async {
@@ -560,7 +629,8 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
 
   @override
   void dispose() {
-    OfflineWhisperSubtitleService.stop();
+    _noSubtitleCheckTimer?.cancel();
+    _hideHintTimer?.cancel();
     _tracksSub?.cancel();
     _subtitleTextSub?.cancel();
     PlayerSettingsService.bufferSizeNotifier.removeListener(_onBufferChanged);
@@ -590,11 +660,11 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
           Positioned(
             left: 24,
             right: 24,
-            bottom: 110,
+            bottom: 24,
             child: IgnorePointer(
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.black.withOpacity(0.78),
                     borderRadius: BorderRadius.circular(10),
@@ -619,6 +689,62 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
                       ],
                     ),
                   ),
+                ),
+              ),
+            ),
+          )
+        else if (_showNoSubtitleHint)
+          Positioned(
+            left: 20,
+            right: 20,
+            bottom: 24,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.84),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color(0xFF00E5FF).withOpacity(0.5),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Flexible(
+                      child: Text(
+                        'Este canal no incluye pista de subtítulos.',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    if (_isAndroidNative) ...[
+                      const SizedBox(width: 10),
+                      TextButton(
+                        onPressed: _openAndroidLiveCaptionSettings,
+                        style: TextButton.styleFrom(
+                          backgroundColor: const Color(0xFF00E5FF).withOpacity(0.18),
+                          foregroundColor: const Color(0xFF00E5FF),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text(
+                          'Subtítulos Android',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: 4),
+                    GestureDetector(
+                      onTap: () => setState(() => _showNoSubtitleHint = false),
+                      child: const Icon(Icons.close, color: Colors.white70, size: 18),
+                    ),
+                  ],
                 ),
               ),
             ),
