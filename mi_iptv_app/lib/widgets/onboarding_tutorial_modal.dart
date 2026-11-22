@@ -63,7 +63,8 @@ class _OnboardingTutorialDialog extends StatefulWidget {
 class _OnboardingTutorialDialogState extends State<_OnboardingTutorialDialog> {
   int _step = 0;
 
-  List> get _pages => [
+  // Sin signos < > anidados para evitar recortes al pegar en vscode.dev
+  List get _pages => [
         {
           'badge': 'PASO 1 DE 3 • BIENVENIDO',
           'icon': Icons.live_tv_rounded,
@@ -117,7 +118,7 @@ class _OnboardingTutorialDialogState extends State<_OnboardingTutorialDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final page = _pages[_step];
+    final Map page = _pages[_step] as Map;
     final Color accent = page['accent'] as Color;
     final bool isLast = _step == _pages.length - 1;
 
@@ -144,7 +145,6 @@ class _OnboardingTutorialDialogState extends State<_OnboardingTutorialDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Cabecera con insignia y botón Saltar
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -179,8 +179,6 @@ class _OnboardingTutorialDialogState extends State<_OnboardingTutorialDialog> {
                   ],
                 ),
                 const SizedBox(height: 18),
-
-                // Ícono principal + Título
                 Row(
                   children: [
                     Container(
@@ -210,8 +208,6 @@ class _OnboardingTutorialDialogState extends State<_OnboardingTutorialDialog> {
                   ],
                 ),
                 const SizedBox(height: 16),
-
-                // Explicación clara
                 Text(
                   page['description'] as String,
                   style: TextStyle(
@@ -221,8 +217,6 @@ class _OnboardingTutorialDialogState extends State<_OnboardingTutorialDialog> {
                   ),
                 ),
                 const SizedBox(height: 16),
-
-                // Caja de consejo rápido
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(12),
@@ -242,8 +236,6 @@ class _OnboardingTutorialDialogState extends State<_OnboardingTutorialDialog> {
                   ),
                 ),
                 const SizedBox(height: 22),
-
-                // Indicadores de página + Botones de navegación
                 Row(
                   children: [
                     Row(
