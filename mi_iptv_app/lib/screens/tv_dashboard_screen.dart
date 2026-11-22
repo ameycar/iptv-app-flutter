@@ -16,6 +16,7 @@ import '../widgets/focusable_tv_card.dart';
 import '../widgets/zapping_channel_overlay.dart';
 import '../widgets/pin_dialog.dart';
 import '../widgets/alexa_voice_sheet.dart';
+import '../widgets/onboarding_tutorial_modal.dart';
 import '../services/m3u_sanitizer_service.dart';
 import '../services/auth_service.dart';
 import '../services/epg_service.dart';
@@ -114,6 +115,13 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     _loadInitialPreferences();
     _loadChannels();
     _listenToGlobalAnnouncements();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      OnboardingTutorialModal.showIfFirstTime(
+        context,
+        isTv: true,
+        onOpenM3uManager: _openM3uDialog,
+      );
+    });
   }
 
   void _listenToGlobalAnnouncements() {
@@ -1715,6 +1723,19 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   title: 'Idioma de la Interfaz',
                   subtitle: 'Actual: $_selectedLanguage',
                   onTap: _showLanguageSelectorDialog,
+                ),
+                _buildTvSettingsCard(
+                  icon: Icons.school_rounded,
+                  color: const Color(0xFF00E5FF),
+                  title: 'Ver Tutorial / Guía Rápida',
+                  subtitle: 'Guía de control remoto, listas M3U en nube y funciones',
+                  onTap: () {
+                    OnboardingTutorialModal.show(
+                      context,
+                      isTv: true,
+                      onOpenM3uManager: _openM3uDialog,
+                    );
+                  },
                 ),
                 _buildTvSettingsCard(
                   icon: Icons.switch_account,

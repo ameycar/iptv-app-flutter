@@ -36,6 +36,7 @@ import 'widgets/alexa_voice_sheet.dart';
 import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
 import 'widgets/live_chat_overlay.dart';
+import 'widgets/onboarding_tutorial_modal.dart';
 import 'firebase_options.dart';
 import 'services/parental_service.dart';
 import 'services/user_customization_service.dart';
@@ -544,11 +545,16 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
     _startCloudPlaylistsRealtimeListener();
     _ensureUserHasReferralCode();
 
-    if (!kIsWeb) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!kIsWeb) {
         NotificationService.requestPermissionsSafely();
-      });
-    }
+      }
+      OnboardingTutorialModal.showIfFirstTime(
+        context,
+        isTv: false,
+        onOpenM3uManager: _openM3uDialog,
+      );
+    });
   }
  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -2307,6 +2313,20 @@ void _openParentalManagerDialog() async {
                 onTap: () {
                   Navigator.pop(ctx);
                   _showLanguageSelectorDialog();
+                },
+              ),
+              _buildSettingsTile(
+                icon: Icons.school_rounded,
+                color: const Color(0xFF00E5FF),
+                title: 'Ver Tutorial / Guía Rápida',
+                subtitle: 'Aprende a cargar listas M3U y usar gestos en 3 pasos',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  OnboardingTutorialModal.show(
+                    context,
+                    isTv: false,
+                    onOpenM3uManager: _openM3uDialog,
+                  );
                 },
               ),
               _buildSettingsTile(
