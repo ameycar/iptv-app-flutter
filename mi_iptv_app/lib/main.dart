@@ -26,6 +26,7 @@ import 'services/epg_service.dart';
 import 'services/auth_service.dart';
 import 'services/dvr_recording_service.dart';
 import 'services/remote_control_service.dart';
+import 'services/app_update_guard.dart';
 import 'screens/login_screen.dart';
 import 'screens/admin_panel_screen.dart';
 import 'screens/family_panel_screen.dart';
@@ -545,15 +546,22 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
     _startCloudPlaylistsRealtimeListener();
     _ensureUserHasReferralCode();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+   WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!kIsWeb) {
         NotificationService.requestPermissionsSafely();
       }
-      OnboardingTutorialModal.showIfFirstTime(
+      await AppUpdateGuard.checkForUpdates(
         context,
         isTv: false,
-        onOpenM3uManager: _openM3uDialog,
+        isAdmin: AuthService.isAdmin,
       );
+      if (mounted) {
+        OnboardingTutorialModal.showIfFirstTime(
+          context,
+          isTv: false,
+          onOpenM3uManager: _openM3uDialog,
+        );
+      }
     });
   }
  @override
@@ -2185,6 +2193,16 @@ void _openParentalManagerDialog() async {
                   onTap: () {
                     Navigator.pop(ctx);
                     BroadcastAdminSheet.show(context);
+                  },
+                ),
+                _buildSettingsTile(
+                  icon: Icons.system_update_rounded,
+                  color: const Color(0xFF00E5FF),
+                  title: 'Control de Versiones Google Play',
+                  subtitle: 'Definir build mínimo obligatorio para usuarios',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    AppUpdateGuard.showAdminVersionControlModal(context);
                   },
                 ),
               ],

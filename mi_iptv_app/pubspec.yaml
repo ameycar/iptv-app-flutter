@@ -24,13 +24,13 @@ dependencies:
   permission_handler: ^11.3.1
   flutter_local_notifications: ^17.2.3
   timezone: ^0.9.4
-  # --- NUEVAS LIBRERÍAS AGREGADAS ---
   wakelock_plus: ^1.1.4
   url_launcher: ^6.2.5
   media_kit: ^1.1.11
   media_kit_video: ^1.2.4
   media_kit_libs_video: ^1.0.7
   path_provider: ^2.1.4
+  package_info_plus: ^8.1.2
 
 dev_dependencies:
   flutter_test:

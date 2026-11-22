@@ -23,6 +23,7 @@ import '../services/epg_service.dart';
 import '../services/dvr_recording_service.dart';
 import '../services/parental_service.dart';
 import '../services/player_settings_service.dart';
+import '../services/app_update_guard.dart';
 import '../utils/premium_manager.dart';
 import 'profile_selector_screen.dart';
 import 'remote_control_screen.dart';
@@ -1605,6 +1606,15 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     title: 'Publicar Anuncio Global (En Vivo)',
                     subtitle: 'Enviar comunicado instantáneo a todas las pantallas',
                     onTap: _openGlobalAnnouncementPublisherModal,
+                  ),
+                  if (rootUser?.isAdmin == true)
+                  _buildTvSettingsCard(
+                    icon: Icons.system_update_rounded,
+                    color: const Color(0xFF00E5FF),
+                    title: 'Control de Versiones Google Play',
+                    subtitle: 'Definir build mínimo obligatorio para usuarios',
+                    onTap: () =>
+                        AppUpdateGuard.showAdminVersionControlModal(context),
                   ),
                 _buildTvSettingsCard(
                   icon: Icons.closed_caption_rounded,
