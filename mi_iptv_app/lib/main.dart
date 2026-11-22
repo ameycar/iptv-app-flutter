@@ -346,6 +346,10 @@ class _AmeycarTVAppState extends State<AmeycarTVApp> {
   }
 }
 
+List<ChannelModel> _parseM3uInBackgroundMobile(String rawM3u) {
+  return M3USanitizerService.parseAndSanitize(rawM3u);
+}
+
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onLogout;
 
@@ -357,7 +361,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Añade esta línea con tus variables de estado en _HomeScreenState:
-final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>();
+ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>();
   static const MethodChannel _pipChannel = MethodChannel('ameycar.tv/pip');
  Timer? _progressSyncTimer;
   String? _currentStreamId;
@@ -473,7 +477,7 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
   String _searchQuery = '';
 
   Timer? _clockTimer;
-  String _currentTime = '';
+  final ValueNotifier<String> _currentTimeNotifier = ValueNotifier<String>('');
 
   StreamSubscription<UserModel?>? _accountGuardSub;
   StreamSubscription<String>? _alarmTapSub;
@@ -1276,9 +1280,7 @@ final GlobalKey<ProVideoPlayerState> _playerKey = GlobalKey<ProVideoPlayerState>
     final hour = now.hour.toString().padLeft(2, '0');
     final minute = now.minute.toString().padLeft(2, '0');
     final second = now.second.toString().padLeft(2, '0');
-    setState(() {
-      _currentTime = '$hour:$minute:$second';
-    });
+    _currentTimeNotifier.value = '$hour:$minute:$second';
   }
 
   // ===========================================================================
@@ -3022,7 +3024,7 @@ void _showColorBlindSelectorDialog() {
                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15.5),
                               ),
                               Text(
-                                'Guía EPG + Auto-DVR • 🕒 $_currentTime',
+                                'Guía EPG + Auto-DVR • 🕒 ${_currentTimeNotifier.value}',
                                 style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
                               ),
                             ],
@@ -3797,9 +3799,15 @@ void _showColorBlindSelectorDialog() {
                                 letterSpacing: 1.1,
                               ),
                             ),
-                            Text(
-                              '🕒 $_currentTime',
-                              style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontWeight: FontWeight.bold),
+                            ValueListenableBuilder<String>(
+                              valueListenable: _currentTimeNotifier,
+                              builder: (_, time, __) => Text(
+                                '🕒 $time',
+                                style: const TextStyle(
+                                    color: Color(0xFF00E5FF),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold),
+                              ),
                             ),
                           ],
                         ),
@@ -4885,12 +4893,14 @@ void _showColorBlindSelectorDialog() {
             if (isReady)
               Center(
                 key: const ValueKey<String>('persistent_live_decoder'),
-                child: ProVideoPlayer(
-                  key: _playerKey,
-                  streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null) ? _activeDvrFilePath! : activeChannel.streamUrl,
-                  volume: _currentVolume,
-                  isPlaying: !_isPlayerPaused,
-                  colorBlindMode: _selectedColorBlindMode, 
+                child: RepaintBoundary(
+                  child: ProVideoPlayer(
+                    key: _playerKey,
+                    streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null) ? _activeDvrFilePath! : activeChannel.streamUrl,
+                    volume: _currentVolume,
+                    isPlaying: !_isPlayerPaused,
+                    colorBlindMode: _selectedColorBlindMode, 
+                  ),
                 ),
               )
             else if (_hasVideoError)
@@ -5145,6 +5155,7 @@ void _showColorBlindSelectorDialog() {
     return ListView.builder(
       padding: EdgeInsets.symmetric(horizontal: compactLandscape ? 8 : 12, vertical: 4), // Margen vertical general reducido
       itemCount: list.length,
+      itemExtent: compactLandscape ? 58.0 : 62.0,
       itemBuilder: (context, index) {
         final channel = list[index];
         final isSelected = _channels.isNotEmpty &&
@@ -5237,6 +5248,9 @@ void _showColorBlindSelectorDialog() {
           child: Image.network(
             channel.logoUrl,
             fit: BoxFit.contain,
+            cacheWidth: 96,
+            cacheHeight: 96,
+            filterQuality: FilterQuality.low,
             errorBuilder: (_, __, ___) => _buildFallbackAvatar(channel, isSelected),
           ),
         ),
@@ -5273,15 +5287,16 @@ void _showColorBlindSelectorDialog() {
         body: Stack(
           children: [
             if (isReady)
-             if (isReady)
               Center(
                 key: const ValueKey<String>('persistent_immersive_decoder'),
-                child: ProVideoPlayer(
-                  key: _playerKey,
-                  streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null) ? _activeDvrFilePath! : activeChannel.streamUrl,
-                  volume: _currentVolume,
-                  isPlaying: !_isPlayerPaused,
-                  colorBlindMode: _selectedColorBlindMode, // <--- Agrégalo aquí
+                child: RepaintBoundary(
+                  child: ProVideoPlayer(
+                    key: _playerKey,
+                    streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null) ? _activeDvrFilePath! : activeChannel.streamUrl,
+                    volume: _currentVolume,
+                    isPlaying: !_isPlayerPaused,
+                    colorBlindMode: _selectedColorBlindMode,
+                  ),
                 ),
               )
             else
@@ -5426,6 +5441,7 @@ void _showColorBlindSelectorDialog() {
     }
     _prebufferedPool.clear();
     _searchController.dispose();
+    _currentTimeNotifier.dispose();
     super.dispose();
   }
 }

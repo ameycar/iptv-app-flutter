@@ -30,6 +30,9 @@ import 'remote_control_screen.dart';
 import 'family_panel_screen.dart';
 import 'tv_vod_details_screen.dart';
 
+List<ChannelModel> _parseM3uInBackgroundTv(String rawM3u) {
+  return M3USanitizerService.parseAndSanitize(rawM3u);
+}
 class TvDashboardScreen extends StatefulWidget {
   final VoidCallback? onLogout;
 
@@ -86,7 +89,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   String _hardwareId = 'Cargando...';
   final Set<String> _activeAlarms = {};
   Timer? _clockTimer;
-  String _currentTime = '';
+  final ValueNotifier<String> _currentTimeNotifier = ValueNotifier<String>('');
 
   // VARIABLES DE ANUNCIOS GLOBALES EN TIEMPO REAL
   StreamSubscription? _globalAnnouncementSub;
@@ -168,9 +171,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     final h = now.hour.toString().padLeft(2, '0');
     final m = now.minute.toString().padLeft(2, '0');
     final s = now.second.toString().padLeft(2, '0');
-    setState(() {
-      _currentTime = '$h:$m:$s';
-    });
+    _currentTimeNotifier.value = '$h:$m:$s';
   }
 
   Future<void> _loadInitialPreferences() async {
@@ -286,7 +287,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       List<ChannelModel> loadedChannels = [];
       if (savedM3u != null && savedM3u.isNotEmpty) {
         unawaited(EpgService.extractAndSaveEpgUrlFromM3u(savedM3u));
-        loadedChannels = M3USanitizerService.parseAndSanitize(savedM3u);
+        loadedChannels = await compute(_parseM3uInBackgroundTv, savedM3u);
       } else {
         loadedChannels = M3USanitizerService.getCuratedChannels();
       }
@@ -333,7 +334,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       final res = await http.get(Uri.parse(url));
       if (res.statusCode == 200) {
         await EpgService.extractAndSaveEpgUrlFromM3u(res.body);
-        final parsed = M3USanitizerService.parseAndSanitize(res.body);
+        final parsed = await compute(_parseM3uInBackgroundTv, res.body);
         if (parsed.isNotEmpty) {
           final prefs = await SharedPreferences.getInstance();
           try {
@@ -730,6 +731,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     _tvFocusScope.dispose();
     _sidebarFocusNode.dispose();
     _zappingFocusNode.dispose();
+    _currentTimeNotifier.dispose();
     super.dispose();
   }
 
@@ -822,14 +824,17 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           body: Stack(
             children: [
               // 1. EL CORAZÓN: Reproductor siempre de fondo a pantalla completa
+              
               Positioned.fill(
-                child: ProVideoPlayer(
-                  key: _playerKey,
-                  streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null)
-                      ? _activeDvrFilePath!
-                      : (activeChannel?.streamUrl ?? ''),
-                  isPlaying: !_isPlayerPaused,
-                  colorBlindMode: _selectedColorBlindMode,
+                child: RepaintBoundary(
+                  child: ProVideoPlayer(
+                    key: _playerKey,
+                    streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null)
+                        ? _activeDvrFilePath!
+                        : (activeChannel?.streamUrl ?? ''),
+                    isPlaying: !_isPlayerPaused,
+                    colorBlindMode: _selectedColorBlindMode,
+                  ),
                 ),
               ),
 
@@ -1018,6 +1023,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                                 const EdgeInsets.all(24.0),
                                             child: Image.network(
                                                 liveChannel.logoUrl,
+                                                cacheWidth: 160,
+                                                filterQuality: FilterQuality.low,
                                                 errorBuilder: (c, e, s) =>
                                                     const Icon(Icons.tv,
                                                         color: Colors.white24,
@@ -1139,12 +1146,16 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                                     fontWeight: FontWeight.w900,
                                                     letterSpacing: 1.2)),
                                             const SizedBox(height: 2),
-                                            Text('🕒 $_currentTime',
+                                           ValueListenableBuilder<String>(
+                                              valueListenable: _currentTimeNotifier,
+                                              builder: (_, time, __) => Text(
+                                                '🕒 $time',
                                                 style: const TextStyle(
                                                     color: Color(0xFFC77DFF),
                                                     fontSize: 11,
-                                                    fontWeight:
-                                                        FontWeight.bold)),
+                                                    fontWeight: FontWeight.bold),
+                                              ),
+                                            ),
                                           ],
                                         ),
                                       )
@@ -1382,6 +1393,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                       Image.network(
                                         item.logoUrl,
                                         fit: BoxFit.cover,
+                                        cacheWidth: 260,
+                                        filterQuality: FilterQuality.low,
                                         errorBuilder: (_, __, ___) => Container(
                                           color: const Color(0xFF161F33),
                                           child: const Icon(Icons.movie_creation_outlined,
@@ -2133,7 +2146,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                 fontWeight: FontWeight.w900),
                           ),
                           Text(
-                            'Guía EPG Interactiva en Tiempo Real • 🕒 $_currentTime',
+                            'Guía EPG Interactiva en Tiempo Real • 🕒 ${_currentTimeNotifier.value}',
                             style: const TextStyle(
                                 color: Color(0xFF00E5FF),
                                 fontSize: 12.5,

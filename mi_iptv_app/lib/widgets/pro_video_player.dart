@@ -151,17 +151,24 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     try {
       var platform = player.platform;
       if (platform.runtimeType.toString().contains('NativePlayer')) {
+        final mb = PlayerSettingsService.bufferSizeNotifier.value;
+        final maxBytes = (mb * 1024 * 1024).toInt();
+
         (platform as dynamic).setProperty('profile', 'low-latency');
         (platform as dynamic).setProperty('hwdec', 'mediacodec-copy');
         (platform as dynamic).setProperty('vd-lavc-threads', '4');
+        (platform as dynamic).setProperty('framedrop', 'vo');
+        (platform as dynamic).setProperty('video-sync', 'audio');
         (platform as dynamic).setProperty('demuxer-lavf-analyzeduration', '0');
-        (platform as dynamic).setProperty('demuxer-lavf-probesize', '8192');
+        (platform as dynamic).setProperty('demuxer-lavf-probesize', '16384');
         (platform as dynamic).setProperty('cache', 'yes');
-        (platform as dynamic).setProperty('cache-secs', '300');
+        (platform as dynamic).setProperty('demuxer-max-bytes', '$maxBytes');
+        (platform as dynamic).setProperty('demuxer-max-back-bytes', '16777216');
+        (platform as dynamic).setProperty('demuxer-readahead-secs', '${mb.clamp(4, 20).toInt()}');
         (platform as dynamic).setProperty('cache-pause', 'no');
         (platform as dynamic).setProperty('cache-pause-initial', 'no');
-        (platform as dynamic).setProperty('stream-buffer-size', '4k');
-        (platform as dynamic).setProperty('network-timeout', '3');
+        (platform as dynamic).setProperty('stream-buffer-size', '64k');
+        (platform as dynamic).setProperty('network-timeout', '5');
         (platform as dynamic).setProperty('tls-verify', 'no');
         (platform as dynamic).setProperty('aid', '1');
         (platform as dynamic).setProperty('sid', 'auto');
@@ -176,16 +183,23 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     }
   }
 
-  /// Mantiene 8 KB (8192) para canales en vivo y abre lectura rápida sin pausa bloqueante para Películas/Series VOD
+  /// Perfil dinámico: zapping rápido con absorción de microcortes en Live TV y lectura estable en VOD
   Future<void> _applyStreamModeProfile(String url) async {
     if (kIsWeb) return;
     try {
       var platform = player.platform;
       if (platform.runtimeType.toString().contains('NativePlayer')) {
         final isVod = _isVodFileOrStream(url);
+        final mb = PlayerSettingsService.bufferSizeNotifier.value;
+        final maxBytes = (mb * 1024 * 1024).toInt();
+
+        await (platform as dynamic).setProperty('demuxer-max-bytes', '$maxBytes');
+
         if (isVod) {
           await (platform as dynamic).setProperty('demuxer-lavf-analyzeduration', '5000000');
           await (platform as dynamic).setProperty('demuxer-lavf-probesize', '2097152');
+          await (platform as dynamic).setProperty('demuxer-readahead-secs', '30');
+          await (platform as dynamic).setProperty('hr-seek', 'yes');
           await (platform as dynamic).setProperty('cache-pause', 'no');
           await (platform as dynamic).setProperty('cache-pause-initial', 'no');
           await (platform as dynamic).setProperty('stream-buffer-size', '256k');
@@ -195,14 +209,15 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
             'reconnect=1,reconnect_streamed=1,reconnect_delay_max=5',
           );
         } else {
-          // Perfil original intacto de 8 KB (8192) para Canales en Vivo
           await (platform as dynamic).setProperty('profile', 'low-latency');
+          await (platform as dynamic).setProperty('framedrop', 'vo');
           await (platform as dynamic).setProperty('demuxer-lavf-analyzeduration', '0');
-          await (platform as dynamic).setProperty('demuxer-lavf-probesize', '8192');
+          await (platform as dynamic).setProperty('demuxer-lavf-probesize', '16384');
+          await (platform as dynamic).setProperty('demuxer-readahead-secs', '${mb.clamp(4, 20).toInt()}');
           await (platform as dynamic).setProperty('cache-pause', 'no');
           await (platform as dynamic).setProperty('cache-pause-initial', 'no');
-          await (platform as dynamic).setProperty('stream-buffer-size', '4k');
-          await (platform as dynamic).setProperty('network-timeout', '3');
+          await (platform as dynamic).setProperty('stream-buffer-size', '64k');
+          await (platform as dynamic).setProperty('network-timeout', '5');
           await (platform as dynamic).setProperty(
             'stream-lavf-o',
             'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,fflags=+nobuffer+fastseek+flush_packets',
@@ -214,6 +229,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     }
   }
 
+  
   Future<void> _tuneChannelFast(String rawUrl) async {
     final url = _normalizeArchiveAndSpacesUrl(rawUrl);
     if (url.isEmpty) return;
@@ -489,6 +505,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
         final mb = PlayerSettingsService.bufferSizeNotifier.value;
         final bytes = (mb * 1024 * 1024).toInt();
         await (platform as dynamic).setProperty('demuxer-max-bytes', '$bytes');
+        await (platform as dynamic).setProperty('demuxer-readahead-secs', '${mb.clamp(4, 20).toInt()}');
       }
     } catch (_) {}
   }
@@ -648,14 +665,20 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        ColorFiltered(
-          colorFilter: _getColorBlindFilter(widget.colorBlindMode),
-          child: Video(
-            controller: controller,
-            controls: NoVideoControls,
-            fill: Colors.black,
-          ),
-        ),
+        widget.colorBlindMode == 'Normal'
+            ? Video(
+                controller: controller,
+                controls: NoVideoControls,
+                fill: Colors.black,
+              )
+            : ColorFiltered(
+                colorFilter: _getColorBlindFilter(widget.colorBlindMode),
+                child: Video(
+                  controller: controller,
+                  controls: NoVideoControls,
+                  fill: Colors.black,
+                ),
+              ),
         if (_liveTranslatedCaption.isNotEmpty)
           Positioned(
             left: 24,
