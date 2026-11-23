@@ -19,7 +19,7 @@ class ZappingChannelOverlay extends StatefulWidget {
   final VoidCallback onNext;
   final VoidCallback onPrevious;
   final VoidCallback? onOpenEpg;
-  final VoidCallback? onSearch; // NUEVO: Botón de búsqueda (Lupa)
+  final VoidCallback? onSearch;
   final VoidCallback? onToggleFullScreen;
   final VoidCallback? onRewind15s;
   final VoidCallback? onForward15s;
@@ -58,28 +58,6 @@ class ZappingChannelOverlay extends StatefulWidget {
     this.autoFocusControls = false,
     this.onUserInteraction,
     this.onClose,
-  });
-
-  const ZappingChannelOverlay({
-    super.key,
-    required this.channel,
-    this.channelIndex = 0,
-    this.totalChannels = 0,
-    required this.isPlaying,
-    this.isFullScreen = false,
-    this.isBehindLive = false,
-    this.isPlayingDvrRecording = false,
-    this.dvrRecordingTitle,
-    required this.onPlayPause,
-    required this.onNext,
-    required this.onPrevious,
-    this.onOpenEpg,
-    this.onSearch,
-    this.onToggleFullScreen,
-    this.onRewind15s,
-    this.onForward15s,
-    this.onJumpToLive,
-    this.onToggleRecord,
   });
 
   @override
@@ -228,520 +206,614 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                   child: FocusTraversalGroup(
                     policy: WidgetOrderTraversalPolicy(),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
                       decoration: BoxDecoration(
-                      color: const Color(0xFF090D16).withOpacity(0.65),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: const Color(0xFF00E5FF).withOpacity(0.20),
-                        width: 1,
+                        color: const Color(0xFF090D16).withOpacity(0.65),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: const Color(0xFF00E5FF).withOpacity(0.20),
+                          width: 1,
+                        ),
                       ),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Fila 1: Número CH, Logo, Nombre del Canal y Controles Principales
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF00E5FF).withOpacity(0.15),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Fila 1: Número CH, Logo, Nombre del Canal y Controles Principales
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color:
+                                      const Color(0xFF00E5FF).withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color:
+                                        const Color(0xFF00E5FF).withOpacity(0.5),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: Text(
+                                  widget.isPlayingDvrRecording
+                                      ? 'DVR'
+                                      : 'CH $channelNumber',
+                                  style: const TextStyle(
+                                    color: Color(0xFF00E5FF),
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 10,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ClipRRect(
                                 borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: const Color(0xFF00E5FF).withOpacity(0.5),
-                                  width: 0.8,
+                                child: Container(
+                                  width: 24,
+                                  height: 24,
+                                  color: const Color(0xFF131A29),
+                                  child: logoUrl.isNotEmpty
+                                      ? Image.network(
+                                          logoUrl,
+                                          fit: BoxFit.contain,
+                                          errorBuilder: (_, __, ___) =>
+                                              const Icon(
+                                            Icons.tv,
+                                            color: Colors.white54,
+                                            size: 14,
+                                          ),
+                                        )
+                                      : const Icon(Icons.tv,
+                                          color: Colors.white54, size: 14),
                                 ),
                               ),
-                              child: Text(
-                                widget.isPlayingDvrRecording ? 'DVR' : 'CH $channelNumber',
-                                style: const TextStyle(
-                                  color: Color(0xFF00E5FF),
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 10,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(6),
-                              child: Container(
-                                width: 24,
-                                height: 24,
-                                color: const Color(0xFF131A29),
-                                child: logoUrl.isNotEmpty
-                                    ? Image.network(
-                                        logoUrl,
-                                        fit: BoxFit.contain,
-                                        errorBuilder: (_, __, ___) => const Icon(
-                                          Icons.tv,
-                                          color: Colors.white54,
-                                          size: 14,
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        channelName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
                                         ),
-                                      )
-                                    : const Icon(Icons.tv, color: Colors.white54, size: 14),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      channelName,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13,
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white12,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      resolution,
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 8.5,
-                                        fontWeight: FontWeight.w800,
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 4, vertical: 1),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white12,
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        resolution,
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 8.5,
+                                          fontWeight: FontWeight.w800,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                            AnimatedBuilder(
-                              animation: _pulseController,
-                              builder: (context, child) {
-                                final Color badgeColor = widget.isPlayingDvrRecording
-                                    ? const Color(0xFF9D4EDD)
-                                    : (widget.isBehindLive || _isManuallyBehindLive)
-                                        ? const Color(0xFFFFB703)
-                                        : (isSyncing
-                                            ? const Color(0xFFFFB703)
-                                            : const Color(0xFFFF1744));
+                              AnimatedBuilder(
+                                animation: _pulseController,
+                                builder: (context, child) {
+                                  final Color badgeColor = widget
+                                          .isPlayingDvrRecording
+                                      ? const Color(0xFF9D4EDD)
+                                      : (widget.isBehindLive ||
+                                              _isManuallyBehindLive)
+                                          ? const Color(0xFFFFB703)
+                                          : (isSyncing
+                                              ? const Color(0xFFFFB703)
+                                              : const Color(0xFFFF1744));
 
-                                final String badgeLabel = widget.isPlayingDvrRecording
-                                    ? 'GRABACIÓN'
-                                    : (widget.isBehindLive || _isManuallyBehindLive)
-                                        ? 'DIFERIDO'
-                                        : (isSyncing ? 'SINCRONIZANDO...' : 'EN VIVO');
+                                  final String badgeLabel = widget
+                                          .isPlayingDvrRecording
+                                      ? 'GRABACIÓN'
+                                      : (widget.isBehindLive ||
+                                              _isManuallyBehindLive)
+                                          ? 'DIFERIDO'
+                                          : (isSyncing
+                                              ? 'SINCRONIZANDO...'
+                                              : 'EN VIVO');
 
-                                final bool isClickable = widget.isBehindLive || widget.isPlayingDvrRecording || _isManuallyBehindLive;
+                                  final bool isClickable =
+                                      widget.isBehindLive ||
+                                          widget.isPlayingDvrRecording ||
+                                          _isManuallyBehindLive;
 
-                                return Focus(
-                                  canRequestFocus: isClickable,
+                                  return Focus(
+                                    canRequestFocus: isClickable,
+                                    onKeyEvent: (node, event) {
+                                      if (event is KeyDownEvent &&
+                                          (event.logicalKey ==
+                                                  LogicalKeyboardKey.select ||
+                                              event.logicalKey ==
+                                                  LogicalKeyboardKey.enter ||
+                                              event.logicalKey ==
+                                                  LogicalKeyboardKey
+                                                      .gameButtonA)) {
+                                        if (isClickable &&
+                                            widget.onJumpToLive != null) {
+                                          widget.onJumpToLive!();
+                                          setState(() {
+                                            _isManuallyBehindLive = false;
+                                          });
+                                        }
+                                        return KeyEventResult.handled;
+                                      }
+                                      return KeyEventResult.ignored;
+                                    },
+                                    child: Builder(
+                                      builder: (context) {
+                                        final hasFocus =
+                                            Focus.of(context).hasFocus;
+                                        return GestureDetector(
+                                          onTap: isClickable
+                                              ? () {
+                                                  if (widget.onJumpToLive !=
+                                                      null) {
+                                                    widget.onJumpToLive!();
+                                                    setState(() {
+                                                      _isManuallyBehindLive =
+                                                          false;
+                                                    });
+                                                  }
+                                                }
+                                              : null,
+                                          child: AnimatedContainer(
+                                            duration: const Duration(
+                                                milliseconds: 150),
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 6, vertical: 3),
+                                            decoration: BoxDecoration(
+                                              color: hasFocus
+                                                  ? badgeColor
+                                                  : badgeColor.withOpacity(
+                                                      0.2 +
+                                                          (_pulseController
+                                                                  .value *
+                                                              0.25)),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              border: Border.all(
+                                                color: hasFocus
+                                                    ? Colors.white
+                                                    : badgeColor.withOpacity(
+                                                        0.6 +
+                                                            (_pulseController
+                                                                    .value *
+                                                                0.4)),
+                                                width: hasFocus ? 1.5 : 0.8,
+                                              ),
+                                              boxShadow: hasFocus
+                                                  ? [
+                                                      BoxShadow(
+                                                          color: badgeColor
+                                                              .withOpacity(0.8),
+                                                          blurRadius: 10)
+                                                    ]
+                                                  : [],
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(Icons.circle,
+                                                    color: hasFocus
+                                                        ? Colors.black
+                                                        : badgeColor,
+                                                    size: 6),
+                                                const SizedBox(width: 3),
+                                                Text(
+                                                  badgeLabel,
+                                                  style: TextStyle(
+                                                    color: hasFocus
+                                                        ? Colors.black
+                                                        : Colors.white,
+                                                    fontSize: 8.5,
+                                                    fontWeight: FontWeight.w900,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                              Focus(
+                                canRequestFocus: false,
+                                child: GestureDetector(
+                                  onTap: widget.onPlayPause,
+                                  child: Icon(
+                                    widget.isPlaying
+                                        ? Icons.pause_circle_filled
+                                        : Icons.play_circle_filled,
+                                    color: const Color(0xFF00E5FF),
+                                    size: 26,
+                                  ),
+                                ),
+                              ),
+                              if (widget.onToggleFullScreen != null) ...[
+                                const SizedBox(width: 6),
+                                Focus(
                                   onKeyEvent: (node, event) {
                                     if (event is KeyDownEvent &&
-                                        (event.logicalKey == LogicalKeyboardKey.select ||
-                                            event.logicalKey == LogicalKeyboardKey.enter ||
-                                            event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-                                      if (isClickable && widget.onJumpToLive != null) {
-                                        widget.onJumpToLive!();
-                                        setState(() {
-                                          _isManuallyBehindLive = false;
-                                        });
-                                      }
+                                        (event.logicalKey ==
+                                                LogicalKeyboardKey.select ||
+                                            event.logicalKey ==
+                                                LogicalKeyboardKey.enter ||
+                                            event.logicalKey ==
+                                                LogicalKeyboardKey
+                                                    .gameButtonA)) {
+                                      widget.onToggleFullScreen!();
                                       return KeyEventResult.handled;
                                     }
                                     return KeyEventResult.ignored;
                                   },
                                   child: Builder(
                                     builder: (context) {
-                                      final hasFocus = Focus.of(context).hasFocus;
-                                      return GestureDetector(
-                                        onTap: isClickable
-                                            ? () {
-                                                if (widget.onJumpToLive != null) {
-                                                  widget.onJumpToLive!();
-                                                  setState(() {
-                                                    _isManuallyBehindLive = false;
-                                                  });
-                                                }
-                                              }
-                                            : null,
+                                      final hasFocus =
+                                          Focus.of(context).hasFocus;
+                                      return InkWell(
+                                        onTap: widget.onToggleFullScreen,
+                                        borderRadius: BorderRadius.circular(6),
                                         child: AnimatedContainer(
-                                          duration: const Duration(milliseconds: 150),
-                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                          duration:
+                                              const Duration(milliseconds: 150),
+                                          padding: const EdgeInsets.all(5),
                                           decoration: BoxDecoration(
-                                            color: hasFocus 
-                                                ? badgeColor 
-                                                : badgeColor.withOpacity(0.2 + (_pulseController.value * 0.25)),
-                                            borderRadius: BorderRadius.circular(8),
+                                            color: hasFocus
+                                                ? const Color(0xFFC77DFF)
+                                                : const Color(0xFF7B2CBF)
+                                                    .withOpacity(0.35),
+                                            borderRadius:
+                                                BorderRadius.circular(6),
                                             border: Border.all(
-                                              color: hasFocus ? Colors.white : badgeColor.withOpacity(0.6 + (_pulseController.value * 0.4)),
-                                              width: hasFocus ? 1.5 : 0.8,
-                                            ),
-                                            boxShadow: hasFocus ? [BoxShadow(color: badgeColor.withOpacity(0.8), blurRadius: 10)] : [],
+                                                color: hasFocus
+                                                    ? Colors.white
+                                                    : const Color(0xFFC77DFF),
+                                                width: hasFocus ? 1.5 : 0.8),
+                                            boxShadow: hasFocus
+                                                ? [
+                                                    BoxShadow(
+                                                        color: const Color(
+                                                                0xFFC77DFF)
+                                                            .withOpacity(0.8),
+                                                        blurRadius: 10)
+                                                  ]
+                                                : [],
                                           ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Icon(Icons.circle, color: hasFocus ? Colors.black : badgeColor, size: 6),
-                                              const SizedBox(width: 3),
-                                              Text(
-                                                badgeLabel,
-                                                style: TextStyle(
-                                                  color: hasFocus ? Colors.black : Colors.white,
-                                                  fontSize: 8.5,
-                                                  fontWeight: FontWeight.w900,
-                                                ),
-                                              ),
-                                            ],
+                                          child: Icon(
+                                            widget.isFullScreen
+                                                ? Icons.fullscreen_exit
+                                                : Icons.fullscreen,
+                                            color: hasFocus
+                                                ? Colors.black
+                                                : Colors.white,
+                                            size: 16,
                                           ),
                                         ),
                                       );
-                                    }
+                                    },
                                   ),
-                                );
-                              },
-                            ),
-                            const SizedBox(width: 8),
-                            
-                            Focus(
-                              canRequestFocus: false,
-                              onKeyEvent: (node, event) {
-                                if (event is KeyDownEvent &&
-                                    (event.logicalKey == LogicalKeyboardKey.select ||
-                                        event.logicalKey == LogicalKeyboardKey.enter ||
-                                        event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-                                  widget.onPlayPause();
-                                  return KeyEventResult.handled;
-                                }
-                                return KeyEventResult.ignored;
-                              },
-                              child: Builder(
-                                builder: (context) {
-                                  final hasFocus = Focus.of(context).hasFocus;
-                                  return GestureDetector(
-                                    onTap: widget.onPlayPause,
-                                    child: AnimatedContainer(
-                                      duration: const Duration(milliseconds: 150),
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        border: Border.all(color: hasFocus ? const Color(0xFF00E5FF) : Colors.transparent, width: 2),
-                                        boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.8), blurRadius: 12)] : [],
-                                      ),
-                                      child: Icon(
-                                        widget.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                                        color: hasFocus ? Colors.white : const Color(0xFF00E5FF),
-                                        size: 26,
-                                      ),
-                                    ),
-                                  );
-                                }
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+
+                          // Fila 2: Programa y Horario
+                          Row(
+                            children: [
+                              Icon(
+                                widget.isPlayingDvrRecording
+                                    ? Icons.fiber_smart_record
+                                    : Icons.play_arrow,
+                                color: const Color(0xFF00E5FF),
+                                size: 12,
                               ),
-                            ),
-                            
-                            if (widget.onToggleFullScreen != null) ...[
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  widget.isPlayingDvrRecording
+                                      ? (widget.dvrRecordingTitle ??
+                                          currentProg.title)
+                                      : currentProg.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
                               const SizedBox(width: 6),
-                              Focus(
-                                onKeyEvent: (node, event) {
-                                  if (event is KeyDownEvent &&
-                                      (event.logicalKey == LogicalKeyboardKey.select ||
-                                          event.logicalKey == LogicalKeyboardKey.enter ||
-                                          event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-                                    widget.onToggleFullScreen!();
-                                    return KeyEventResult.handled;
-                                  }
-                                  return KeyEventResult.ignored;
-                                },
-                                child: Builder(
-                                  builder: (context) {
-                                    final hasFocus = Focus.of(context).hasFocus;
-                                    return InkWell(
-                                      onTap: widget.onToggleFullScreen,
-                                      borderRadius: BorderRadius.circular(6),
-                                      child: AnimatedContainer(
-                                        duration: const Duration(milliseconds: 150),
-                                        padding: const EdgeInsets.all(5),
-                                        decoration: BoxDecoration(
-                                          color: hasFocus ? const Color(0xFFC77DFF) : const Color(0xFF7B2CBF).withOpacity(0.35),
-                                          borderRadius: BorderRadius.circular(6),
-                                          border: Border.all(color: hasFocus ? Colors.white : const Color(0xFFC77DFF), width: hasFocus ? 1.5 : 0.8),
-                                          boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFFC77DFF).withOpacity(0.8), blurRadius: 10)] : [],
-                                        ),
-                                        child: Icon(
-                                          widget.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                                          color: hasFocus ? Colors.black : Colors.white,
-                                          size: 16,
-                                        ),
-                                      ),
-                                    );
-                                  }
+                              Text(
+                                widget.isPlayingDvrRecording
+                                    ? 'DESDE INICIO'
+                                    : currentProg.timeFormatted,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
                             ],
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-
-                        // Fila 2: Programa y Horario
-                        Row(
-                          children: [
-                            Icon(
-                              widget.isPlayingDvrRecording ? Icons.fiber_smart_record : Icons.play_arrow,
-                              color: const Color(0xFF00E5FF),
-                              size: 12,
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                widget.isPlayingDvrRecording
-                                    ? (widget.dvrRecordingTitle ?? currentProg.title)
-                                    : currentProg.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              widget.isPlayingDvrRecording ? 'DESDE INICIO' : currentProg.timeFormatted,
-                              style: const TextStyle(
-                                color: Colors.white54,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-
-                        // Barra de Progreso super delgada
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: LinearProgressIndicator(
-                            value: currentProg.progress.clamp(0.0, 1.0),
-                            backgroundColor: Colors.white12,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              isSyncing ? const Color(0xFFFFB703) : const Color(0xFF00E5FF),
-                            ),
-                            minHeight: 2.5,
                           ),
-                        ),
-                        const SizedBox(height: 8),
+                          const SizedBox(height: 4),
 
-                        // Fila 3: Controles Timeshift y Opciones
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: [
-                              // NUEVO BOTÓN DE BÚSQUEDA IA
-                              _buildCompactControlChip(
-                                focusNode: _playPauseFocusNode,
-                                icon: widget.isPlaying
-                                    ? Icons.pause_rounded
-                                    : Icons.play_arrow_rounded,
-                                label: widget.isPlaying ? 'PAUSA' : 'PLAY',
-                                borderColor: const Color(0xFF00E5FF),
-                                bgColor: const Color(0xFF00E5FF).withOpacity(0.25),
-                                iconColor: const Color(0xFF00E5FF),
-                                onTap: widget.onPlayPause,
+                          // Barra de Progreso super delgada
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: currentProg.progress.clamp(0.0, 1.0),
+                              backgroundColor: Colors.white12,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                isSyncing
+                                    ? const Color(0xFFFFB703)
+                                    : const Color(0xFF00E5FF),
                               ),
-                              const SizedBox(width: 6),
-                              if (widget.onToggleFavorite != null) ...[
+                              minHeight: 2.5,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+
+                          // Fila 3: Controles Timeshift, Favoritos, Canales y Opciones
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
                                 _buildCompactControlChip(
-                                  icon: widget.isFavorite
-                                      ? Icons.star_rounded
-                                      : Icons.star_border_rounded,
-                                  label: widget.isFavorite ? 'FAV ★' : 'FAVORITO',
-                                  borderColor: const Color(0xFFFFD600),
-                                  bgColor: widget.isFavorite
-                                      ? const Color(0xFFFFD600).withOpacity(0.32)
-                                      : const Color(0xFFFFD600).withOpacity(0.12),
-                                  iconColor: const Color(0xFFFFD600),
-                                  onTap: widget.onToggleFavorite!,
-                                ),
-                                const SizedBox(width: 6),
-                              ],
-                              if (widget.onOpenChannelList != null) ...[
-                                _buildCompactControlChip(
-                                  icon: Icons.view_list_rounded,
-                                  label: 'CANALES',
-                                  borderColor: const Color(0xFFC77DFF),
-                                  bgColor: const Color(0xFF7B2CBF).withOpacity(0.35),
-                                  iconColor: const Color(0xFFC77DFF),
-                                  onTap: widget.onOpenChannelList!,
-                                ),
-                                const SizedBox(width: 6),
-                              ],
-                              if (widget.onSearch != null) ...[
-                                _buildCompactControlChip(
-                                  icon: Icons.search,
-                                  label: 'BÚSQUEDA IA',
-                                  borderColor: const Color(0xFF00E5FF).withOpacity(0.6),
-                                  bgColor: const Color(0xFF00E5FF).withOpacity(0.2),
-                                  iconColor: const Color(0xFF00E5FF),
-                                  onTap: widget.onSearch!,
-                                ),
-                                const SizedBox(width: 6),
-                              ],
-                              if (widget.onRewind15s != null) ...[
-                                _buildCompactControlChip(
-                                  icon: Icons.replay_10,
-                                  label: '-15s',
-                                  borderColor: Colors.white24,
-                                  bgColor: Colors.white10,
-                                  onTap: () {
-                                    widget.onRewind15s!();
-                                    setState(() {
-                                      _isManuallyBehindLive = true;
-                                    });
-                                  },
-                                ),
-                                const SizedBox(width: 6),
-                              ],
-                              if (widget.onForward15s != null) ...[
-                                _buildCompactControlChip(
-                                  icon: Icons.forward_10,
-                                  label: '+15s',
-                                  borderColor: Colors.white24,
-                                  bgColor: Colors.white10,
-                                  onTap: () {
-                                    widget.onForward15s!();
-                                  },
-                                ),
-                                const SizedBox(width: 6),
-                              ],
-                              if ((widget.isBehindLive || widget.isPlayingDvrRecording || _isManuallyBehindLive) &&
-                                  widget.onJumpToLive != null) ...[
-                                _buildCompactControlChip(
-                                  icon: Icons.bolt,
-                                  label: 'IR A VIVO',
+                                  focusNode: _playPauseFocusNode,
+                                  icon: widget.isPlaying
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  label: widget.isPlaying ? 'PAUSA' : 'PLAY',
                                   borderColor: const Color(0xFF00E5FF),
-                                  bgColor: const Color(0xFF00E5FF).withOpacity(0.22),
+                                  bgColor:
+                                      const Color(0xFF00E5FF).withOpacity(0.25),
+                                  iconColor: const Color(0xFF00E5FF),
+                                  onTap: widget.onPlayPause,
+                                ),
+                                const SizedBox(width: 6),
+                                if (widget.onToggleFavorite != null) ...[
+                                  _buildCompactControlChip(
+                                    icon: widget.isFavorite
+                                        ? Icons.star_rounded
+                                        : Icons.star_border_rounded,
+                                    label:
+                                        widget.isFavorite ? 'FAV ★' : 'FAVORITO',
+                                    borderColor: const Color(0xFFFFD600),
+                                    bgColor: widget.isFavorite
+                                        ? const Color(0xFFFFD600)
+                                            .withOpacity(0.32)
+                                        : const Color(0xFFFFD600)
+                                            .withOpacity(0.12),
+                                    iconColor: const Color(0xFFFFD600),
+                                    onTap: widget.onToggleFavorite!,
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                if (widget.onOpenChannelList != null) ...[
+                                  _buildCompactControlChip(
+                                    icon: Icons.view_list_rounded,
+                                    label: 'CANALES',
+                                    borderColor: const Color(0xFFC77DFF),
+                                    bgColor: const Color(0xFF7B2CBF)
+                                        .withOpacity(0.35),
+                                    iconColor: const Color(0xFFC77DFF),
+                                    onTap: widget.onOpenChannelList!,
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                if (widget.onSearch != null) ...[
+                                  _buildCompactControlChip(
+                                    icon: Icons.search,
+                                    label: 'BÚSQUEDA IA',
+                                    borderColor: const Color(0xFF00E5FF)
+                                        .withOpacity(0.6),
+                                    bgColor: const Color(0xFF00E5FF)
+                                        .withOpacity(0.2),
+                                    iconColor: const Color(0xFF00E5FF),
+                                    onTap: widget.onSearch!,
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                if (widget.onRewind15s != null) ...[
+                                  _buildCompactControlChip(
+                                    icon: Icons.replay_10,
+                                    label: '-15s',
+                                    borderColor: Colors.white24,
+                                    bgColor: Colors.white10,
+                                    onTap: () {
+                                      widget.onRewind15s!();
+                                      setState(() {
+                                        _isManuallyBehindLive = true;
+                                      });
+                                    },
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                if (widget.onForward15s != null) ...[
+                                  _buildCompactControlChip(
+                                    icon: Icons.forward_10,
+                                    label: '+15s',
+                                    borderColor: Colors.white24,
+                                    bgColor: Colors.white10,
+                                    onTap: () {
+                                      widget.onForward15s!();
+                                    },
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                if ((widget.isBehindLive ||
+                                        widget.isPlayingDvrRecording ||
+                                        _isManuallyBehindLive) &&
+                                    widget.onJumpToLive != null) ...[
+                                  _buildCompactControlChip(
+                                    icon: Icons.bolt,
+                                    label: 'IR A VIVO',
+                                    borderColor: const Color(0xFF00E5FF),
+                                    bgColor: const Color(0xFF00E5FF)
+                                        .withOpacity(0.22),
+                                    iconColor: const Color(0xFF00E5FF),
+                                    onTap: () {
+                                      widget.onJumpToLive!();
+                                      setState(() {
+                                        _isManuallyBehindLive = false;
+                                      });
+                                    },
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                if (widget.onToggleRecord != null &&
+                                    !widget.isPlayingDvrRecording) ...[
+                                  ValueListenableBuilder<bool>(
+                                    valueListenable:
+                                        DvrRecordingService.isRecordingNotifier,
+                                    builder: (context, isRec, _) {
+                                      return _buildCompactControlChip(
+                                        icon: isRec
+                                            ? Icons.stop_circle
+                                            : Icons.fiber_manual_record,
+                                        label: isRec ? 'STOP' : 'REC',
+                                        borderColor: const Color(0xFFFF1744),
+                                        bgColor: isRec
+                                            ? const Color(0xFFFF1744)
+                                                .withOpacity(0.40)
+                                            : const Color(0xFFFF1744)
+                                                .withOpacity(0.16),
+                                        iconColor: const Color(0xFFFF1744),
+                                        onTap: widget.onToggleRecord!,
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                if (widget.onOpenEpg != null) ...[
+                                  _buildCompactControlChip(
+                                    icon: Icons.calendar_month,
+                                    label: 'EPG',
+                                    borderColor: const Color(0xFFC77DFF)
+                                        .withOpacity(0.6),
+                                    bgColor: const Color(0xFF7B2CBF)
+                                        .withOpacity(0.35),
+                                    iconColor: const Color(0xFFFFB703),
+                                    onTap: widget.onOpenEpg!,
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                ValueListenableBuilder<String>(
+                                  valueListenable: PlayerSettingsService
+                                      .subtitleTrackNotifier,
+                                  builder: (context, activeSubLang, _) {
+                                    final bool isCcActive =
+                                        activeSubLang != 'Desactivado' &&
+                                            activeSubLang.isNotEmpty;
+                                    return _buildCompactControlChip(
+                                      icon: Icons.closed_caption,
+                                      label: _getCcShortBadge(activeSubLang),
+                                      borderColor: isCcActive
+                                          ? const Color(0xFF00E5FF)
+                                          : Colors.white24,
+                                      bgColor: isCcActive
+                                          ? const Color(0xFF00E5FF)
+                                              .withOpacity(0.24)
+                                          : Colors.white10,
+                                      iconColor: isCcActive
+                                          ? const Color(0xFF00E5FF)
+                                          : Colors.white70,
+                                      onTap: () {
+                                        PlayerSettingsService
+                                            .showLiveCcLanguageModal(context);
+                                      },
+                                    );
+                                  },
+                                ),
+                                const SizedBox(width: 6),
+                                _buildCompactControlChip(
+                                  icon: Icons.settings_input_component,
+                                  label: 'ADV',
+                                  borderColor:
+                                      const Color(0xFF00E5FF).withOpacity(0.6),
+                                  bgColor:
+                                      const Color(0xFF00E5FF).withOpacity(0.2),
                                   iconColor: const Color(0xFF00E5FF),
                                   onTap: () {
-                                    widget.onJumpToLive!();
+                                    showModalBottomSheet(
+                                      context: context,
+                                      backgroundColor: Colors.transparent,
+                                      isScrollControlled: true,
+                                      builder: (context) =>
+                                          const AdvancedPlayerSettingsSheet(),
+                                    );
+                                  },
+                                ),
+                                const SizedBox(width: 6),
+                                _buildCompactControlChip(
+                                  icon: Icons.skip_previous,
+                                  label: 'CH-',
+                                  borderColor: Colors.white12,
+                                  bgColor: Colors.white10,
+                                  onTap: () {
+                                    widget.onPrevious();
                                     setState(() {
                                       _isManuallyBehindLive = false;
                                     });
                                   },
                                 ),
                                 const SizedBox(width: 6),
-                              ],
-                              if (widget.onToggleRecord != null && !widget.isPlayingDvrRecording) ...[
-                                ValueListenableBuilder<bool>(
-                                  valueListenable: DvrRecordingService.isRecordingNotifier,
-                                  builder: (context, isRec, _) {
-                                    return _buildCompactControlChip(
-                                      icon: isRec ? Icons.stop_circle : Icons.fiber_manual_record,
-                                      label: isRec ? 'STOP' : 'REC',
-                                      borderColor: const Color(0xFFFF1744),
-                                      bgColor: isRec
-                                          ? const Color(0xFFFF1744).withOpacity(0.40)
-                                          : const Color(0xFFFF1744).withOpacity(0.16),
-                                      iconColor: const Color(0xFFFF1744),
-                                      onTap: widget.onToggleRecord!,
-                                    );
+                                _buildCompactControlChip(
+                                  icon: Icons.skip_next,
+                                  label: 'CH+',
+                                  borderColor: Colors.white12,
+                                  bgColor: Colors.white10,
+                                  onTap: () {
+                                    widget.onNext();
+                                    setState(() {
+                                      _isManuallyBehindLive = false;
+                                    });
                                   },
                                 ),
-                                const SizedBox(width: 6),
-                              ],
-                              if (widget.onOpenEpg != null) ...[
-                                _buildCompactControlChip(
-                                  icon: Icons.calendar_month,
-                                  label: 'EPG',
-                                  borderColor: const Color(0xFFC77DFF).withOpacity(0.6),
-                                  bgColor: const Color(0xFF7B2CBF).withOpacity(0.35),
-                                  iconColor: const Color(0xFFFFB703),
-                                  onTap: widget.onOpenEpg!,
+                                const SizedBox(width: 10),
+                                Text(
+                                  'Sig: ${nextProg.title}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: Colors.white54, fontSize: 9.5),
                                 ),
-                                const SizedBox(width: 6),
                               ],
-                              // BOTÓN CC CONECTADO AL MODAL DE TRADUCCIÓN EN VIVO E IDIOMAS
-                              ValueListenableBuilder<String>(
-                                valueListenable: PlayerSettingsService.subtitleTrackNotifier,
-                                builder: (context, activeSubLang, _) {
-                                  final bool isCcActive = activeSubLang != 'Desactivado' && activeSubLang.isNotEmpty;
-                                  return _buildCompactControlChip(
-                                    icon: Icons.closed_caption,
-                                    label: _getCcShortBadge(activeSubLang),
-                                    borderColor: isCcActive ? const Color(0xFF00E5FF) : Colors.white24,
-                                    bgColor: isCcActive
-                                        ? const Color(0xFF00E5FF).withOpacity(0.24)
-                                        : Colors.white10,
-                                    iconColor: isCcActive ? const Color(0xFF00E5FF) : Colors.white70,
-                                    onTap: () {
-                                      PlayerSettingsService.showLiveCcLanguageModal(context);
-                                    },
-                                  );
-                                },
-                              ),
-                              const SizedBox(width: 6),
-                              _buildCompactControlChip(
-                                icon: Icons.settings_input_component,
-                                label: 'ADV',
-                                borderColor: const Color(0xFF00E5FF).withOpacity(0.6),
-                                bgColor: const Color(0xFF00E5FF).withOpacity(0.2),
-                                iconColor: const Color(0xFF00E5FF),
-                                onTap: () {
-                                  showModalBottomSheet(
-                                    context: context,
-                                    backgroundColor: Colors.transparent,
-                                    isScrollControlled: true,
-                                    builder: (context) => const AdvancedPlayerSettingsSheet(),
-                                  );
-                                },
-                              ),
-                              const SizedBox(width: 6),
-                              _buildCompactControlChip(
-                                icon: Icons.skip_previous,
-                                label: 'CH-',
-                                borderColor: Colors.white12,
-                                bgColor: Colors.white10,
-                                onTap: () {
-                                  widget.onPrevious();
-                                  setState(() { _isManuallyBehindLive = false; }); 
-                                },
-                              ),
-                              const SizedBox(width: 6),
-                              _buildCompactControlChip(
-                                icon: Icons.skip_next,
-                                label: 'CH+',
-                                borderColor: Colors.white12,
-                                bgColor: Colors.white10,
-                                onTap: () {
-                                  widget.onNext();
-                                  setState(() { _isManuallyBehindLive = false; }); 
-                                },
-                              ),
-                              const SizedBox(width: 10),
-                              Text(
-                                'Sig: ${nextProg.title}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: Colors.white54, fontSize: 9.5),
-                              ),
-                            ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-      );
-    },
-  );
-}
+        );
+      },
+    );
   }
 
   Widget _buildCompactControlChip({

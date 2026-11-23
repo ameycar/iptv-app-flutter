@@ -47,7 +47,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   final FocusScopeNode _tvFocusScope = FocusScopeNode();
   final FocusNode _sidebarFocusNode = FocusNode();
   final FocusNode _zappingFocusNode = FocusNode();
-  final FocusNode _channelDrawerFocusNode = FocusNode();
+  final FocusScopeNode _channelDrawerFocusNode = FocusScopeNode();
   final TextEditingController _tvSearchCtrl = TextEditingController();
 
   bool _isChannelDrawerOpen = false;
