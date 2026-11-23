@@ -63,7 +63,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   bool _hasOverlayPermission = false;
   double _currentVolume = 1.0;
   double _volumeBeforeMute = 1.0;
-  StreamSubscription<DocumentSnapshot>>? _cloudPlaylistSub;
+  StreamSubscription? _cloudPlaylistSub;
 
   bool _isSidebarExpanded = false;
   bool _isZappingOverlayVisible = false;
@@ -1065,7 +1065,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           data['m3u_playlists_$_currentProfileId'] ?? data['m3u_playlists'];
       if (rawCloud is! List || rawCloud.isEmpty) return;
 
-      final List> incoming = [];
+      final List incoming = [];
       for (final item in rawCloud) {
         if (item is Map) incoming.add(Map<String, dynamic>.from(item));
       }
@@ -1081,13 +1081,14 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
 
       Map<String, dynamic>? incomingActive;
       for (final l in incoming) {
-        if (l['isActive'] == true) {
-          incomingActive = l;
+        if (l is Map && l['isActive'] == true) {
+          incomingActive = Map<String, dynamic>.from(l);
           break;
         }
       }
-      incomingActive ??= incoming.first;
-      final incomingUrl = (incomingActive['url'] ?? '').toString().trim();
+      final activeMap =
+          incomingActive ?? Map<String, dynamic>.from(incoming.first as Map);
+      final incomingUrl = (activeMap['url'] ?? '').toString().trim();
 
       if (incomingUrl.isNotEmpty &&
           (incomingUrl != currentActiveUrl || _channels.length <= 2)) {
@@ -1097,9 +1098,10 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             'm3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
         await _downloadAndSanitizeM3u(
           incomingUrl,
-          playlistId: incomingActive['id']?.toString(),
-          playlistName: incomingActive['name']?.toString(),
+          playlistId: activeMap['id']?.toString(),
+          playlistName: activeMap['name']?.toString(),
         );
+      }
       }
     }, onError: (_) {});
   }

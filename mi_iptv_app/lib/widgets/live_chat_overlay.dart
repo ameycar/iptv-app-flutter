@@ -62,7 +62,7 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
   final List<_LiveChatMsg> _optimisticMessages = [];
   final Set<String> _recentSenders = {};
 
-  StreamSubscription<QuerySnapshot>>? _messagesSub;
+ StreamSubscription? _messagesSub;
   List<_LiveChatMsg> _serverMessages = [];
 
   bool _isFeedAwake = true;
