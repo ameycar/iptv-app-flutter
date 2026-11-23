@@ -5,10 +5,12 @@ import android.Manifest
 import android.app.ActivityManager
 import android.app.PictureInPictureParams
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -52,6 +54,23 @@ class MainActivity : FlutterActivity() {
                 "getPersistentDeviceId" -> {
                     result.success(getPersistentDeviceFingerprint())
                 }
+                "canDrawOverlays" -> {
+                    result.success(canDrawOverlaysPermission())
+                }
+                "requestOverlayPermission" -> {
+                    result.success(openOverlayPermissionSettings())
+                }
+                "isAutoStartEnabled" -> {
+                    result.success(isAutoStartEnabled())
+                }
+                "setAutoStartEnabled" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: true
+                    setAutoStartEnabled(enabled)
+                    result.success(true)
+                }
+                "openCaptionSettings" -> {
+                    result.success(openCaptionSettingsScreen())
+                }
                 else -> result.notImplemented()
             }
         }
@@ -68,6 +87,72 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun canDrawOverlaysPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(this)
+        } else {
+            true
+        }
+    }
+
+    private fun openOverlayPermissionSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true
+        }
+
+        val intents = listOf(
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+
+        for (intent in intents) {
+            try {
+                startActivity(intent)
+                return true
+            } catch (_: Exception) {
+                // Probar siguiente ruta compatible con Android TV / TV Box
+            }
+        }
+        return false
+    }
+
+    private fun openCaptionSettingsScreen(): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_CAPTIONING_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun isAutoStartEnabled(): Boolean {
+        return try {
+            val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            prefs.getBoolean("flutter.auto_start_on_boot", true)
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    private fun setAutoStartEnabled(enabled: Boolean) {
+        try {
+            val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("flutter.auto_start_on_boot", enabled).apply()
+        } catch (_: Exception) {}
     }
 
     private fun getDeviceTotalRamMb(): Int {

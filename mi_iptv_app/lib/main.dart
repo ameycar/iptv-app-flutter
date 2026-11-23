@@ -442,6 +442,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       // Carga inmediata en el arranque para que no reaparezcan al refrescar
       await ParentalService.getHiddenMenuItems();
+      await ParentalService.getProfanityFilterEnabled();
       await PlayerSettingsService.initialize();
 
       final aliases = await UserCustomizationService.getChannelAliases();
@@ -586,13 +587,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           case 'channel_prev':
             _previousChannel();
             break;
+          case 'play_pause':
+            setState(() => _isPlayerPaused = !_isPlayerPaused);
+            break;
           case 'play':
-            await _videoPlayerController?.play();
-            if (mounted) setState(() {});
+            setState(() => _isPlayerPaused = false);
             break;
           case 'pause':
-            await _videoPlayerController?.pause();
-            if (mounted) setState(() => _isBehindLive = true);
+            setState(() {
+              _isPlayerPaused = true;
+              _isBehindLive = true;
+            });
+            break;
+          case 'toggle_osd':
+            _toggleOsd();
+            break;
+          case 'toggle_chat':
+            if (!ParentalService.isChatHiddenSync()) {
+              setState(() => _showLiveChat = !_showLiveChat);
+            }
+            break;
+          case 'toggle_favorite':
+            if (_channels.isNotEmpty && _selectedChannelIndex < _channels.length) {
+              _toggleFavorite(_channels[_selectedChannelIndex]);
+            }
             break;
           case 'rewind_15':
             await _seekRelativeSeconds(-15);
@@ -1783,6 +1801,7 @@ void _openParentalManagerDialog() async {
                 ParentalService.getLockedCategories(),
                 ParentalService.getSleepSchedule(),
                 ParentalService.getHiddenMenuItems(),
+                ParentalService.getProfanityFilterEnabled(),
               ]),
               builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
                 final lockedCats = (snapshot.data?[0] as List<String>?) ?? [];
@@ -1790,6 +1809,7 @@ void _openParentalManagerDialog() async {
                   'enabled': false, 'startH': 22, 'startM': 0, 'endH': 6, 'endM': 0
                 };
                 final hiddenItems = (snapshot.data?[2] as List<String>?) ?? [];
+                final profanityFilterOn = (snapshot.data?[3] as bool?) ?? true;
                 final sleepEnabled = sleepData['enabled'] as bool;
                 final startH = (sleepData['startH'] as int).toString().padLeft(2, '0');
                 final startM = (sleepData['startM'] as int).toString().padLeft(2, '0');
@@ -1853,6 +1873,7 @@ void _openParentalManagerDialog() async {
                                 {'key': 'm3u', 'title': 'Gestor de Listas M3U', 'icon': Icons.playlist_play},
                                 {'key': 'remote', 'title': 'Mando a Distancia TV & Cast', 'icon': Icons.settings_remote},
                                 {'key': 'referral', 'title': 'Círculo AMEYCAR (Gana +15 Días)', 'icon': Icons.card_giftcard},
+                                {'key': 'chat', 'title': 'Chat y Reacciones en Vivo', 'icon': Icons.forum_outlined},
                                 if (AuthService.currentUser?.isVip == true)
                                   {'key': 'pip', 'title': 'Ventana Flotante (PiP)', 'icon': Icons.picture_in_picture_alt_rounded},
                               ].map((opt) {
@@ -1875,12 +1896,55 @@ void _openParentalManagerDialog() async {
                                       if (!hiddenItems.contains(key)) hiddenItems.add(key);
                                     }
                                     await ParentalService.setHiddenMenuItems(hiddenItems);
+                                    if (key == 'chat' && checked != true) {
+                                      _showLiveChat = false;
+                                    }
                                     setParentalState(() {});
                                     setState(() {});
                                   },
                                 );
                               }),
                             ],
+                          ),
+                        ),
+                        // --- FILTRO DE GROSERÍAS EN CHAT EN VIVO ---
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E293B),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: profanityFilterOn
+                                  ? const Color(0xFF00E676)
+                                  : Colors.white10,
+                            ),
+                          ),
+                          child: SwitchListTile(
+                            activeColor: const Color(0xFF00E676),
+                            secondary: Icon(
+                              Icons.shield_rounded,
+                              color: profanityFilterOn
+                                  ? const Color(0xFF00E676)
+                                  : Colors.white38,
+                            ),
+                            title: const Text(
+                              'Filtro de Groserías (Chat en Vivo)',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14),
+                            ),
+                            subtitle: const Text(
+                              'Censura palabras obscenas automáticamente al enviar y leer.',
+                              style: TextStyle(
+                                  color: Colors.white60, fontSize: 11.5),
+                            ),
+                            value: profanityFilterOn,
+                            onChanged: (val) async {
+                              await ParentalService.setProfanityFilterEnabled(
+                                  val);
+                              setParentalState(() {});
+                            },
                           ),
                         ),
                         // --- MÓDULO HORA DE SUEÑO / APAGADO PROGRAMADO ---
@@ -3845,6 +3909,7 @@ void _showColorBlindSelectorDialog() {
 
                       if (AuthService.currentUser?.isVip == true && !ParentalService.isMenuItemHiddenSync('pip'))
                         _buildSideMenuItem(Icons.picture_in_picture_alt_rounded, 'Ventana Flotante', _enterNativePiP),
+                        if (!ParentalService.isChatHiddenSync())
 
                       _buildSideMenuItem(Icons.forum_outlined, 'Chat / Emojis Vivo', () => setState(() => _showLiveChat = !_showLiveChat)),
 
@@ -4136,6 +4201,8 @@ void _showColorBlindSelectorDialog() {
                           tooltip: 'Asistente de Voz IA',
                           onPressed: _startVoiceSearch,
                         ),
+
+                        if (!ParentalService.isChatHiddenSync())
 
                         _buildTopBarActionItem(
                           icon: _showLiveChat ? Icons.forum : Icons.emoji_emotions_outlined,
@@ -4929,7 +4996,7 @@ void _showColorBlindSelectorDialog() {
 
             _buildActiveRecordingTopBadge(),
 
-            if (_showLiveChat && activeChannel != null)
+            if (_showLiveChat && activeChannel != null && !ParentalService.isChatHiddenSync())
               Positioned.fill(
                 child: LiveChatOverlay(
                   channelId: safeChannelId,
@@ -4968,6 +5035,7 @@ void _showColorBlindSelectorDialog() {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                     if (!ParentalService.isChatHiddenSync())
                     _buildMiniPlayerPillButton(
                       icon: _showLiveChat ? Icons.forum : Icons.emoji_emotions_outlined,
                       label: _showLiveChat ? 'Cerrar Chat' : 'Vivo 💬',
@@ -5311,7 +5379,7 @@ void _showColorBlindSelectorDialog() {
 
             _buildActiveRecordingTopBadge(),
 
-            if (_showLiveChat && activeChannel != null)
+            if (_showLiveChat && activeChannel != null && !ParentalService.isChatHiddenSync())
               Positioned.fill(
                 child: LiveChatOverlay(
                   channelId: safeChannelId,
@@ -5373,6 +5441,7 @@ void _showColorBlindSelectorDialog() {
                       ),
                     ],
                     const SizedBox(width: 8),
+                    if (!ParentalService.isChatHiddenSync())
                     _buildMiniPlayerPillButton(
                       icon: Icons.forum,
                       label: _showLiveChat ? 'Ocultar Chat' : 'Chat Vivo 🔥',

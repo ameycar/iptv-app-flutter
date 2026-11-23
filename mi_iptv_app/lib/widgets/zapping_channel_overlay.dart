@@ -31,6 +31,8 @@ class ZappingChannelOverlay extends StatefulWidget {
   final bool autoFocusControls;
   final VoidCallback? onUserInteraction;
   final VoidCallback? onClose;
+  final bool isChatOpen;
+  final VoidCallback? onToggleChat;
 
   const ZappingChannelOverlay({
     super.key,
@@ -58,6 +60,8 @@ class ZappingChannelOverlay extends StatefulWidget {
     this.autoFocusControls = false,
     this.onUserInteraction,
     this.onClose,
+    this.isChatOpen = false,
+    this.onToggleChat,
   });
 
   @override
@@ -620,6 +624,24 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                                         .withOpacity(0.35),
                                     iconColor: const Color(0xFFC77DFF),
                                     onTap: widget.onOpenChannelList!,
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                if (widget.onToggleChat != null) ...[
+                                  _buildCompactControlChip(
+                                    icon: widget.isChatOpen
+                                        ? Icons.forum_rounded
+                                        : Icons.chat_bubble_outline_rounded,
+                                    label:
+                                        widget.isChatOpen ? 'CHAT ON' : 'CHAT',
+                                    borderColor: const Color(0xFFFFD600),
+                                    bgColor: widget.isChatOpen
+                                        ? const Color(0xFFFFD600)
+                                            .withOpacity(0.32)
+                                        : const Color(0xFFFFD600)
+                                            .withOpacity(0.14),
+                                    iconColor: const Color(0xFFFFD600),
+                                    onTap: widget.onToggleChat!,
                                   ),
                                   const SizedBox(width: 6),
                                 ],

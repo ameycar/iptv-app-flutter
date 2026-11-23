@@ -9,8 +9,9 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <uses-permission android:name="android.permission.BLUETOOTH"/>
 
-    <!-- Permisos para Alarmas, Recordatorios de la Guía EPG y Notificaciones con la App Cerrada -->
+    <!-- Permisos para Auto-Inicio al Encender TV (Superposición) y Alarmas EPG -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
@@ -62,7 +63,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Receptores requeridos para que las alarmas y recordatorios funcionen con la app cerrada -->
+        <!-- Receptores requeridos para que las alarmas y el auto-inicio funcionen con la app cerrada -->
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
             android:exported="false" />
@@ -74,6 +75,8 @@
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </receiver>
         <receiver

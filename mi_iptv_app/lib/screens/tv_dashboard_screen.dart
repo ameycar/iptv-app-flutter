@@ -17,6 +17,8 @@ import '../widgets/zapping_channel_overlay.dart';
 import '../widgets/pin_dialog.dart';
 import '../widgets/alexa_voice_sheet.dart';
 import '../widgets/onboarding_tutorial_modal.dart';
+import '../widgets/live_chat_overlay.dart';
+import '../services/remote_control_service.dart';
 import '../services/m3u_sanitizer_service.dart';
 import '../services/auth_service.dart';
 import '../services/epg_service.dart';
@@ -55,6 +57,13 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   String _selectedLiveCategory = 'Todos';
   String _tvChannelSearchQuery = '';
   final Set<String> _favoriteChannelUrls = {};
+  static const MethodChannel _deviceChannel = MethodChannel('ameycar.tv/device');
+  bool _showLiveChat = false;
+  bool _autoStartOnBoot = true;
+  bool _hasOverlayPermission = false;
+  double _currentVolume = 1.0;
+  double _volumeBeforeMute = 1.0;
+  StreamSubscription<DocumentSnapshot>>? _cloudPlaylistSub;
 
   bool _isSidebarExpanded = false;
   bool _isZappingOverlayVisible = false;
@@ -123,10 +132,17 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     super.initState();
     EpgService.ensureInitialized();
     PlayerSettingsService.initialize();
+    ParentalService.getHiddenMenuItems().then((_) {
+      if (mounted) setState(() {});
+    });
+    ParentalService.getProfanityFilterEnabled();
     _startClockTimer();
     _loadInitialPreferences();
     _loadChannels();
     _listenToGlobalAnnouncements();
+    _startCloudPlaylistsRealtimeListener();
+    _startListeningRemoteTvCommands();
+    _checkAutoStartAndOverlayStatus(promptIfMissing: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       OnboardingTutorialModal.showIfFirstTime(
         context,
@@ -783,8 +799,9 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     unawaited(_syncProgressToCloud());
     _currentPlaybackPosition = 0;
     final int total = _channels.length;
+    final int nextIndex = (_selectedChannelIndex + 1).remainder(total);
     setState(() {
-      _selectedChannelIndex = (_selectedChannelIndex + 1).remainder(total);
+      _selectedChannelIndex = nextIndex;
       _isPlayerPaused = false;
       _isBehindLive = false;
       _isPlayingDvrRecording = false;
@@ -792,8 +809,11 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       _showOsd = true;
       _osdInteractive = false;
     });
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setInt('last_played_channel_index', nextIndex);
+    });
     _triggerOsdTimer();
-    _startProgressSync(_channels[_selectedChannelIndex].streamUrl);
+    _startProgressSync(_channels[nextIndex].streamUrl);
   }
 
   void _previousChannel() {
@@ -801,9 +821,10 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     unawaited(_syncProgressToCloud());
     _currentPlaybackPosition = 0;
     final int total = _channels.length;
+    final int prevIndex =
+        (_selectedChannelIndex - 1 < 0) ? total - 1 : _selectedChannelIndex - 1;
     setState(() {
-      _selectedChannelIndex =
-          (_selectedChannelIndex - 1 < 0) ? total - 1 : _selectedChannelIndex - 1;
+      _selectedChannelIndex = prevIndex;
       _isPlayerPaused = false;
       _isBehindLive = false;
       _isPlayingDvrRecording = false;
@@ -811,8 +832,396 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       _showOsd = true;
       _osdInteractive = false;
     });
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setInt('last_played_channel_index', prevIndex);
+    });
     _triggerOsdTimer();
-    _startProgressSync(_channels[_selectedChannelIndex].streamUrl);
+    _startProgressSync(_channels[prevIndex].streamUrl);
+  }
+
+  // --- AUTO-INICIO AL ENCENDER TV Y PERMISO DE SUPERPOSICIÓN ---
+  Future<void> _checkAutoStartAndOverlayStatus(
+      {bool promptIfMissing = false}) async {
+    if (kIsWeb) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final enabled = prefs.getBool('auto_start_on_boot') ?? true;
+      if (!prefs.containsKey('auto_start_on_boot')) {
+        await prefs.setBool('auto_start_on_boot', true);
+      }
+
+      bool canOverlay = true;
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        try {
+          canOverlay =
+              await _deviceChannel.invokeMethod<bool>('canDrawOverlays') ??
+                  false;
+        } catch (_) {}
+      }
+
+      if (mounted) {
+        setState(() {
+          _autoStartOnBoot = enabled;
+          _hasOverlayPermission = canOverlay;
+        });
+      }
+
+      if (promptIfMissing &&
+          enabled &&
+          !canOverlay &&
+          defaultTargetPlatform == TargetPlatform.android) {
+        final alreadyPrompted =
+            prefs.getBool('overlay_permission_prompted_v1') ?? false;
+        if (!alreadyPrompted) {
+          await prefs.setBool('overlay_permission_prompted_v1', true);
+          Future.delayed(const Duration(seconds: 3), () {
+            if (mounted && !_hasOverlayPermission) {
+              _openAutoStartSettingsModal();
+            }
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _setAutoStartOnBoot(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('auto_start_on_boot', enabled);
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await _deviceChannel
+            .invokeMethod('setAutoStartEnabled', {'enabled': enabled});
+      } catch (_) {}
+    }
+    if (mounted) {
+      setState(() => _autoStartOnBoot = enabled);
+    }
+  }
+
+  void _openAutoStartSettingsModal() {
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) => Dialog(
+          backgroundColor: const Color(0xFF0E1320),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
+          ),
+          child: Container(
+            width: 560,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.power_settings_new_rounded,
+                        color: Color(0xFF00E676), size: 30),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Auto-inicio al Encender TV y Superposición',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Abre AMEYCAR TV automáticamente al encender tu televisor y sintoniza el último canal que estabas viendo.',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 14),
+                SwitchListTile(
+                  activeColor: const Color(0xFF00E676),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
+                    'Iniciar automáticamente al encender el TV',
+                    style: TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    _autoStartOnBoot
+                        ? 'Activado (puedes desactivarlo cuando desees)'
+                        : 'Desactivado',
+                    style: const TextStyle(color: Colors.white60, fontSize: 12),
+                  ),
+                  value: _autoStartOnBoot,
+                  onChanged: (val) async {
+                    await _setAutoStartOnBoot(val);
+                    setModalState(() {});
+                  },
+                ),
+                const Divider(color: Colors.white12, height: 20),
+                Row(
+                  children: [
+                    Icon(
+                      _hasOverlayPermission
+                          ? Icons.verified_rounded
+                          : Icons.warning_amber_rounded,
+                      color: _hasOverlayPermission
+                          ? const Color(0xFF00E676)
+                          : const Color(0xFFFFD600),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _hasOverlayPermission
+                            ? 'Permiso de superposición concedido ✓'
+                            : 'Android TV 10+ requiere activar "Mostrar sobre otras apps" para que inicie sola al encender.',
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12.5),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () async {
+                        await _checkAutoStartAndOverlayStatus();
+                        setModalState(() {});
+                        if (ctx.mounted) Navigator.pop(ctx);
+                      },
+                      child: const Text('Cerrar',
+                          style: TextStyle(color: Colors.white70)),
+                    ),
+                    const SizedBox(width: 10),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00E5FF),
+                        foregroundColor: Colors.black,
+                      ),
+                      icon: const Icon(Icons.layers_rounded, size: 18),
+                      label: Text(
+                        _hasOverlayPermission
+                            ? 'Revisar Permiso'
+                            : 'Activar Superposición',
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      onPressed: () async {
+                        try {
+                          await _deviceChannel
+                              .invokeMethod('requestOverlayPermission');
+                        } catch (_) {}
+                        await Future.delayed(const Duration(milliseconds: 800));
+                        await _checkAutoStartAndOverlayStatus();
+                        setModalState(() {});
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- SINCRONIZACIÓN EN TIEMPO REAL DE LISTAS M3U Y PARENTAL DESDE CELULAR/NUBE ---
+  void _startCloudPlaylistsRealtimeListener() {
+    final user = AuthService.currentUser;
+    if (user == null || !AuthService.isFirebaseAvailable) return;
+
+    _cloudPlaylistSub?.cancel();
+    _cloudPlaylistSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.id)
+        .snapshots()
+        .listen((snap) async {
+      if (!mounted || !snap.exists) return;
+      final data = snap.data();
+      if (data == null) return;
+
+      // Sincronizar cambios parentales en vivo (Ocultar chat / Filtro groserías)
+      if (data['hidden_menu_items'] is List) {
+        final hidden =
+            (data['hidden_menu_items'] as List).map((e) => e.toString()).toList();
+        ParentalService.hiddenItemsNotifier.value = hidden;
+        if (hidden.contains('chat') && _showLiveChat && mounted) {
+          setState(() => _showLiveChat = false);
+        }
+      }
+      if (data.containsKey('chat_profanity_filter')) {
+        ParentalService.profanityFilterNotifier.value =
+            data['chat_profanity_filter'] != false;
+      }
+
+      // Sincronizar listas M3U agregadas o cambiadas desde el celular o la web
+      final rawCloud =
+          data['m3u_playlists_$_currentProfileId'] ?? data['m3u_playlists'];
+      if (rawCloud is! List || rawCloud.isEmpty) return;
+
+      final List> incoming = [];
+      for (final item in rawCloud) {
+        if (item is Map) incoming.add(Map<String, dynamic>.from(item));
+      }
+      if (incoming.isEmpty) return;
+
+      String currentActiveUrl = '';
+      for (final l in _savedPlaylists) {
+        if (l is Map && l['isActive'] == true) {
+          currentActiveUrl = (l['url'] ?? '').toString().trim();
+          break;
+        }
+      }
+
+      Map<String, dynamic>? incomingActive;
+      for (final l in incoming) {
+        if (l['isActive'] == true) {
+          incomingActive = l;
+          break;
+        }
+      }
+      incomingActive ??= incoming.first;
+      final incomingUrl = (incomingActive['url'] ?? '').toString().trim();
+
+      if (incomingUrl.isNotEmpty &&
+          (incomingUrl != currentActiveUrl || _channels.length <= 2)) {
+        _savedPlaylists = incoming;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+            'm3u_lists_$_currentProfileId', jsonEncode(_savedPlaylists));
+        await _downloadAndSanitizeM3u(
+          incomingUrl,
+          playlistId: incomingActive['id']?.toString(),
+          playlistName: incomingActive['name']?.toString(),
+        );
+      }
+    }, onError: (_) {});
+  }
+
+  // --- RECEPTOR EN VIVO DEL MANDO A DISTANCIA DESDE EL CELULAR ---
+  void _startListeningRemoteTvCommands() {
+    RemoteControlService.listenToCommands(
+      onCommandReceived: (command, extra) async {
+        if (!mounted) return;
+        final activeCh =
+            _channels.isNotEmpty && _selectedChannelIndex < _channels.length
+                ? _channels[_selectedChannelIndex]
+                : null;
+
+        switch (command) {
+          case 'channel_next':
+            _nextChannel();
+            break;
+          case 'channel_prev':
+            _previousChannel();
+            break;
+          case 'play_pause':
+            setState(() => _isPlayerPaused = !_isPlayerPaused);
+            if (_showOsd) _triggerOsdTimer();
+            break;
+          case 'play':
+            setState(() => _isPlayerPaused = false);
+            break;
+          case 'pause':
+            setState(() {
+              _isPlayerPaused = true;
+              _isBehindLive = true;
+            });
+            break;
+          case 'rewind_15':
+            await _seekRelativeSeconds(-15);
+            break;
+          case 'forward_15':
+            await _seekRelativeSeconds(15);
+            break;
+          case 'jump_live':
+            _jumpBackToLiveStream();
+            break;
+          case 'toggle_rec':
+            await _toggleManualDvrRecording(activeCh);
+            break;
+          case 'toggle_osd':
+            _toggleOsd(interactive: true);
+            break;
+          case 'open_channels':
+            if (_isChannelDrawerOpen) {
+              _closeChannelDrawer();
+            } else {
+              _openChannelDrawer();
+            }
+            break;
+          case 'toggle_chat':
+            if (!ParentalService.isChatHiddenSync()) {
+              setState(() {
+                _showLiveChat = !_showLiveChat;
+                if (_showLiveChat) {
+                  _showOsd = false;
+                  _osdInteractive = false;
+                }
+              });
+            }
+            break;
+          case 'toggle_favorite':
+            if (activeCh != null) {
+              await _toggleFavoriteChannel(activeCh);
+            }
+            break;
+          case 'toggle_fullscreen':
+            setState(() {
+              _selectedSection = 'Televisión';
+              _isChannelDrawerOpen = false;
+              _isSidebarExpanded = false;
+              _showOsd = false;
+              _osdInteractive = false;
+              _showLiveChat = false;
+            });
+            FocusScope.of(context).requestFocus(_tvFocusScope);
+            break;
+          case 'vol_up':
+            setState(() {
+              _currentVolume = (_currentVolume + 0.15).clamp(0.0, 1.0);
+            });
+            break;
+          case 'vol_down':
+            setState(() {
+              _currentVolume = (_currentVolume - 0.15).clamp(0.0, 1.0);
+            });
+            break;
+          case 'mute_toggle':
+            setState(() {
+              if (_currentVolume > 0.01) {
+                _volumeBeforeMute = _currentVolume;
+                _currentVolume = 0.0;
+              } else {
+                _currentVolume =
+                    _volumeBeforeMute > 0.05 ? _volumeBeforeMute : 1.0;
+              }
+            });
+            break;
+          case 'tune_channel':
+            final url = (extra['url'] ?? '').toString().trim();
+            final name = (extra['name'] ?? '').toString().trim();
+            int idx = -1;
+            if (url.isNotEmpty) {
+              idx = _channels.indexWhere((c) => c.streamUrl.trim() == url);
+            }
+            if (idx == -1 && name.isNotEmpty) {
+              idx = _channels.indexWhere(
+                  (c) => c.name.toLowerCase() == name.toLowerCase());
+            }
+            if (idx != -1) {
+              _playContent(_channels[idx]);
+            }
+            break;
+        }
+      },
+    );
   }
 
   void _triggerZappingOverlay() {
@@ -844,6 +1253,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     _zappingFocusNode.dispose();
     _currentTimeNotifier.dispose();
     _channelDrawerFocusNode.dispose();
+    _cloudPlaylistSub?.cancel();
+    RemoteControlService.dispose();
     _tvSearchCtrl.dispose();
     super.dispose();
   }
@@ -860,7 +1271,10 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop) {
-          if (_isChannelDrawerOpen) {
+          if (_showLiveChat) {
+            setState(() => _showLiveChat = false);
+            FocusScope.of(context).requestFocus(_tvFocusScope);
+          } else if (_isChannelDrawerOpen) {
             _closeChannelDrawer();
           } else if (_isSidebarExpanded) {
             setState(() => _isSidebarExpanded = false);
@@ -881,8 +1295,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             final key = event.logicalKey;
 
             if (!isTvMode) return KeyEventResult.ignored;
-            if (_isSidebarExpanded || _isChannelDrawerOpen) {
-              return KeyEventResult.ignored;
+           if (_isSidebarExpanded || _isChannelDrawerOpen || _showLiveChat) {
+            return KeyEventResult.ignored;
             }
 
             // Botones físicos CH+ / CH- del control remoto SIEMPRE cambian canal al instante
@@ -970,6 +1384,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     streamUrl: (_isPlayingDvrRecording && _activeDvrFilePath != null)
                         ? _activeDvrFilePath!
                         : (activeChannel?.streamUrl ?? ''),
+                        volume: _currentVolume,
                     isPlaying: !_isPlayerPaused,
                     colorBlindMode: _selectedColorBlindMode,
                   ),
@@ -1356,8 +1771,31 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   child: _buildTvChannelDrawer(),
                 ),
 
+              // 5C. CHAT EN VIVO EN SMART TV (Oculto si Control Parental desactiva el chat)
+              if (isTvMode &&
+                  _showLiveChat &&
+                  !_isChannelDrawerOpen &&
+                  activeChannel != null &&
+                  !ParentalService.isChatHiddenSync())
+                Positioned.fill(
+                  child: LiveChatOverlay(
+                    channelId: activeChannel.name
+                        .replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_'),
+                    channelName: activeChannel.name,
+                    isTvMode: true,
+                    onClose: () {
+                      setState(() => _showLiveChat = false);
+                      FocusScope.of(context).requestFocus(_tvFocusScope);
+                    },
+                  ),
+                ),
+
               // 6. OSD OVERLAY (Banner rápido al zapear / Interactivo al pulsar OK)
-              if (isTvMode && _showOsd && !_isChannelDrawerOpen && activeChannel != null)
+              if (isTvMode &&
+                  _showOsd &&
+                  !_isChannelDrawerOpen &&
+                  !_showLiveChat &&
+                  activeChannel != null)
                 ExcludeFocus(
                   excluding: !_osdInteractive,
                   child: ZappingChannelOverlay(
@@ -1370,11 +1808,24 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     isPlayingDvrRecording: _isPlayingDvrRecording,
                     dvrRecordingTitle: _activeDvrTitle,
                     isFavorite: _isChannelFavorite(activeChannel),
+                    isChatOpen: _showLiveChat,
                     autoFocusControls: _osdInteractive,
                     onUserInteraction: _triggerOsdTimer,
                     onClose: _closeOsd,
-                    onToggleFavorite: () => _toggleFavoriteChannel(activeChannel),
+                    onToggleFavorite: () =>
+                        _toggleFavoriteChannel(activeChannel),
                     onOpenChannelList: _openChannelDrawer,
+                    onToggleChat: ParentalService.isChatHiddenSync()
+                        ? null
+                        : () {
+                            setState(() {
+                              _showLiveChat = !_showLiveChat;
+                              if (_showLiveChat) {
+                                _showOsd = false;
+                                _osdInteractive = false;
+                              }
+                            });
+                          },
                     onPlayPause: () {
                       if (activeChannel.contentType == 'live') {
                         PremiumManager.runIfPremium(context, action: () {
@@ -1392,7 +1843,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     onRewind15s: () => _seekRelativeSeconds(-15),
                     onForward15s: () => _seekRelativeSeconds(15),
                     onJumpToLive: _jumpBackToLiveStream,
-                    onToggleRecord: () => _toggleManualDvrRecording(activeChannel),
+                    onToggleRecord: () =>
+                        _toggleManualDvrRecording(activeChannel),
                     onOpenEpg: () => _openTvEpgModal(activeChannel),
                   ),
                 ),
@@ -2234,6 +2686,20 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                     subtitle: 'Definir build mínimo obligatorio para usuarios',
                     onTap: () =>
                         AppUpdateGuard.showAdminVersionControlModal(context),
+                  ),
+                  if (!kIsWeb)
+                  _buildTvSettingsCard(
+                    icon: Icons.power_settings_new_rounded,
+                    color: _autoStartOnBoot
+                        ? const Color(0xFF00E676)
+                        : Colors.white54,
+                    title: 'Auto-inicio TV y Superposición',
+                    subtitle: _autoStartOnBoot
+                        ? (_hasOverlayPermission
+                            ? 'Activo • Permiso concedido ✓'
+                            : 'Activo • Falta activar permiso de superposición')
+                        : 'Desactivado (toca para activar)',
+                    onTap: _openAutoStartSettingsModal,
                   ),
                 _buildTvSettingsCard(
                   icon: Icons.closed_caption_rounded,
@@ -3399,13 +3865,19 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             future: Future.wait([
               ParentalService.getLockedCategories(),
               ParentalService.getSleepSchedule(),
+              ParentalService.getHiddenMenuItems(),
+              ParentalService.getProfanityFilterEnabled(),
             ]),
             builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
               final lockedCats = (snapshot.data?[0] as List<String>?) ?? [];
               final sleepData =
                   (snapshot.data?[1] as Map<String, dynamic>?) ??
                       {'enabled': false, 'startH': 22, 'startM': 0, 'endH': 6, 'endM': 0};
+              final hiddenItems =
+                  List<String>.from((snapshot.data?[2] as List<String>?) ?? []);
+              final profanityFilterOn = (snapshot.data?[3] as bool?) ?? true;
               final sleepEnabled = sleepData['enabled'] as bool;
+              final isChatHidden = hiddenItems.contains('chat');
 
               return Dialog(
                 backgroundColor: const Color(0xFF111827),
@@ -3414,8 +3886,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   side: const BorderSide(color: Colors.amberAccent, width: 1.5),
                 ),
                 child: Container(
-                  width: 600,
-                  height: 500,
+                  width: 620,
+                  height: 580,
                   padding: const EdgeInsets.all(24),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -3440,8 +3912,52 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 8),
                       SwitchListTile(
+                        dense: true,
+                        activeColor: const Color(0xFF00E676),
+                        title: const Text('Filtro de Groserías en Chat en Vivo',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
+                        subtitle: const Text(
+                            'Censura automáticamente palabras obscenas en la sala',
+                            style: TextStyle(color: Colors.white60, fontSize: 12)),
+                        value: profanityFilterOn,
+                        onChanged: (val) async {
+                          await ParentalService.setProfanityFilterEnabled(val);
+                          setParentalState(() {});
+                        },
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        activeColor: Colors.amberAccent,
+                        title: const Text('Ocultar Chat en Vivo (Modo Niños)',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
+                        subtitle: const Text(
+                            'Desactiva por completo el chat y botones en TV y Celular',
+                            style: TextStyle(color: Colors.white60, fontSize: 12)),
+                        value: isChatHidden,
+                        onChanged: (hide) async {
+                          if (hide) {
+                            if (!hiddenItems.contains('chat')) {
+                              hiddenItems.add('chat');
+                            }
+                            if (_showLiveChat && mounted) {
+                              setState(() => _showLiveChat = false);
+                            }
+                          } else {
+                            hiddenItems.remove('chat');
+                          }
+                          await ParentalService.setHiddenMenuItems(hiddenItems);
+                          setParentalState(() {});
+                          setState(() {});
+                        },
+                      ),
+                      SwitchListTile(
+                        dense: true,
                         activeColor: const Color(0xFF00E5FF),
                         title: const Text('Hora de Sueño (Apagado Nocturno)',
                             style: TextStyle(
@@ -3449,7 +3965,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                                 fontWeight: FontWeight.bold)),
                         subtitle: const Text(
                             'Bloquea la reproducción en horario nocturno',
-                            style: TextStyle(color: Colors.white60)),
+                            style: TextStyle(color: Colors.white60, fontSize: 12)),
                         value: sleepEnabled,
                         onChanged: (val) async {
                           await ParentalService.setSleepSchedule(

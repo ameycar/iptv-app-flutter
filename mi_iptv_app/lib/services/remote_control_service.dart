@@ -14,16 +14,20 @@ class RemoteControlService {
   static String _lastExecutedNonce = '';
   static bool _initialSnapshotSkipped = false;
 
+  static final ValueNotifier<bool> isListeningNotifier =
+      ValueNotifier<bool>(false);
+
   /// Envía un comando instantáneo desde el celular hacia la TV / PC / Chromecast
-  static Future<void> sendCommandToTv({
+  static Future<bool> sendCommandToTv({
     required String command,
     Map<String, dynamic>? extraData,
   }) async {
-    if (!AuthService.isFirebaseAvailable) return;
+    if (!AuthService.isFirebaseAvailable) return false;
     final userId = AuthService.currentUser?.id;
-    if (userId == null) return;
+    if (userId == null || userId.isEmpty) return false;
 
-    final nonce = '${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(9999)}';
+    final nonce =
+        '${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(99999)}';
 
     try {
       await FirebaseFirestore.instance
@@ -35,9 +39,12 @@ class RemoteControlService {
         'senderId': localInstanceId,
         'nonce': nonce,
         'updatedAtMs': DateTime.now().millisecondsSinceEpoch,
+        'serverAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      return true;
     } catch (e) {
       debugPrint('Error enviando comando remoto a TV: $e');
+      return false;
     }
   }
 
@@ -48,52 +55,59 @@ class RemoteControlService {
   }) {
     if (!AuthService.isFirebaseAvailable) return;
     final userId = AuthService.currentUser?.id;
-    if (userId == null) return;
+    if (userId == null || userId.isEmpty) return;
 
     _tvCommandSub?.cancel();
     _initialSnapshotSkipped = false;
+    isListeningNotifier.value = true;
 
     _tvCommandSub = FirebaseFirestore.instance
         .collection('remote_sessions')
         .doc(userId)
         .snapshots()
-        .listen((snapshot) {
-      if (!snapshot.exists) return;
-      final data = snapshot.data() ?? {};
+        .listen(
+      (snapshot) {
+        if (!snapshot.exists) {
+          _initialSnapshotSkipped = true;
+          return;
+        }
+        final data = snapshot.data() ?? {};
 
-      // Ignoramos el primer snapshot viejo guardado en servidor al abrir la app
-      if (!_initialSnapshotSkipped) {
-        _initialSnapshotSkipped = true;
-        _lastExecutedNonce = (data['nonce'] ?? '').toString();
-        return;
-      }
+        // Ignoramos el primer snapshot viejo guardado al abrir la app
+        if (!_initialSnapshotSkipped) {
+          _initialSnapshotSkipped = true;
+          _lastExecutedNonce = (data['nonce'] ?? '').toString();
+          return;
+        }
 
-      final senderId = (data['senderId'] ?? '').toString();
-      final nonce = (data['nonce'] ?? '').toString();
-      final updatedAtMs = (data['updatedAtMs'] as int?) ?? 0;
+        final senderId = (data['senderId'] ?? '').toString();
+        final nonce = (data['nonce'] ?? '').toString();
 
-      // No ejecutar en el mismo celular que envió la orden
-      if (senderId == localInstanceId) return;
-      if (nonce.isEmpty || nonce == _lastExecutedNonce) return;
+        // No ejecutar en el mismo dispositivo que envió la orden
+        if (senderId == localInstanceId) return;
+        if (nonce.isEmpty || nonce == _lastExecutedNonce) return;
 
-      // Ignorar comandos viejos de hace más de 15 segundos
-      if (updatedAtMs > 0 &&
-          (DateTime.now().millisecondsSinceEpoch - updatedAtMs).abs() > 15000) {
-        return;
-      }
+        // NOTA: No comparamos relojes locales porque muchos TV Box tienen desfase horario
+        _lastExecutedNonce = nonce;
+        final cmd = (data['command'] ?? '').toString();
+        final rawExtra = data['extraData'];
+        final extra = rawExtra is Map
+            ? Map<String, dynamic>.from(rawExtra)
+            : <String, dynamic>{};
 
-      _lastExecutedNonce = nonce;
-      final cmd = (data['command'] ?? '').toString();
-      final extra = Map<String, dynamic>.from(data['extraData'] ?? {});
-
-      if (cmd.isNotEmpty) {
-        onCommandReceived(cmd, extra);
-      }
-    });
+        if (cmd.isNotEmpty) {
+          onCommandReceived(cmd, extra);
+        }
+      },
+      onError: (e) {
+        debugPrint('Error en listener de Mando Remoto: $e');
+      },
+    );
   }
 
   static void dispose() {
     _tvCommandSub?.cancel();
     _tvCommandSub = null;
+    isListeningNotifier.value = false;
   }
 }
