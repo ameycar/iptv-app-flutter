@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
-
+typedef ParentalMap = Map<String, dynamic>;
 class ParentalService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
