@@ -47,6 +47,14 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   final FocusScopeNode _tvFocusScope = FocusScopeNode();
   final FocusNode _sidebarFocusNode = FocusNode();
   final FocusNode _zappingFocusNode = FocusNode();
+  final FocusNode _channelDrawerFocusNode = FocusNode();
+  final TextEditingController _tvSearchCtrl = TextEditingController();
+
+  bool _isChannelDrawerOpen = false;
+  bool _osdInteractive = false;
+  String _selectedLiveCategory = 'Todos';
+  String _tvChannelSearchQuery = '';
+  final Set<String> _favoriteChannelUrls = {};
 
   bool _isSidebarExpanded = false;
   bool _isZappingOverlayVisible = false;
@@ -178,19 +186,97 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final hw = await AuthService.getDeviceHardwareId();
-      final alarms = prefs.getStringList('saved_active_alarms_$_currentProfileId') ?? [];
+      final alarms =
+          prefs.getStringList('saved_active_alarms_$_currentProfileId') ?? [];
+      final favs =
+          prefs.getStringList('favorite_channels_$_currentProfileId') ??
+              prefs.getStringList('favorite_channels') ??
+              [];
       if (mounted) {
         setState(() {
-          _selectedLanguage = prefs.getString('app_lang') ?? 'Español (Latinoamérica)';
-          _selectedColorBlindMode = prefs.getString('color_blind_mode') ?? 'Normal';
-          _customAvatarIdx = prefs.getInt('custom_avatar_$_currentProfileId') ?? 0;
+          _selectedLanguage =
+              prefs.getString('app_lang') ?? 'Español (Latinoamérica)';
+          _selectedColorBlindMode =
+              prefs.getString('color_blind_mode') ?? 'Normal';
+          _customAvatarIdx =
+              prefs.getInt('custom_avatar_$_currentProfileId') ?? 0;
           _hardwareId = hw;
           _activeAlarms
             ..clear()
             ..addAll(alarms);
+          _favoriteChannelUrls
+            ..clear()
+            ..addAll(favs);
         });
       }
     } catch (_) {}
+  }
+
+  bool _isChannelFavorite(ChannelModel channel) {
+    return _favoriteChannelUrls.contains(channel.streamUrl);
+  }
+
+  Future<void> _toggleFavoriteChannel(ChannelModel channel) async {
+    final prefs = await SharedPreferences.getInstance();
+    final wasFav = _favoriteChannelUrls.contains(channel.streamUrl);
+    setState(() {
+      if (wasFav) {
+        _favoriteChannelUrls.remove(channel.streamUrl);
+      } else {
+        _favoriteChannelUrls.add(channel.streamUrl);
+      }
+    });
+    final list = _favoriteChannelUrls.toList();
+    await prefs.setStringList('favorite_channels_$_currentProfileId', list);
+    await prefs.setStringList('favorite_channels', list);
+    if (_showOsd) _triggerOsdTimer();
+    if (mounted) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            wasFav
+                ? '☆ "${channel.name}" quitado de Favoritos'
+                : '⭐ "${channel.name}" agregado a Favoritos',
+            style: const TextStyle(
+                fontWeight: FontWeight.bold, color: Colors.black),
+          ),
+          backgroundColor:
+              wasFav ? Colors.white70 : const Color(0xFFFFD600),
+          duration: const Duration(milliseconds: 1400),
+          behavior: SnackBarBehavior.floating,
+          width: 420,
+        ),
+      );
+    }
+  }
+
+  void _openChannelDrawer() {
+    _osdHideTimer?.cancel();
+    _zappingHideTimer?.cancel();
+    setState(() {
+      _selectedSection = 'Televisión';
+      _showOsd = false;
+      _osdInteractive = false;
+      _isZappingOverlayVisible = false;
+      _isSidebarExpanded = false;
+      _isChannelDrawerOpen = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        FocusScope.of(context).requestFocus(_channelDrawerFocusNode);
+        _channelDrawerFocusNode.nextFocus();
+      }
+    });
+  }
+
+  void _closeChannelDrawer() {
+    setState(() => _isChannelDrawerOpen = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        FocusScope.of(context).requestFocus(_tvFocusScope);
+      }
+    });
   }
 
   Future<void> _loadChannels() async {
@@ -446,13 +532,18 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       setState(() {
         _selectedSection = 'Televisión';
         _selectedChannelIndex = index;
+        _isChannelDrawerOpen = false;
+        _isSidebarExpanded = false;
+        _isZappingOverlayVisible = false;
         _showOsd = true;
+        _osdInteractive = false;
         _isPlayerPaused = false;
         _isBehindLive = false;
         _isPlayingDvrRecording = false;
         _activeDvrTitle = null;
         _activeDvrFilePath = null;
       });
+      FocusScope.of(context).requestFocus(_tvFocusScope);
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('last_played_channel_index', index);
@@ -648,22 +739,41 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     });
   }
 
-  void _toggleOsd() {
+  void _toggleOsd({bool interactive = true}) {
     setState(() {
-      _showOsd = !_showOsd;
-      if (_showOsd) {
-        _triggerOsdTimer();
-      } else {
+      if (_showOsd && _osdInteractive) {
+        _showOsd = false;
+        _osdInteractive = false;
         _osdHideTimer?.cancel();
+        FocusScope.of(context).requestFocus(_tvFocusScope);
+      } else {
+        _showOsd = true;
+        _osdInteractive = interactive;
+        _triggerOsdTimer();
       }
     });
+  }
+
+  void _closeOsd() {
+    _osdHideTimer?.cancel();
+    setState(() {
+      _showOsd = false;
+      _osdInteractive = false;
+    });
+    FocusScope.of(context).requestFocus(_tvFocusScope);
   }
 
   void _triggerOsdTimer() {
     _osdHideTimer?.cancel();
     _osdHideTimer = Timer(const Duration(seconds: 6), () {
       if (mounted) {
-        setState(() => _showOsd = false);
+        setState(() {
+          _showOsd = false;
+          _osdInteractive = false;
+        });
+        if (!_isChannelDrawerOpen && !_isSidebarExpanded) {
+          FocusScope.of(context).requestFocus(_tvFocusScope);
+        }
       }
     });
   }
@@ -680,6 +790,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       _isPlayingDvrRecording = false;
       _activeDvrFilePath = null;
       _showOsd = true;
+      _osdInteractive = false;
     });
     _triggerOsdTimer();
     _startProgressSync(_channels[_selectedChannelIndex].streamUrl);
@@ -691,14 +802,14 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     _currentPlaybackPosition = 0;
     final int total = _channels.length;
     setState(() {
-      _selectedChannelIndex = (_selectedChannelIndex - 1 < 0)
-          ? total - 1
-          : _selectedChannelIndex - 1;
+      _selectedChannelIndex =
+          (_selectedChannelIndex - 1 < 0) ? total - 1 : _selectedChannelIndex - 1;
       _isPlayerPaused = false;
       _isBehindLive = false;
       _isPlayingDvrRecording = false;
       _activeDvrFilePath = null;
       _showOsd = true;
+      _osdInteractive = false;
     });
     _triggerOsdTimer();
     _startProgressSync(_channels[_selectedChannelIndex].streamUrl);
@@ -732,6 +843,8 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     _sidebarFocusNode.dispose();
     _zappingFocusNode.dispose();
     _currentTimeNotifier.dispose();
+    _channelDrawerFocusNode.dispose();
+    _tvSearchCtrl.dispose();
     super.dispose();
   }
 
@@ -744,17 +857,19 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     final bool isTvMode = _selectedSection == 'Televisión';
 
     return PopScope(
-      canPop: !isTvMode,
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop) {
-          if (isTvMode && _showOsd) {
-            setState(() {
-              _showOsd = false;
-            });
+          if (_isChannelDrawerOpen) {
+            _closeChannelDrawer();
+          } else if (_isSidebarExpanded) {
+            setState(() => _isSidebarExpanded = false);
+            FocusScope.of(context).requestFocus(_tvFocusScope);
+          } else if (isTvMode && _showOsd) {
+            _closeOsd();
           } else if (!isTvMode) {
-            setState(() {
-              _selectedSection = 'Televisión';
-            });
+            setState(() => _selectedSection = 'Televisión');
+            FocusScope.of(context).requestFocus(_tvFocusScope);
           }
         }
       },
@@ -765,47 +880,70 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
           if (event is KeyDownEvent) {
             final key = event.logicalKey;
 
-            // Si estamos en el menú de Ajustes o Catálogo VOD, ignoramos los controles directos de TV
             if (!isTvMode) return KeyEventResult.ignored;
+            if (_isSidebarExpanded || _isChannelDrawerOpen) {
+              return KeyEventResult.ignored;
+            }
 
-            // Si el sidebar está abierto, dejamos que él mismo se maneje
-            if (_isSidebarExpanded) return KeyEventResult.ignored;
-
-            // Mostrar el OSD o Menú Lateral (D-Pad Control)
-            if (key == LogicalKeyboardKey.arrowLeft && !_showOsd) {
-              setState(() => _isSidebarExpanded = true);
-              FocusScope.of(context).requestFocus(_sidebarFocusNode);
+            // Botones físicos CH+ / CH- del control remoto SIEMPRE cambian canal al instante
+            if (key == LogicalKeyboardKey.channelUp ||
+                key == LogicalKeyboardKey.pageUp) {
+              _nextChannel();
+              return KeyEventResult.handled;
+            }
+            if (key == LogicalKeyboardKey.channelDown ||
+                key == LogicalKeyboardKey.pageDown) {
+              _previousChannel();
               return KeyEventResult.handled;
             }
 
+            // Si el OSD ya está interactivo, dejamos que las flechas naveguen sus botones
+            if (_showOsd && _osdInteractive) {
+              return KeyEventResult.ignored;
+            }
+
+            // En pantalla completa limpia:
+            // OK / Enter -> Abre OSD interactivo con foco directo en PLAY/PAUSA
             if (key == LogicalKeyboardKey.select ||
                 key == LogicalKeyboardKey.enter ||
                 key == LogicalKeyboardKey.gameButtonA) {
-              if (!_showOsd) {
-                _toggleOsd();
-                return KeyEventResult.handled;
-              }
+              setState(() {
+                _showOsd = true;
+                _osdInteractive = true;
+              });
+              _triggerOsdTimer();
+              return KeyEventResult.handled;
             }
 
-            if (!_showOsd) {
-              if (key == LogicalKeyboardKey.arrowUp ||
-                  key == LogicalKeyboardKey.channelUp) {
-                _triggerZappingOverlay();
-                return KeyEventResult.handled;
-              }
-              if (key == LogicalKeyboardKey.arrowDown ||
-                  key == LogicalKeyboardKey.channelDown) {
-                _triggerZappingOverlay();
-                return KeyEventResult.handled;
-              }
-              if (key == LogicalKeyboardKey.arrowRight) {
-                _toggleOsd();
-                return KeyEventResult.handled;
-              }
+            // Flecha Arriba / Abajo -> Zapping instantáneo tipo TiviMate
+            if (key == LogicalKeyboardKey.arrowUp) {
+              _nextChannel();
+              return KeyEventResult.handled;
+            }
+            if (key == LogicalKeyboardKey.arrowDown) {
+              _previousChannel();
+              return KeyEventResult.handled;
+            }
+
+            // Flecha Izquierda -> Abre el Panel de Canales (Categorías + Favoritos + Buscador)
+            if (key == LogicalKeyboardKey.arrowLeft) {
+              _openChannelDrawer();
+              return KeyEventResult.handled;
+            }
+
+            // Flecha Derecha -> Abre OSD interactivo rápido
+            if (key == LogicalKeyboardKey.arrowRight) {
+              setState(() {
+                _showOsd = true;
+                _osdInteractive = true;
+              });
+              _triggerOsdTimer();
+              return KeyEventResult.handled;
             }
 
             if (key == LogicalKeyboardKey.mediaPlayPause) {
-              final activeCh = _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
+              final activeCh =
+                  _channels.isNotEmpty ? _channels[_selectedChannelIndex] : null;
               if (activeCh?.contentType == 'live') {
                 PremiumManager.runIfPremium(context, action: () {
                   setState(() => _isPlayerPaused = !_isPlayerPaused);
@@ -1077,15 +1215,17 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                 ),
               ),
 
-              // 5. SIDEBAR (Menú Lateral Inteligente)
+              // 5. SIDEBAR (Menú Lateral Inteligente - oculto en TV Full Screen)
               AnimatedPositioned(
-                duration: const Duration(milliseconds: 300),
+                duration: const Duration(milliseconds: 260),
                 curve: Curves.easeInOut,
-                left: 0,
+                left: (isTvMode && !_isSidebarExpanded) ? -90 : 0,
                 top: 0,
                 bottom: 0,
                 width: _isSidebarExpanded ? 240 : 75,
-                child: ClipRRect(
+                child: ExcludeFocus(
+                  excluding: isTvMode && !_isSidebarExpanded,
+                  child: ClipRRect(
                   borderRadius: const BorderRadius.only(
                       topRight: Radius.circular(16),
                       bottomRight: Radius.circular(16)),
@@ -1203,37 +1343,58 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                   ),
                 ),
               ),
+              ),
 
               // 6. OSD OVERLAY (Aparece al presionar OK o Flechas)
-              if (isTvMode && _showOsd && activeChannel != null)
-                ZappingChannelOverlay(
-                  channel: activeChannel,
-                  channelIndex: _selectedChannelIndex,
-                  totalChannels: _channels.length,
-                  isPlaying: !_isPlayerPaused,
-                  isFullScreen: true,
-                  isBehindLive: _isBehindLive,
-                  isPlayingDvrRecording: _isPlayingDvrRecording,
-                  dvrRecordingTitle: _activeDvrTitle,
-                  onPlayPause: () {
-                    if (activeChannel.contentType == 'live') {
-                      PremiumManager.runIfPremium(context, action: () {
+              // 5B. PANEL LATERAL DE CANALES ESTILO TIVIMATE / SMARTPHONE
+              if (isTvMode && _isChannelDrawerOpen)
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 680,
+                  child: _buildTvChannelDrawer(),
+                ),
+
+              // 6. OSD OVERLAY (Banner rápido al zapear / Interactivo al pulsar OK)
+              if (isTvMode && _showOsd && !_isChannelDrawerOpen && activeChannel != null)
+                ExcludeFocus(
+                  excluding: !_osdInteractive,
+                  child: ZappingChannelOverlay(
+                    channel: activeChannel,
+                    channelIndex: _selectedChannelIndex,
+                    totalChannels: _channels.length,
+                    isPlaying: !_isPlayerPaused,
+                    isFullScreen: true,
+                    isBehindLive: _isBehindLive,
+                    isPlayingDvrRecording: _isPlayingDvrRecording,
+                    dvrRecordingTitle: _activeDvrTitle,
+                    isFavorite: _isChannelFavorite(activeChannel),
+                    autoFocusControls: _osdInteractive,
+                    onUserInteraction: _triggerOsdTimer,
+                    onClose: _closeOsd,
+                    onToggleFavorite: () => _toggleFavoriteChannel(activeChannel),
+                    onOpenChannelList: _openChannelDrawer,
+                    onPlayPause: () {
+                      if (activeChannel.contentType == 'live') {
+                        PremiumManager.runIfPremium(context, action: () {
+                          setState(() => _isPlayerPaused = !_isPlayerPaused);
+                          _triggerOsdTimer();
+                        });
+                      } else {
                         setState(() => _isPlayerPaused = !_isPlayerPaused);
                         _triggerOsdTimer();
-                      });
-                    } else {
-                      setState(() => _isPlayerPaused = !_isPlayerPaused);
-                      _triggerOsdTimer();
-                    }
-                  },
-                  onNext: _nextChannel,
-                  onPrevious: _previousChannel,
-                  onSearch: _startVoiceSearch, // Vinculamos la Lupa aquí
-                  onRewind15s: () => _seekRelativeSeconds(-15),
-                  onForward15s: () => _seekRelativeSeconds(15),
-                  onJumpToLive: _jumpBackToLiveStream,
-                  onToggleRecord: () => _toggleManualDvrRecording(activeChannel),
-                  onOpenEpg: () => _openTvEpgModal(activeChannel),
+                      }
+                    },
+                    onNext: _nextChannel,
+                    onPrevious: _previousChannel,
+                    onSearch: _openChannelDrawer,
+                    onRewind15s: () => _seekRelativeSeconds(-15),
+                    onForward15s: () => _seekRelativeSeconds(15),
+                    onJumpToLive: _jumpBackToLiveStream,
+                    onToggleRecord: () => _toggleManualDvrRecording(activeChannel),
+                    onOpenEpg: () => _openTvEpgModal(activeChannel),
+                  ),
                 ),
             ],
           ),
@@ -1241,7 +1402,452 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       ),
     );
   }
+  /// Panel lateral estilo TiviMate / Smartphone: Buscador + Categorías + Favoritos + Lista de Canales
+  Widget _buildTvChannelDrawer() {
+    final List<ChannelModel> basePool =
+        _liveTv.isNotEmpty ? _liveTv : _channels;
 
+    final Set<String> catSet = {'Todos', '⭐ Favoritos'};
+    for (final ch in basePool) {
+      final g = ch.groupCategory.trim();
+      if (g.isNotEmpty) catSet.add(g);
+    }
+    final List<String> categories = catSet.toList();
+
+    final query = _tvChannelSearchQuery.trim().toLowerCase();
+    final List<ChannelModel> filteredChannels;
+    if (query.isNotEmpty) {
+      // Búsqueda global por nombre (igual que en el celular)
+      filteredChannels = _channels.where((c) {
+        return c.name.toLowerCase().contains(query) ||
+            c.groupCategory.toLowerCase().contains(query);
+      }).toList();
+    } else if (_selectedLiveCategory == '⭐ Favoritos') {
+      filteredChannels =
+          _channels.where((c) => _favoriteChannelUrls.contains(c.streamUrl)).toList();
+    } else if (_selectedLiveCategory == 'Todos') {
+      filteredChannels = basePool;
+    } else {
+      filteredChannels = basePool
+          .where((c) => c.groupCategory.trim() == _selectedLiveCategory)
+          .toList();
+    }
+
+    return ClipRRect(
+      borderRadius: const BorderRadius.only(
+        topRight: Radius.circular(22),
+        bottomRight: Radius.circular(22),
+      ),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: FocusScope(
+          node: _channelDrawerFocusNode,
+          onKeyEvent: (node, event) {
+            if (event is KeyDownEvent &&
+                (event.logicalKey == LogicalKeyboardKey.escape ||
+                    event.logicalKey == LogicalKeyboardKey.goBack)) {
+              _closeChannelDrawer();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF080D18).withOpacity(0.92),
+              border: Border(
+                right: BorderSide(
+                  color: const Color(0xFF00E5FF).withOpacity(0.45),
+                  width: 1.5,
+                ),
+              ),
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+            child: Column(
+              children: [
+                // Cabecera: Menú Principal + Buscador + Voz IA + Cerrar a Pantalla Completa
+                Row(
+                  children: [
+                    FocusableTvCard(
+                      focusedScale: 1.06,
+                      focusedBorderColor: const Color(0xFF00E5FF),
+                      onTap: () {
+                        setState(() {
+                          _isChannelDrawerOpen = false;
+                          _isSidebarExpanded = true;
+                        });
+                        FocusScope.of(context).requestFocus(_sidebarFocusNode);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF161F33),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.menu_rounded,
+                                color: Color(0xFF00E5FF), size: 20),
+                            SizedBox(width: 6),
+                            Text('Menú',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: _tvSearchCtrl,
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        onChanged: (val) =>
+                            setState(() => _tvChannelSearchQuery = val),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: 'Buscar canal por nombre (Ej: ESPN, FOX...)',
+                          hintStyle: const TextStyle(
+                              color: Colors.white38, fontSize: 13),
+                          prefixIcon: const Icon(Icons.search,
+                              color: Color(0xFF00E5FF), size: 20),
+                          suffixIcon: _tvChannelSearchQuery.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear,
+                                      color: Colors.white60, size: 18),
+                                  onPressed: () {
+                                    _tvSearchCtrl.clear();
+                                    setState(() => _tvChannelSearchQuery = '');
+                                  },
+                                )
+                              : null,
+                          filled: true,
+                          fillColor: const Color(0xFF111827),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(
+                                color: const Color(0xFF00E5FF).withOpacity(0.35)),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(
+                                color: Color(0xFF00E5FF), width: 1.8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FocusableTvCard(
+                      focusedScale: 1.06,
+                      focusedBorderColor: const Color(0xFF00E5FF),
+                      onTap: () {
+                        _closeChannelDrawer();
+                        _startVoiceSearch();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF7B2CBF).withOpacity(0.45),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                              color: const Color(0xFFC77DFF).withOpacity(0.6)),
+                        ),
+                        child: const Icon(Icons.mic_rounded,
+                            color: Colors.white, size: 20),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FocusableTvCard(
+                      focusedScale: 1.06,
+                      focusedBorderColor: const Color(0xFF00E5FF),
+                      onTap: _closeChannelDrawer,
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white10,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.fullscreen_rounded,
+                            color: Colors.white, size: 20),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                // Cuerpo en 2 columnas: Izquierda Categorías | Derecha Canales
+                Expanded(
+                  child: Row(
+                    children: [
+                      // Columna 1: Categorías + Favoritos
+                      SizedBox(
+                        width: 215,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Padding(
+                              padding: EdgeInsets.only(left: 6, bottom: 8),
+                              child: Text(
+                                'CATEGORÍAS',
+                                style: TextStyle(
+                                  color: Color(0xFF00E5FF),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.1,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: ListView.builder(
+                                itemCount: categories.length,
+                                itemExtent: 46,
+                                itemBuilder: (context, index) {
+                                  final cat = categories[index];
+                                  final isSelected = query.isEmpty &&
+                                      _selectedLiveCategory == cat;
+                                  final isFavCat = cat == '⭐ Favoritos';
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: FocusableTvCard(
+                                      focusedScale: 1.03,
+                                      focusedBorderColor: isFavCat
+                                          ? const Color(0xFFFFD600)
+                                          : const Color(0xFF00E5FF),
+                                      onTap: () {
+                                        _tvSearchCtrl.clear();
+                                        setState(() {
+                                          _tvChannelSearchQuery = '';
+                                          _selectedLiveCategory = cat;
+                                        });
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12),
+                                        alignment: Alignment.centerLeft,
+                                        decoration: BoxDecoration(
+                                          color: isSelected
+                                              ? (isFavCat
+                                                  ? const Color(0xFFFFD600)
+                                                      .withOpacity(0.25)
+                                                  : const Color(0xFF00E5FF)
+                                                      .withOpacity(0.22))
+                                              : const Color(0xFF111827),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          border: Border.all(
+                                            color: isSelected
+                                                ? (isFavCat
+                                                    ? const Color(0xFFFFD600)
+                                                    : const Color(0xFF00E5FF))
+                                                : Colors.white10,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          isFavCat
+                                              ? '$cat (${_favoriteChannelUrls.length})'
+                                              : cat,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: isFavCat
+                                                ? const Color(0xFFFFD600)
+                                                : (isSelected
+                                                    ? Colors.white
+                                                    : Colors.white70),
+                                            fontWeight: isSelected || isFavCat
+                                                ? FontWeight.bold
+                                                : FontWeight.w500,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const VerticalDivider(color: Colors.white12, width: 20),
+
+                      // Columna 2: Lista de Canales Filtrados
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(left: 4, bottom: 8),
+                              child: Text(
+                                query.isNotEmpty
+                                    ? 'RESULTADOS PARA "$query" (${filteredChannels.length})'
+                                    : '${_selectedLiveCategory.toUpperCase()} (${filteredChannels.length})',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.8,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: filteredChannels.isEmpty
+                                  ? Center(
+                                      child: Text(
+                                        _selectedLiveCategory == '⭐ Favoritos'
+                                            ? 'Aún no tienes canales en Favoritos.\nPulsa OK viendo un canal y elige ⭐ FAVORITO.'
+                                            : 'No se encontraron canales con ese filtro.',
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                            color: Colors.white54, fontSize: 13),
+                                      ),
+                                    )
+                                  : ListView.builder(
+                                      itemCount: filteredChannels.length,
+                                      itemExtent: 64,
+                                      itemBuilder: (context, index) {
+                                        final ch = filteredChannels[index];
+                                        final isPlayingNow =
+                                            _channels.isNotEmpty &&
+                                                _channels[_selectedChannelIndex]
+                                                        .streamUrl ==
+                                                    ch.streamUrl;
+                                        final isFav = _isChannelFavorite(ch);
+
+                                        return Padding(
+                                          padding:
+                                              const EdgeInsets.only(bottom: 6),
+                                          child: FocusableTvCard(
+                                            focusedScale: 1.02,
+                                            focusedBorderColor:
+                                                const Color(0xFF00E5FF),
+                                            onTap: () => _playContent(ch),
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 10),
+                                              decoration: BoxDecoration(
+                                                color: isPlayingNow
+                                                    ? const Color(0xFF00E5FF)
+                                                        .withOpacity(0.18)
+                                                    : const Color(0xFF111827),
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                                border: Border.all(
+                                                  color: isPlayingNow
+                                                      ? const Color(0xFF00E5FF)
+                                                      : Colors.white10,
+                                                ),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  ClipRRect(
+                                                    borderRadius:
+                                                        BorderRadius.circular(6),
+                                                    child: Container(
+                                                      width: 38,
+                                                      height: 38,
+                                                      color: Colors.black38,
+                                                      child: ch.logoUrl.isNotEmpty
+                                                          ? Image.network(
+                                                              ch.logoUrl,
+                                                              fit: BoxFit.contain,
+                                                              cacheWidth: 80,
+                                                              filterQuality:
+                                                                  FilterQuality
+                                                                      .low,
+                                                              errorBuilder: (_,
+                                                                      __, ___) =>
+                                                                  const Icon(
+                                                                      Icons.tv,
+                                                                      color: Colors
+                                                                          .white38,
+                                                                      size: 20),
+                                                            )
+                                                          : const Icon(Icons.tv,
+                                                              color: Colors
+                                                                  .white38,
+                                                              size: 20),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 10),
+                                                  Expanded(
+                                                    child: Column(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .center,
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                        Text(
+                                                          ch.name,
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: const TextStyle(
+                                                            color: Colors.white,
+                                                            fontSize: 13.5,
+                                                            fontWeight:
+                                                                FontWeight.bold,
+                                                          ),
+                                                        ),
+                                                        Text(
+                                                          '${ch.groupCategory} • ${ch.resolution}',
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: const TextStyle(
+                                                            color:
+                                                                Colors.white54,
+                                                            fontSize: 11,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                  if (isFav)
+                                                    const Padding(
+                                                      padding: EdgeInsets.only(
+                                                          right: 6),
+                                                      child: Icon(
+                                                        Icons.star_rounded,
+                                                        color:
+                                                            Color(0xFFFFD600),
+                                                        size: 18,
+                                                      ),
+                                                    ),
+                                                  if (isPlayingNow)
+                                                    const Icon(
+                                                      Icons.play_arrow_rounded,
+                                                      color: Color(0xFF00E5FF),
+                                                      size: 22,
+                                                    ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
   /// Construye el Catálogo Visual de Películas y Series (VOD)
   Widget _buildVodCatalogContent() {
     final List<ChannelModel> currentPool = _selectedVodTab == 'Películas'

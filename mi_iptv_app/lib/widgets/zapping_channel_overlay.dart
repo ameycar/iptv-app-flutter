@@ -25,6 +25,40 @@ class ZappingChannelOverlay extends StatefulWidget {
   final VoidCallback? onForward15s;
   final VoidCallback? onJumpToLive;
   final VoidCallback? onToggleRecord;
+  final bool isFavorite;
+  final VoidCallback? onToggleFavorite;
+  final VoidCallback? onOpenChannelList;
+  final bool autoFocusControls;
+  final VoidCallback? onUserInteraction;
+  final VoidCallback? onClose;
+
+  const ZappingChannelOverlay({
+    super.key,
+    required this.channel,
+    this.channelIndex = 0,
+    this.totalChannels = 0,
+    required this.isPlaying,
+    this.isFullScreen = false,
+    this.isBehindLive = false,
+    this.isPlayingDvrRecording = false,
+    this.dvrRecordingTitle,
+    required this.onPlayPause,
+    required this.onNext,
+    required this.onPrevious,
+    this.onOpenEpg,
+    this.onSearch,
+    this.onToggleFullScreen,
+    this.onRewind15s,
+    this.onForward15s,
+    this.onJumpToLive,
+    this.onToggleRecord,
+    this.isFavorite = false,
+    this.onToggleFavorite,
+    this.onOpenChannelList,
+    this.autoFocusControls = false,
+    this.onUserInteraction,
+    this.onClose,
+  });
 
   const ZappingChannelOverlay({
     super.key,
@@ -55,7 +89,7 @@ class ZappingChannelOverlay extends StatefulWidget {
 class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseController;
-  
+  final FocusNode _playPauseFocusNode = FocusNode();
   bool _isManuallyBehindLive = false;
 
   @override
@@ -65,10 +99,27 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     )..repeat(reverse: true);
+
+    if (widget.autoFocusControls) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _playPauseFocusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(ZappingChannelOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.autoFocusControls && widget.autoFocusControls) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _playPauseFocusNode.requestFocus();
+      });
+    }
   }
 
   @override
   void dispose() {
+    _playPauseFocusNode.dispose();
     _pulseController.dispose();
     super.dispose();
   }
@@ -147,11 +198,38 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
               borderRadius: BorderRadius.circular(14),
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: FocusTraversalGroup(
-                  policy: WidgetOrderTraversalPolicy(),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
+                child: Focus(
+                  canRequestFocus: false,
+                  onKeyEvent: (node, event) {
+                    if (event is KeyDownEvent) {
+                      widget.onUserInteraction?.call();
+                      final key = event.logicalKey;
+                      if (key == LogicalKeyboardKey.channelUp ||
+                          key == LogicalKeyboardKey.pageUp) {
+                        widget.onNext();
+                        setState(() => _isManuallyBehindLive = false);
+                        return KeyEventResult.handled;
+                      }
+                      if (key == LogicalKeyboardKey.channelDown ||
+                          key == LogicalKeyboardKey.pageDown) {
+                        widget.onPrevious();
+                        setState(() => _isManuallyBehindLive = false);
+                        return KeyEventResult.handled;
+                      }
+                      if (key == LogicalKeyboardKey.arrowUp ||
+                          key == LogicalKeyboardKey.escape ||
+                          key == LogicalKeyboardKey.goBack) {
+                        widget.onClose?.call();
+                        return KeyEventResult.handled;
+                      }
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: FocusTraversalGroup(
+                    policy: WidgetOrderTraversalPolicy(),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
                       color: const Color(0xFF090D16).withOpacity(0.65),
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
@@ -330,7 +408,7 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                             const SizedBox(width: 8),
                             
                             Focus(
-                              autofocus: true,
+                              canRequestFocus: false,
                               onKeyEvent: (node, event) {
                                 if (event is KeyDownEvent &&
                                     (event.logicalKey == LogicalKeyboardKey.select ||
@@ -463,6 +541,44 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
                           child: Row(
                             children: [
                               // NUEVO BOTÓN DE BÚSQUEDA IA
+                              _buildCompactControlChip(
+                                focusNode: _playPauseFocusNode,
+                                icon: widget.isPlaying
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                                label: widget.isPlaying ? 'PAUSA' : 'PLAY',
+                                borderColor: const Color(0xFF00E5FF),
+                                bgColor: const Color(0xFF00E5FF).withOpacity(0.25),
+                                iconColor: const Color(0xFF00E5FF),
+                                onTap: widget.onPlayPause,
+                              ),
+                              const SizedBox(width: 6),
+                              if (widget.onToggleFavorite != null) ...[
+                                _buildCompactControlChip(
+                                  icon: widget.isFavorite
+                                      ? Icons.star_rounded
+                                      : Icons.star_border_rounded,
+                                  label: widget.isFavorite ? 'FAV ★' : 'FAVORITO',
+                                  borderColor: const Color(0xFFFFD600),
+                                  bgColor: widget.isFavorite
+                                      ? const Color(0xFFFFD600).withOpacity(0.32)
+                                      : const Color(0xFFFFD600).withOpacity(0.12),
+                                  iconColor: const Color(0xFFFFD600),
+                                  onTap: widget.onToggleFavorite!,
+                                ),
+                                const SizedBox(width: 6),
+                              ],
+                              if (widget.onOpenChannelList != null) ...[
+                                _buildCompactControlChip(
+                                  icon: Icons.view_list_rounded,
+                                  label: 'CANALES',
+                                  borderColor: const Color(0xFFC77DFF),
+                                  bgColor: const Color(0xFF7B2CBF).withOpacity(0.35),
+                                  iconColor: const Color(0xFFC77DFF),
+                                  onTap: widget.onOpenChannelList!,
+                                ),
+                                const SizedBox(width: 6),
+                              ],
                               if (widget.onSearch != null) ...[
                                 _buildCompactControlChip(
                                   icon: Icons.search,
@@ -621,12 +737,15 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
               ),
             ),
           ),
-        );
-      },
-    );
+        ),
+      );
+    },
+  );
+}
   }
 
   Widget _buildCompactControlChip({
+    FocusNode? focusNode,
     required IconData icon,
     required String label,
     required Color borderColor,
@@ -634,55 +753,85 @@ class _ZappingChannelOverlayState extends State<ZappingChannelOverlay>
     required VoidCallback onTap,
     Color iconColor = Colors.white70,
   }) {
-    return Focus(
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            (event.logicalKey == LogicalKeyboardKey.select ||
-                event.logicalKey == LogicalKeyboardKey.enter ||
-                event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
-          onTap();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: Builder(
-        builder: (context) {
-          final hasFocus = Focus.of(context).hasFocus;
-          
-          final effectiveBgColor = hasFocus ? Colors.white : bgColor;
-          final effectiveBorderColor = hasFocus ? const Color(0xFF00E5FF) : borderColor;
-          final effectiveIconColor = hasFocus ? Colors.black : iconColor;
-          final effectiveTextColor = hasFocus ? Colors.black : Colors.white;
+    return Builder(
+      builder: (chipCtx) => Focus(
+        focusNode: focusNode,
+        onFocusChange: (hasFocus) {
+          if (hasFocus) {
+            widget.onUserInteraction?.call();
+            if (chipCtx.mounted) {
+              Scrollable.ensureVisible(
+                chipCtx,
+                alignment: 0.5,
+                duration: const Duration(milliseconds: 160),
+              );
+            }
+          }
+        },
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent &&
+              (event.logicalKey == LogicalKeyboardKey.select ||
+                  event.logicalKey == LogicalKeyboardKey.enter ||
+                  event.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+            widget.onUserInteraction?.call();
+            onTap();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Builder(
+          builder: (context) {
+            final hasFocus = Focus.of(context).hasFocus;
+            final effectiveBgColor = hasFocus ? Colors.white : bgColor;
+            final effectiveBorderColor =
+                hasFocus ? const Color(0xFF00E5FF) : borderColor;
+            final effectiveIconColor = hasFocus ? Colors.black : iconColor;
+            final effectiveTextColor = hasFocus ? Colors.black : Colors.white;
 
-          return GestureDetector(
-            onTap: onTap,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: effectiveBgColor,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: effectiveBorderColor, width: hasFocus ? 1.5 : 0.8),
-                boxShadow: hasFocus ? [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.6), blurRadius: 8)] : [],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, color: effectiveIconColor, size: 12),
-                  const SizedBox(width: 3),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: effectiveTextColor,
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w800,
-                    ),
+            return GestureDetector(
+              onTap: () {
+                widget.onUserInteraction?.call();
+                onTap();
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: effectiveBgColor,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: effectiveBorderColor,
+                    width: hasFocus ? 2.0 : 0.9,
                   ),
-                ],
+                  boxShadow: hasFocus
+                      ? [
+                          BoxShadow(
+                            color: const Color(0xFF00E5FF).withOpacity(0.75),
+                            blurRadius: 10,
+                          )
+                        ]
+                      : [],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, color: effectiveIconColor, size: 14),
+                    const SizedBox(width: 4),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: effectiveTextColor,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          );
-        }
+            );
+          },
+        ),
       ),
     );
   }
