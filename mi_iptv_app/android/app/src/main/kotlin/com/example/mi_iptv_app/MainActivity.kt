@@ -2,11 +2,17 @@ package com.example.mi_iptv_app
 // DEJA TU PRIMERA LÍNEA "package com.tu_paquete..." INTACTA AQUÍ ARRIBA
 
 import android.Manifest
+import android.annotation.TargetApi
 import android.app.ActivityManager
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.drawable.Icon
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -30,12 +36,36 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "ameycar.tv/pip"
     private val DEVICE_CHANNEL = "ameycar.tv/device"
     private val AUDIO_CHANNEL = "ameycar.tv/audio_capture"
+    private val PIP_CONTROL_ACTION = "ameycar.tv.PIP_CONTROL_ACTION"
+    private val EXTRA_CONTROL_TYPE = "control_type"
+
+    private var pipMethodChannel: MethodChannel? = null
     private var autoPipEnabled = true
+    private var isPipPlaying = true
+    private var isPipReceiverRegistered = false
+
+    private val pipActionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != PIP_CONTROL_ACTION) return
+            val actionType = intent.getStringExtra(EXTRA_CONTROL_TYPE) ?: return
+
+            if (actionType == "play_pause") {
+                isPipPlaying = !isPipPlaying
+                updateNativePipParamsIfActive()
+            }
+
+            Handler(Looper.getMainLooper()).post {
+                pipMethodChannel?.invokeMethod("pipControl", mapOf("action" to actionType))
+            }
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        registerPipReceiver()
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+        pipMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        pipMethodChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "enterPip" -> {
                     val entered = enterNativePipMode()
@@ -43,6 +73,11 @@ class MainActivity : FlutterActivity() {
                 }
                 "setAutoPip" -> {
                     autoPipEnabled = call.argument<Boolean>("enabled") ?: true
+                    result.success(true)
+                }
+                "updatePipState" -> {
+                    isPipPlaying = call.argument<Boolean>("isPlaying") ?: true
+                    updateNativePipParamsIfActive()
                     result.success(true)
                 }
                 else -> result.notImplemented()
@@ -89,6 +124,77 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun registerPipReceiver() {
+        if (isPipReceiverRegistered) return
+        try {
+            val filter = IntentFilter(PIP_CONTROL_ACTION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(pipActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(pipActionReceiver, filter)
+            }
+            isPipReceiverRegistered = true
+        } catch (_: Exception) {}
+    }
+
+    @TargetApi(Build.VERSION_CODES.O)
+    private fun createPipRemoteAction(
+        requestCode: Int,
+        controlType: String,
+        iconRes: Int,
+        title: String
+    ): RemoteAction {
+        val intent = Intent(PIP_CONTROL_ACTION).apply {
+            setPackage(packageName)
+            putExtra(EXTRA_CONTROL_TYPE, controlType)
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val pendingIntent = PendingIntent.getBroadcast(this, requestCode, intent, flags)
+        val icon = Icon.createWithResource(this, iconRes)
+        return RemoteAction(icon, title, title, pendingIntent)
+    }
+
+    @TargetApi(Build.VERSION_CODES.O)
+    private fun buildPipParams(): PictureInPictureParams {
+        val actions = listOf(
+            createPipRemoteAction(
+                requestCode = 101,
+                controlType = "rewind_15",
+                iconRes = android.R.drawable.ic_media_rew,
+                title = "Retroceder 15s"
+            ),
+            createPipRemoteAction(
+                requestCode = 102,
+                controlType = "play_pause",
+                iconRes = if (isPipPlaying) {
+                    android.R.drawable.ic_media_pause
+                } else {
+                    android.R.drawable.ic_media_play
+                },
+                title = if (isPipPlaying) "Pausar" else "Reproducir"
+            ),
+            createPipRemoteAction(
+                requestCode = 103,
+                controlType = "forward_15",
+                iconRes = android.R.drawable.ic_media_ff,
+                title = "Adelantar 15s"
+            )
+        )
+
+        return PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .setActions(actions)
+            .build()
+    }
+
+    private fun updateNativePipParamsIfActive() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode) {
+            try {
+                setPictureInPictureParams(buildPipParams())
+            } catch (_: Exception) {}
+        }
+    }
+
     private fun canDrawOverlaysPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(this)
@@ -120,9 +226,7 @@ class MainActivity : FlutterActivity() {
             try {
                 startActivity(intent)
                 return true
-            } catch (_: Exception) {
-                // Probar siguiente ruta compatible con Android TV / TV Box
-            }
+            } catch (_: Exception) {}
         }
         return false
     }
@@ -278,10 +382,11 @@ class MainActivity : FlutterActivity() {
 
     private fun enterNativePipMode(): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val params = PictureInPictureParams.Builder()
-                .setAspectRatio(Rational(16, 9))
-                .build()
-            return enterPictureInPictureMode(params)
+            return try {
+                enterPictureInPictureMode(buildPipParams())
+            } catch (_: Exception) {
+                false
+            }
         }
         return false
     }
@@ -291,5 +396,15 @@ class MainActivity : FlutterActivity() {
         if (autoPipEnabled) {
             enterNativePipMode()
         }
+    }
+
+    override fun onDestroy() {
+        if (isPipReceiverRegistered) {
+            try {
+                unregisterReceiver(pipActionReceiver)
+            } catch (_: Exception) {}
+            isPipReceiverRegistered = false
+        }
+        super.onDestroy()
     }
 }

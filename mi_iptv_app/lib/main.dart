@@ -534,6 +534,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!kIsWeb) {
       WakelockPlus.enable();
       _syncAutoPipState(true);
+      _pipChannel.setMethodCallHandler(_handleNativePipControl);
       DvrRecordingService.initialize();
     }
 
@@ -1179,6 +1180,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await _pipChannel.invokeMethod('setAutoPip', {'enabled': enabled});
     } catch (_) {}
   }
+  Future<void> _syncPipPlaybackState() async {
+    if (kIsWeb) return;
+    try {
+      await _pipChannel.invokeMethod('updatePipState', {
+        'isPlaying': !_isPlayerPaused,
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _handleNativePipControl(MethodCall call) async {
+    if (!mounted || call.method != 'pipControl') return;
+    final args = call.arguments;
+    final action = (args is Map ? args['action'] : '').toString();
+
+    if (action == 'play_pause') {
+      setState(() {
+        _isPlayerPaused = !_isPlayerPaused;
+        if (_isPlayerPaused) _isBehindLive = true;
+      });
+      _syncPipPlaybackState();
+    } else if (action == 'rewind_15') {
+      await _seekRelativeSeconds(-15);
+    } else if (action == 'forward_15') {
+      await _seekRelativeSeconds(15);
+    }
+  }
 
   @override
   void didChangeMetrics() {
@@ -1230,6 +1257,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return;
       }
       try {
+        await _syncPipPlaybackState();
         final bool? entered = await _pipChannel.invokeMethod<bool>('enterPip');
         if (entered == true && mounted) {
           setState(() => _isInPipMode = true);
@@ -3713,6 +3741,7 @@ void _showColorBlindSelectorDialog() {
         body: Center(
           child: (_channels.isNotEmpty)
               ? ProVideoPlayer(
+                key: _playerKey,
                   streamUrl: _channels[_selectedChannelIndex].streamUrl,
                   volume: _currentVolume,
                   isPlaying: !_isPlayerPaused,
@@ -5495,6 +5524,7 @@ void _showColorBlindSelectorDialog() {
     _syncProgressToCloud();
     WidgetsBinding.instance.removeObserver(this);
     RemoteControlService.dispose();
+    _pipChannel.setMethodCallHandler(null);
     _syncAutoPipState(false);
     if (!kIsWeb) {
       WakelockPlus.disable();
