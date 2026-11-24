@@ -6713,15 +6713,6 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
                             ),
                             ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF00E5FF),
-                                foregroundColor: Colors.black,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 14, vertical: 11),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10)),
-                              ),
-                              ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFFF59E0B),
                                 foregroundColor: Colors.black,
                                 padding: const EdgeInsets.symmetric(
@@ -6737,6 +6728,16 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
                                       fontSize: 12)),
                               onPressed: _executeBulkSubtractDays,
                             ),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF00E5FF),
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 11),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                              ),
+                              
                               icon: const Icon(Icons.phonelink_erase_rounded,
                                   size: 17),
                               label: const Text('Resetear HW ID',
