@@ -5884,6 +5884,67 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
     }
   }
 
+  Future<void> _executeBulkSubtractDays() async {
+    if (_selectedUserIds.isEmpty) {
+      _showToast('Selecciona primero uno o varios clientes en la lista.',
+          isWarning: true);
+      return;
+    }
+
+    final int days = int.tryParse(_bulkDaysCtrl.text.trim()) ?? 15;
+    if (days <= 0) {
+      _showToast('Ingresa una cantidad válida de días.', isWarning: true);
+      return;
+    }
+
+    final confirmed = await _confirmActionDialog(
+      title: 'Restar -$days Días en Lote',
+      message:
+          'Estás por descontar $days días a ${_selectedUserIds.length} cuenta(s) seleccionada(s). ¿Deseas aplicar el ajuste ahora?',
+      confirmLabel: 'Sí, Restar -$days Días',
+      accentColor: const Color(0xFFF59E0B),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _isExecutingBatch = true);
+    try {
+      final db = FirebaseFirestore.instance;
+      final now = DateTime.now();
+
+      final targetDocs =
+          _loadedUsers.where((d) => _selectedUserIds.contains(d.id)).toList();
+
+      for (var i = 0; i < targetDocs.length; i += 450) {
+        final batch = db.batch();
+        final chunk = targetDocs.skip(i).take(450);
+
+        for (final doc in chunk) {
+          final data = doc.data();
+          DateTime baseDate = now;
+          if (data['expirationDate'] != null) {
+            final parsed = DateTime.tryParse(data['expirationDate'].toString());
+            if (parsed != null) {
+              baseDate = parsed;
+            }
+          }
+          final updatedExp = baseDate.subtract(Duration(days: days));
+          batch.update(doc.reference, {
+            'expirationDate': updatedExp.toIso8601String(),
+          });
+        }
+        await batch.commit();
+      }
+
+      final count = _selectedUserIds.length;
+      await _refreshAllData();
+      _showToast('¡Listo! Se restaron -$days días a $count cliente(s).');
+    } catch (e) {
+      _showToast('Error aplicando lote: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isExecutingBatch = false);
+    }
+  }
+
   Future<void> _executeBulkResetHwId() async {
     if (_selectedUserIds.isEmpty) {
       _showToast('Selecciona al menos un cliente para liberar su equipo.',
@@ -6659,6 +6720,23 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
                                 shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(10)),
                               ),
+                              ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFF59E0B),
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 11),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.remove_circle_outline,
+                                  size: 17),
+                              label: const Text('Restar Días',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 12)),
+                              onPressed: _executeBulkSubtractDays,
+                            ),
                               icon: const Icon(Icons.phonelink_erase_rounded,
                                   size: 17),
                               label: const Text('Resetear HW ID',
@@ -6904,6 +6982,230 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
     );
   }
 
+  Future<void> _openAdjustUserDaysDialog({
+    required String userId,
+    required String username,
+    required DateTime? currentExp,
+  }) async {
+    final daysCtrl = TextEditingController(text: '30');
+    bool isAdding = true;
+    bool isSaving = false;
+
+    String formatDate(DateTime d) =>
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) {
+          final now = DateTime.now();
+          final int days = int.tryParse(daysCtrl.text.trim()) ?? 0;
+          final DateTime baseAdd =
+              (currentExp != null && currentExp.isAfter(now))
+                  ? currentExp
+                  : now;
+          final DateTime baseSub = currentExp ?? now;
+          final DateTime previewDate = isAdding
+              ? baseAdd.add(Duration(days: max(0, days)))
+              : baseSub.subtract(Duration(days: max(0, days)));
+
+          final Color accent =
+              isAdding ? const Color(0xFF10B981) : const Color(0xFFF59E0B);
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF111827),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+              side: BorderSide(color: accent.withOpacity(0.6), width: 1.4),
+            ),
+            title: Row(
+              children: [
+                Icon(
+                  isAdding
+                      ? Icons.add_circle_rounded
+                      : Icons.remove_circle_rounded,
+                  color: accent,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Ajustar Días • $username',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Vencimiento actual: ${currentExp != null ? formatDate(currentExp) : "Sin fecha"}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Center(child: Text('+ Sumar')),
+                          selected: isAdding,
+                          selectedColor: const Color(0xFF10B981),
+                          backgroundColor: const Color(0xFF1F2937),
+                          labelStyle: TextStyle(
+                            color: isAdding ? Colors.black : Colors.white70,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12.5,
+                          ),
+                          onSelected: (_) =>
+                              setModalState(() => isAdding = true),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Center(child: Text('- Restar')),
+                          selected: !isAdding,
+                          selectedColor: const Color(0xFFF59E0B),
+                          backgroundColor: const Color(0xFF1F2937),
+                          labelStyle: TextStyle(
+                            color: !isAdding ? Colors.black : Colors.white70,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12.5,
+                          ),
+                          onSelected: (_) =>
+                              setModalState(() => isAdding = false),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: daysCtrl,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15),
+                    decoration: InputDecoration(
+                      labelText: 'Cantidad de días',
+                      labelStyle: const TextStyle(color: Colors.white60),
+                      suffixText: 'días',
+                      suffixStyle: const TextStyle(color: Colors.white54),
+                      filled: true,
+                      fillColor: const Color(0xFF1F2937),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    onChanged: (_) => setModalState(() {}),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [7, 15, 30, 60, 90].map((d) {
+                      return ActionChip(
+                        backgroundColor: const Color(0xFF1F2937),
+                        label: Text(
+                          '${d}d',
+                          style: const TextStyle(
+                              color: Color(0xFF00E5FF),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11.5),
+                        ),
+                        onPressed: () {
+                          daysCtrl.text = '$d';
+                          setModalState(() {});
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: accent.withOpacity(0.14),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: accent.withOpacity(0.45)),
+                    ),
+                    child: Text(
+                      days > 0
+                          ? '${isAdding ? "Se sumarán +" : "Se restarán -"}$days días\nNuevo vencimiento: ${formatDate(previewDate)}'
+                          : 'Ingresa un número mayor a 0',
+                      style: TextStyle(
+                        color: accent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: isSaving ? null : () => Navigator.pop(ctx),
+                child: const Text('Cancelar',
+                    style: TextStyle(color: Colors.white60)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: accent,
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: (isSaving || days <= 0)
+                    ? null
+                    : () async {
+                        setModalState(() => isSaving = true);
+                        try {
+                          final updateData = <String, dynamic>{
+                            'expirationDate': previewDate.toIso8601String(),
+                          };
+                          if (isAdding) {
+                            updateData['isActive'] = true;
+                          }
+                          await FirebaseFirestore.instance
+                              .collection('users')
+                              .doc(userId)
+                              .update(updateData);
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          await _refreshAllData();
+                          _showToast(
+                            isAdding
+                                ? '¡+$days días acreditados a $username!'
+                                : 'Se restaron -$days días a $username.',
+                          );
+                        } catch (e) {
+                          setModalState(() => isSaving = false);
+                          _showToast('Error actualizando días: $e',
+                              isError: true);
+                        }
+                      },
+                child: Text(
+                  isSaving
+                      ? 'Guardando...'
+                      : (isAdding ? 'Confirmar +$days d' : 'Confirmar -$days d'),
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildClientRowCard(String userId, Map<String, dynamic> data) {
     final now = DateTime.now();
     final isSelected = _selectedUserIds.contains(userId);
@@ -6938,6 +7240,69 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
       statusLabel = 'POR VENCER (${max(0, daysRemaining)}d)';
     }
 
+    final bool isCompactMobile = MediaQuery.of(context).size.width < 680;
+
+    final Widget actionButtons = Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF10B981),
+            side: const BorderSide(color: Color(0xFF10B981)),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+          icon: const Icon(Icons.edit_calendar_rounded, size: 15),
+          label: const Text('Días +/-',
+              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
+          onPressed: () => _openAdjustUserDaysDialog(
+            userId: userId,
+            username: username,
+            currentExp: expDate,
+          ),
+        ),
+        if (hwId.isNotEmpty)
+          IconButton(
+            tooltip: 'Liberar equipo de este cliente',
+            icon: const Icon(Icons.phonelink_erase_rounded,
+                color: Color(0xFF00E5FF)),
+            onPressed: () async {
+              final ok = await _confirmActionDialog(
+                title: 'Liberar Equipo • $username',
+                message:
+                    '¿Desvincular el Hardware ID actual de "$username" para permitir acceso en un equipo nuevo?',
+                confirmLabel: 'Sí, Liberar',
+                accentColor: const Color(0xFF00E5FF),
+              );
+              if (ok != true) return;
+              await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(userId)
+                  .update({'registeredHardwareId': ''});
+              await _loadUsersPage(reset: true);
+              _showToast('Equipo liberado para $username');
+            },
+          ),
+        ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF25D366),
+            foregroundColor: Colors.black,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+          icon: const Icon(Icons.chat_rounded, size: 16),
+          label: const Text('Soporte',
+              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900)),
+          onPressed: () => _openQuickWhatsAppModal(data),
+        ),
+      ],
+    );
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
@@ -6964,120 +7329,84 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
           });
         },
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Checkbox(
-                value: isSelected,
-                activeColor: const Color(0xFFC77DFF),
-                checkColor: Colors.black,
-                onChanged: (v) {
-                  setState(() {
-                    if (v == true) {
-                      _selectedUserIds.add(userId);
-                    } else {
-                      _selectedUserIds.remove(userId);
-                    }
-                  });
-                },
-              ),
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: statusColor.withOpacity(0.15),
-                child: Text(
-                  username.isNotEmpty ? username[0].toUpperCase() : 'U',
-                  style: TextStyle(
-                      color: statusColor, fontWeight: FontWeight.w900),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          username,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        _buildMiniBadge(statusLabel, statusColor),
-                        _buildMiniBadge(plan, const Color(0xFFC77DFF)),
-                        _buildMiniBadge(
-                            deviceCategory, const Color(0xFF00E5FF)),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      'Vence: $expText  •  ${phone.isNotEmpty ? "WhatsApp: $phone  •  " : ""}${hwId.isNotEmpty ? "Equipo vinculado ✓" : "Equipo libre"}',
-                      style:
-                          const TextStyle(color: Colors.white60, fontSize: 11.5),
-                    ),
-                  ],
-                ),
-              ),
               Row(
-                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  IconButton(
-                    tooltip: 'Sumar +30 días rápido',
-                    icon: const Icon(Icons.add_circle_outline_rounded,
-                        color: Color(0xFF10B981)),
-                    onPressed: () async {
-                      final base = (expDate != null && expDate.isAfter(now))
-                          ? expDate
-                          : now;
-                      await FirebaseFirestore.instance
-                          .collection('users')
-                          .doc(userId)
-                          .update({
-                        'expirationDate':
-                            base.add(const Duration(days: 30)).toIso8601String(),
-                        'isActive': true,
+                  Checkbox(
+                    value: isSelected,
+                    activeColor: const Color(0xFFC77DFF),
+                    checkColor: Colors.black,
+                    onChanged: (v) {
+                      setState(() {
+                        if (v == true) {
+                          _selectedUserIds.add(userId);
+                        } else {
+                          _selectedUserIds.remove(userId);
+                        }
                       });
-                      await _refreshAllData();
-                      _showToast('¡+30 días acreditados a $username!');
                     },
                   ),
-                  if (hwId.isNotEmpty)
-                    IconButton(
-                      tooltip: 'Liberar equipo de este cliente',
-                      icon: const Icon(Icons.phonelink_erase_rounded,
-                          color: Color(0xFF00E5FF)),
-                      onPressed: () async {
-                        await FirebaseFirestore.instance
-                            .collection('users')
-                            .doc(userId)
-                            .update({'registeredHardwareId': ''});
-                        await _loadUsersPage(reset: true);
-                        _showToast('Equipo liberado para $username');
-                      },
+                  CircleAvatar(
+                    radius: 19,
+                    backgroundColor: statusColor.withOpacity(0.15),
+                    child: Text(
+                      username.isNotEmpty ? username[0].toUpperCase() : 'U',
+                      style: TextStyle(
+                          color: statusColor, fontWeight: FontWeight.w900),
                     ),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF25D366),
-                      foregroundColor: Colors.black,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                    ),
-                    icon: const Icon(Icons.chat_rounded, size: 16),
-                    label: const Text('Soporte',
-                        style: TextStyle(
-                            fontSize: 11.5, fontWeight: FontWeight.w900)),
-                    onPressed: () => _openQuickWhatsAppModal(data),
                   ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              username,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            _buildMiniBadge(statusLabel, statusColor),
+                            _buildMiniBadge(plan, const Color(0xFFC77DFF)),
+                            _buildMiniBadge(
+                                deviceCategory, const Color(0xFF00E5FF)),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          'Vence: $expText  •  ${phone.isNotEmpty ? "WhatsApp: $phone  •  " : ""}${hwId.isNotEmpty ? "Equipo vinculado ✓" : "Equipo libre"}',
+                          style: const TextStyle(
+                              color: Colors.white60, fontSize: 11.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (!isCompactMobile) ...[
+                    const SizedBox(width: 8),
+                    actionButtons,
+                  ],
                 ],
               ),
+              if (isCompactMobile) ...[
+                const SizedBox(height: 10),
+                const Divider(color: Colors.white10, height: 1),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: actionButtons,
+                ),
+              ],
             ],
           ),
         ),
