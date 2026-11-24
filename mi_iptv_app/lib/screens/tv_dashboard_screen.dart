@@ -204,10 +204,40 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       final hw = await AuthService.getDeviceHardwareId();
       final alarms =
           prefs.getStringList('saved_active_alarms_$_currentProfileId') ?? [];
-      final favs =
-          prefs.getStringList('favorite_channels_$_currentProfileId') ??
-              prefs.getStringList('favorite_channels') ??
-              [];
+      final List<String> favs = List<String>.from(
+        prefs.getStringList('favorite_channels_$_currentProfileId') ??
+            prefs.getStringList('favorite_channels') ??
+            [],
+      );
+
+      final user = AuthService.currentUser;
+      if (user != null && AuthService.isFirebaseAvailable) {
+        try {
+          final doc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.id)
+              .get();
+          final data = doc.data();
+          final cloudFavKey = 'fav_urls_$_currentProfileId';
+          if (data != null && data[cloudFavKey] is List) {
+            final remoteFavs = (data[cloudFavKey] as List)
+                .map((e) => e.toString().trim())
+                .where((e) => e.isNotEmpty)
+                .toList();
+            if (remoteFavs.isNotEmpty) {
+              favs
+                ..clear()
+                ..addAll(remoteFavs);
+              await prefs.setStringList(
+                  'favorite_channels_$_currentProfileId', favs);
+              await prefs.setStringList('favorite_channels', favs);
+            }
+          }
+        } catch (e) {
+          debugPrint('Aviso leyendo favoritos desde Firestore en TV: $e');
+        }
+      }
+
       if (mounted) {
         setState(() {
           _selectedLanguage =
@@ -222,29 +252,44 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
             ..addAll(alarms);
           _favoriteChannelUrls
             ..clear()
-            ..addAll(favs);
+            ..addAll(favs.map((e) => e.trim()));
         });
       }
     } catch (_) {}
   }
 
   bool _isChannelFavorite(ChannelModel channel) {
-    return _favoriteChannelUrls.contains(channel.streamUrl);
+    final cleanUrl = channel.streamUrl.trim();
+    return _favoriteChannelUrls.contains(cleanUrl) ||
+        _favoriteChannelUrls.contains(channel.streamUrl);
   }
 
   Future<void> _toggleFavoriteChannel(ChannelModel channel) async {
     final prefs = await SharedPreferences.getInstance();
-    final wasFav = _favoriteChannelUrls.contains(channel.streamUrl);
+    final cleanUrl = channel.streamUrl.trim();
+    final wasFav = _favoriteChannelUrls.contains(cleanUrl) ||
+        _favoriteChannelUrls.contains(channel.streamUrl);
     setState(() {
       if (wasFav) {
+        _favoriteChannelUrls.remove(cleanUrl);
         _favoriteChannelUrls.remove(channel.streamUrl);
       } else {
-        _favoriteChannelUrls.add(channel.streamUrl);
+        _favoriteChannelUrls.add(cleanUrl);
       }
     });
     final list = _favoriteChannelUrls.toList();
     await prefs.setStringList('favorite_channels_$_currentProfileId', list);
     await prefs.setStringList('favorite_channels', list);
+
+    final user = AuthService.currentUser;
+    if (user != null && AuthService.isFirebaseAvailable) {
+      unawaited(
+        FirebaseFirestore.instance.collection('users').doc(user.id).set({
+          'fav_urls_$_currentProfileId': list,
+        }, SetOptions(merge: true)),
+      );
+    }
+
     if (_showOsd) _triggerOsdTimer();
     if (mounted) {
       ScaffoldMessenger.of(context).clearSnackBars();
@@ -1058,6 +1103,24 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       if (data.containsKey('chat_profanity_filter')) {
         ParentalService.profanityFilterNotifier.value =
             data['chat_profanity_filter'] != false;
+      }
+      // Sincronizar favoritos en tiempo real entre Celular y TV
+      final cloudFavKey = 'fav_urls_$_currentProfileId';
+      if (data[cloudFavKey] is List) {
+        final remoteFavs = (data[cloudFavKey] as List)
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        if (mounted) {
+          setState(() {
+            _favoriteChannelUrls
+              ..clear()
+              ..addAll(remoteFavs);
+          });
+        }
+        SharedPreferences.getInstance().then((prefs) {
+          prefs.setStringList('favorite_channels_$_currentProfileId', remoteFavs);
+        });
       }
 
       // Sincronizar listas M3U agregadas o cambiadas desde el celular o la web
@@ -1878,7 +1941,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
       }).toList();
     } else if (_selectedLiveCategory == '⭐ Favoritos') {
       filteredChannels =
-          _channels.where((c) => _favoriteChannelUrls.contains(c.streamUrl)).toList();
+          _channels.where((c) => _isChannelFavorite(c)).toList();
     } else if (_selectedLiveCategory == 'Todos') {
       filteredChannels = basePool;
     } else {

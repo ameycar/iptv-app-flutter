@@ -63,6 +63,12 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
   final Set<String> _recentSenders = {};
 
  StreamSubscription? _messagesSub;
+ StreamSubscription? _presenceSub;
+  Timer? _presenceTimer;
+  int _liveViewersCount = 1;
+  String _activePresenceDocId = '';
+  late final String _presenceSessionId =
+      's_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
   List<_LiveChatMsg> _serverMessages = [];
 
   bool _isFeedAwake = true;
@@ -102,6 +108,7 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
     ParentalService.getProfanityFilterEnabled();
     ParentalService.getHiddenMenuItems();
     _subscribeToChannelChat();
+    _startPresenceHeartbeat();
     _wakeUpFeed();
 
     if (widget.isTvMode) {
@@ -122,6 +129,7 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
       _serverMessages = [];
       _recentSenders.clear();
       _subscribeToChannelChat();
+      _startPresenceHeartbeat();
       _wakeUpFeed();
     }
   }
@@ -183,7 +191,84 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
       },
     );
   }
+Future<void> _sendPresencePing(String docId) async {
+    if (!AuthService.isFirebaseAvailable || docId.isEmpty) return;
+    try {
+      await FirebaseFirestore.instance
+          .collection('live_chats')
+          .doc(docId)
+          .collection('presence')
+          .doc(_presenceSessionId)
+          .set({
+        'user': _currentUsername,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (_) {}
+  }
 
+  Future<void> _leavePresence() async {
+    _presenceTimer?.cancel();
+    _presenceTimer = null;
+    _presenceSub?.cancel();
+    _presenceSub = null;
+    final oldDocId = _activePresenceDocId;
+    _activePresenceDocId = '';
+    if (!AuthService.isFirebaseAvailable || oldDocId.isEmpty) return;
+    try {
+      await FirebaseFirestore.instance
+          .collection('live_chats')
+          .doc(oldDocId)
+          .collection('presence')
+          .doc(_presenceSessionId)
+          .delete();
+    } catch (_) {}
+  }
+
+  void _startPresenceHeartbeat() {
+    _leavePresence();
+    if (!AuthService.isFirebaseAvailable) return;
+    final docId = _safeDocId;
+    _activePresenceDocId = docId;
+
+    _sendPresencePing(docId);
+    _presenceTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+      _sendPresencePing(docId);
+    });
+
+    _presenceSub = FirebaseFirestore.instance
+        .collection('live_chats')
+        .doc(docId)
+        .collection('presence')
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+
+      int maxServerMs = 0;
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final ts = data['updatedAt'];
+        if (ts is Timestamp && ts.millisecondsSinceEpoch > maxServerMs) {
+          maxServerMs = ts.millisecondsSinceEpoch;
+        }
+      }
+
+      int activeNow = 0;
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final ts = data['updatedAt'];
+        if (ts == null) {
+          activeNow++;
+        } else if (ts is Timestamp &&
+            (maxServerMs - ts.millisecondsSinceEpoch) <= 90000) {
+          activeNow++;
+        }
+      }
+
+      setState(() {
+        _liveViewersCount = max(1, activeNow);
+      });
+    }, onError: (_) {});
+  }
   void _wakeUpFeed() {
     if (!_isFeedAwake && mounted) {
       setState(() => _isFeedAwake = true);
@@ -334,6 +419,7 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
 
   @override
   void dispose() {
+    _leavePresence();
     _messagesSub?.cancel();
     _fadeTimer?.cancel();
     _noticeTimer?.cancel();
@@ -369,7 +455,7 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
   /// Diseño Smartphone / Tablet: Estilo TikTok / Instagram Live (mensajes suben y se difuminan arriba)
   Widget _buildMobileLiveChatLayout(bool profanityFilterOn) {
     final messages = _mergedMessages;
-    final onlineCount = max(1, _recentSenders.length);
+    final onlineCount = max(1, _liveViewersCount);
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
@@ -574,7 +660,7 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
   /// Diseño Smart TV: Panel lateral derecho semitransparente navegable con D-pad
   Widget _buildTvChatLayout(bool profanityFilterOn) {
     final messages = _mergedMessages;
-    final onlineCount = max(1, _recentSenders.length);
+    final onlineCount = max(1, _liveViewersCount);
 
     return Stack(
       children: [
