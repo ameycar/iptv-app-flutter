@@ -33,12 +33,96 @@ class _LiveChatMsg {
     required this.createdAtMs,
   });
 }
+class _IncomingReaction {
+  final String id;
+  final String emoji;
+
+  const _IncomingReaction({
+    required this.id,
+    required this.emoji,
+  });
+}
 
 class LiveChatOverlay extends StatefulWidget {
   final String channelId;
   final String channelName;
   final bool isTvMode;
   final VoidCallback? onClose;
+
+  static final String _sharedSessionId =
+      's_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999999)}';
+  static String _watchingDocId = '';
+  static Timer? _watchingTimer;
+
+  static String normalizeChannelDocId(String raw) {
+    final cleaned = raw
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9_]'), '_');
+    return cleaned.isEmpty ? 'canal_general' : cleaned;
+  }
+
+  static Future<void> _writePresencePing(String docId) async {
+    if (!AuthService.isFirebaseAvailable || docId.isEmpty) return;
+    final userName = AuthService.currentActiveProfile?.deviceName ??
+        AuthService.currentUser?.username ??
+        'Espectador';
+    try {
+      await FirebaseFirestore.instance
+          .collection('live_chats')
+          .doc(docId)
+          .collection('presence')
+          .doc(_sharedSessionId)
+          .set({
+        'user': userName,
+        'clientMs': DateTime.now().millisecondsSinceEpoch,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
+  static Future<void> _deletePresenceDoc(String docId) async {
+    if (!AuthService.isFirebaseAvailable || docId.isEmpty) return;
+    try {
+      await FirebaseFirestore.instance
+          .collection('live_chats')
+          .doc(docId)
+          .collection('presence')
+          .doc(_sharedSessionId)
+          .delete();
+    } catch (_) {}
+  }
+
+  static Future<void> syncWatchingPresence(String rawChannelId) async {
+    final docId = normalizeChannelDocId(rawChannelId);
+    if (!AuthService.isFirebaseAvailable || docId.isEmpty) return;
+
+    if (_watchingDocId.isNotEmpty && _watchingDocId != docId) {
+      final prev = _watchingDocId;
+      _watchingDocId = docId;
+      unawaited(_deletePresenceDoc(prev));
+    } else {
+      _watchingDocId = docId;
+    }
+
+    _watchingTimer?.cancel();
+    unawaited(_writePresencePing(docId));
+    _watchingTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (_watchingDocId == docId) {
+        _writePresencePing(docId);
+      }
+    });
+  }
+
+  static Future<void> stopWatchingPresence() async {
+    _watchingTimer?.cancel();
+    _watchingTimer = null;
+    final prev = _watchingDocId;
+    _watchingDocId = '';
+    if (prev.isNotEmpty) {
+      await _deletePresenceDoc(prev);
+    }
+  }
 
   const LiveChatOverlay({
     super.key,
@@ -59,23 +143,27 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
   final Random _random = Random();
 
   final List<FloatingEmoji> _activeEmojis = [];
-  final List<_LiveChatMsg> _optimisticMessages = [];
-  final Set<String> _recentSenders = {};
+  final Set<String> _processedMsgIds = {};
+  final Set<String> _seenReactionIds = {};
+  final List<_LiveChatMsg> _pendingQueue = [];
+  final List<_LiveChatMsg> _visibleMessages = [];
 
- StreamSubscription? _messagesSub;
- StreamSubscription? _presenceSub;
+  StreamSubscription? _messagesSub;
+  StreamSubscription? _presenceSub;
   Timer? _presenceTimer;
+  Timer? _topExpireTimer;
+  Timer? _fadeRemoveTimer;
+  Timer? _queuePaceTimer;
+  Timer? _noticeTimer;
+
   int _liveViewersCount = 1;
   String _activePresenceDocId = '';
-  late final String _presenceSessionId =
-      's_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
-  List<_LiveChatMsg> _serverMessages = [];
+  bool _hasLoadedInitialSnapshot = false;
+  String? _fadingTopMsgId;
 
-  bool _isFeedAwake = true;
-  Timer? _fadeTimer;
   DateTime _lastSendTime = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastReactionTime = DateTime.fromMillisecondsSinceEpoch(0);
   String _moderationNotice = '';
-  Timer? _noticeTimer;
 
   static const List<String> _tvQuickPhrases = [
     '⚽ ¡GOLAZO!',
@@ -87,6 +175,8 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
 
   static const List<String> _quickEmojis = ['🔥', '⚽', '😂', '👏', '😱', '❤️'];
 
+  int get _maxVisibleSlots => widget.isTvMode ? 4 : 3;
+
   String get _currentUsername =>
       AuthService.currentActiveProfile?.deviceName ??
       AuthService.currentUser?.username ??
@@ -94,13 +184,7 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
 
   bool get _isVip => AuthService.currentUser?.isVip ?? false;
 
-  String get _safeDocId {
-    final cleaned = widget.channelId
-        .trim()
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9_]'), '_');
-    return cleaned.isEmpty ? 'canal_general' : cleaned;
-  }
+  String get _safeDocId => LiveChatOverlay.normalizeChannelDocId(widget.channelId);
 
   @override
   void initState() {
@@ -109,7 +193,6 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
     ParentalService.getHiddenMenuItems();
     _subscribeToChannelChat();
     _startPresenceHeartbeat();
-    _wakeUpFeed();
 
     if (widget.isTvMode) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -125,13 +208,26 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
   void didUpdateWidget(LiveChatOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.channelId != widget.channelId) {
-      _optimisticMessages.clear();
-      _serverMessages = [];
-      _recentSenders.clear();
+      _resetQueueAndChannelState();
       _subscribeToChannelChat();
       _startPresenceHeartbeat();
-      _wakeUpFeed();
     }
+  }
+
+  void _resetQueueAndChannelState() {
+    _topExpireTimer?.cancel();
+    _topExpireTimer = null;
+    _fadeRemoveTimer?.cancel();
+    _fadeRemoveTimer = null;
+    _queuePaceTimer?.cancel();
+    _queuePaceTimer = null;
+    _processedMsgIds.clear();
+    _seenReactionIds.clear();
+    _pendingQueue.clear();
+    _visibleMessages.clear();
+    _activeEmojis.clear();
+    _fadingTopMsgId = null;
+    _hasLoadedInitialSnapshot = false;
   }
 
   void _subscribeToChannelChat() {
@@ -143,16 +239,27 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
         .doc(_safeDocId)
         .collection('messages')
         .orderBy('createdAtMs', descending: true)
-        .limit(40)
+        .limit(60)
         .snapshots()
         .listen(
       (snapshot) {
         if (!mounted) return;
-        final List<_LiveChatMsg> parsed = [];
-        final Set<String> senders = {};
+        final List<_LiveChatMsg> parsedTexts = [];
+        final List<_IncomingReaction> parsedReactions = [];
 
         for (final doc in snapshot.docs) {
           final data = doc.data();
+          final type = (data['type'] ?? 'text').toString();
+          final msgId = (data['clientMsgId'] ?? doc.id).toString();
+
+          if (type == 'reaction') {
+            final emoji = (data['emoji'] ?? data['text'] ?? '').toString().trim();
+            if (emoji.isNotEmpty) {
+              parsedReactions.add(_IncomingReaction(id: msgId, emoji: emoji));
+            }
+            continue;
+          }
+
           final sender = (data['sender'] ?? 'Usuario').toString();
           final text = (data['text'] ?? '').toString();
           if (text.trim().isEmpty) continue;
@@ -161,9 +268,8 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
               ? data['createdAtMs'] as int
               : DateTime.now().millisecondsSinceEpoch;
 
-          senders.add(sender);
-          parsed.add(_LiveChatMsg(
-            id: (data['clientMsgId'] ?? doc.id).toString(),
+          parsedTexts.add(_LiveChatMsg(
+            id: msgId,
             sender: sender,
             text: text,
             isVip: isVipMsg,
@@ -171,19 +277,43 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
           ));
         }
 
-        // Limpiar mensajes locales que ya llegaron confirmados desde Firestore
-        final serverIds = parsed.map((m) => m.id).toSet();
-        _optimisticMessages.removeWhere((m) => serverIds.contains(m.id));
+        parsedTexts.sort((a, b) => a.createdAtMs.compareTo(b.createdAtMs));
 
-        setState(() {
-          _serverMessages = parsed;
-          _recentSenders
-            ..clear()
-            ..addAll(senders);
-        });
+        if (!_hasLoadedInitialSnapshot) {
+          _hasLoadedInitialSnapshot = true;
 
-        if (parsed.isNotEmpty) {
-          _wakeUpFeed();
+          for (final rx in parsedReactions) {
+            _seenReactionIds.add(rx.id);
+          }
+
+          final nowMs = DateTime.now().millisecondsSinceEpoch;
+          final int recentStartIdx =
+              parsedTexts.length > 2 ? parsedTexts.length - 2 : 0;
+
+          for (int i = 0; i < parsedTexts.length; i++) {
+            final msg = parsedTexts[i];
+            final bool isVeryRecent =
+                i >= recentStartIdx && (nowMs - msg.createdAtMs).abs() <= 90000;
+            if (isVeryRecent) {
+              _enqueueMessage(msg);
+            } else {
+              _processedMsgIds.add(msg.id);
+            }
+          }
+          return;
+        }
+
+        for (final rx in parsedReactions) {
+          if (!_seenReactionIds.contains(rx.id)) {
+            _seenReactionIds.add(rx.id);
+            _spawnFloatingEmoji(rx.emoji, id: rx.id);
+          }
+        }
+
+        for (final msg in parsedTexts) {
+          if (!_processedMsgIds.contains(msg.id)) {
+            _enqueueMessage(msg);
+          }
         }
       },
       onError: (e) {
@@ -191,19 +321,82 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
       },
     );
   }
-Future<void> _sendPresencePing(String docId) async {
-    if (!AuthService.isFirebaseAvailable || docId.isEmpty) return;
-    try {
-      await FirebaseFirestore.instance
-          .collection('live_chats')
-          .doc(docId)
-          .collection('presence')
-          .doc(_presenceSessionId)
-          .set({
-        'user': _currentUsername,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    } catch (_) {}
+
+  void _enqueueMessage(_LiveChatMsg msg) {
+    if (_processedMsgIds.contains(msg.id)) return;
+    _processedMsgIds.add(msg.id);
+    _pendingQueue.add(msg);
+    if (_pendingQueue.length > 40) {
+      _pendingQueue.removeAt(0);
+    }
+    _pumpQueue();
+  }
+
+  void _pumpQueue() {
+    if (!mounted) return;
+    if (_pendingQueue.isEmpty || _visibleMessages.length >= _maxVisibleSlots) {
+      return;
+    }
+    if (_queuePaceTimer?.isActive == true) return;
+
+    final nextMsg = _pendingQueue.removeAt(0);
+    setState(() {
+      _visibleMessages.add(nextMsg);
+    });
+
+    _ensureTopCountdown();
+
+    _queuePaceTimer = Timer(const Duration(milliseconds: 850), () {
+      _queuePaceTimer = null;
+      _pumpQueue();
+    });
+  }
+
+  void _ensureTopCountdown() {
+    if (_visibleMessages.isEmpty) {
+      _topExpireTimer?.cancel();
+      _topExpireTimer = null;
+      return;
+    }
+    if (_topExpireTimer?.isActive == true || _fadeRemoveTimer?.isActive == true) {
+      return;
+    }
+
+    final String topId = _visibleMessages.first.id;
+    _topExpireTimer = Timer(const Duration(seconds: 3), () {
+      _topExpireTimer = null;
+      if (!mounted) return;
+      if (_visibleMessages.isEmpty || _visibleMessages.first.id != topId) {
+        _ensureTopCountdown();
+        return;
+      }
+
+      setState(() {
+        _fadingTopMsgId = topId;
+      });
+
+      _fadeRemoveTimer?.cancel();
+      _fadeRemoveTimer = Timer(const Duration(milliseconds: 350), () {
+        _fadeRemoveTimer = null;
+        if (!mounted) return;
+        setState(() {
+          _visibleMessages.removeWhere((m) => m.id == topId);
+          if (_fadingTopMsgId == topId) {
+            _fadingTopMsgId = null;
+          }
+        });
+
+        _ensureTopCountdown();
+
+        if (_pendingQueue.isNotEmpty) {
+          _queuePaceTimer?.cancel();
+          _queuePaceTimer = Timer(const Duration(milliseconds: 450), () {
+            _queuePaceTimer = null;
+            _pumpQueue();
+          });
+        }
+      });
+    });
   }
 
   Future<void> _leavePresence() async {
@@ -214,14 +407,9 @@ Future<void> _sendPresencePing(String docId) async {
     final oldDocId = _activePresenceDocId;
     _activePresenceDocId = '';
     if (!AuthService.isFirebaseAvailable || oldDocId.isEmpty) return;
-    try {
-      await FirebaseFirestore.instance
-          .collection('live_chats')
-          .doc(oldDocId)
-          .collection('presence')
-          .doc(_presenceSessionId)
-          .delete();
-    } catch (_) {}
+    if (oldDocId != LiveChatOverlay._watchingDocId) {
+      await LiveChatOverlay._deletePresenceDoc(oldDocId);
+    }
   }
 
   void _startPresenceHeartbeat() {
@@ -230,9 +418,9 @@ Future<void> _sendPresencePing(String docId) async {
     final docId = _safeDocId;
     _activePresenceDocId = docId;
 
-    _sendPresencePing(docId);
-    _presenceTimer = Timer.periodic(const Duration(seconds: 25), (_) {
-      _sendPresencePing(docId);
+    LiveChatOverlay._writePresencePing(docId);
+    _presenceTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      LiveChatOverlay._writePresencePing(docId);
     });
 
     _presenceSub = FirebaseFirestore.instance
@@ -252,14 +440,21 @@ Future<void> _sendPresencePing(String docId) async {
         }
       }
 
+      final nowLocalMs = DateTime.now().millisecondsSinceEpoch;
       int activeNow = 0;
       for (final doc in snapshot.docs) {
         final data = doc.data();
         final ts = data['updatedAt'];
+        final clientMs = data['clientMs'];
+
         if (ts == null) {
           activeNow++;
         } else if (ts is Timestamp &&
-            (maxServerMs - ts.millisecondsSinceEpoch) <= 90000) {
+            (maxServerMs - ts.millisecondsSinceEpoch) <= 120000) {
+          activeNow++;
+        } else if (maxServerMs == 0 &&
+            clientMs is int &&
+            (nowLocalMs - clientMs).abs() <= 120000) {
           activeNow++;
         }
       }
@@ -268,17 +463,6 @@ Future<void> _sendPresencePing(String docId) async {
         _liveViewersCount = max(1, activeNow);
       });
     }, onError: (_) {});
-  }
-  void _wakeUpFeed() {
-    if (!_isFeedAwake && mounted) {
-      setState(() => _isFeedAwake = true);
-    }
-    _fadeTimer?.cancel();
-    _fadeTimer = Timer(const Duration(seconds: 12), () {
-      if (mounted && !_inputFocusNode.hasFocus) {
-        setState(() => _isFeedAwake = false);
-      }
-    });
   }
 
   void _showModerationNotice(String msg) {
@@ -297,7 +481,6 @@ Future<void> _sendPresencePing(String docId) async {
     final rawText = (presetText ?? _chatController.text).trim();
     if (rawText.isEmpty) return;
 
-    // Anti-spam para salas con mucho tráfico (1.2s entre mensajes)
     final now = DateTime.now();
     if (now.difference(_lastSendTime).inMilliseconds < 1200) {
       _showModerationNotice('⏳ Espera un momento antes de enviar otro mensaje.');
@@ -310,13 +493,11 @@ Future<void> _sendPresencePing(String docId) async {
       textToSend = textToSend.substring(0, 160);
     }
 
-    // Control de groserías y palabras obscenas
     final bool filterActive = ParentalService.isProfanityFilterEnabledSync();
     if (ParentalService.containsProfanity(textToSend)) {
       if (filterActive) {
         textToSend = ParentalService.sanitizeMessage(textToSend);
-        _showModerationNotice(
-            '🛡️ Palabras filtradas por Control Parental.');
+        _showModerationNotice('🛡️ Palabras filtradas por Control Parental.');
       }
     }
 
@@ -327,23 +508,13 @@ Future<void> _sendPresencePing(String docId) async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final clientMsgId = '${nowMs}_${_random.nextInt(999999)}';
 
-    // Inserción inmediata en memoria local (0 ms, nunca desaparece)
-    setState(() {
-      _optimisticMessages.insert(
-        0,
-        _LiveChatMsg(
-          id: clientMsgId,
-          sender: _currentUsername,
-          text: textToSend,
-          isVip: _isVip,
-          createdAtMs: nowMs,
-        ),
-      );
-      if (_optimisticMessages.length > 15) {
-        _optimisticMessages.removeLast();
-      }
-    });
-    _wakeUpFeed();
+    _enqueueMessage(_LiveChatMsg(
+      id: clientMsgId,
+      sender: _currentUsername,
+      text: textToSend,
+      isVip: _isVip,
+      createdAtMs: nowMs,
+    ));
 
     if (AuthService.isFirebaseAvailable) {
       try {
@@ -352,6 +523,7 @@ Future<void> _sendPresencePing(String docId) async {
             .doc(_safeDocId)
             .collection('messages')
             .add({
+          'type': 'text',
           'clientMsgId': clientMsgId,
           'text': textToSend,
           'sender': _currentUsername,
@@ -365,19 +537,22 @@ Future<void> _sendPresencePing(String docId) async {
     }
   }
 
-  void _sendReaction(String emoji) {
-    _wakeUpFeed();
+  void _spawnFloatingEmoji(String emoji, {String? id}) {
+    if (!mounted || emoji.trim().isEmpty) return;
+    final emojiId =
+        id ?? '${DateTime.now().microsecondsSinceEpoch}_${_random.nextInt(9999)}';
+
     final newEmoji = FloatingEmoji(
-      id: '${DateTime.now().microsecondsSinceEpoch}_${_random.nextInt(9999)}',
+      id: emojiId,
       emoji: emoji,
       startX: widget.isTvMode
-          ? 0.72 + (_random.nextDouble() * 0.20)
-          : 0.65 + (_random.nextDouble() * 0.25),
+          ? 0.68 + (_random.nextDouble() * 0.22)
+          : 0.62 + (_random.nextDouble() * 0.28),
     );
 
     setState(() {
       _activeEmojis.add(newEmoji);
-      if (_activeEmojis.length > 14) {
+      if (_activeEmojis.length > 16) {
         _activeEmojis.removeAt(0);
       }
     });
@@ -389,6 +564,39 @@ Future<void> _sendPresencePing(String docId) async {
         });
       }
     });
+  }
+
+  Future<void> _sendReaction(String emoji) async {
+    final now = DateTime.now();
+    if (now.difference(_lastReactionTime).inMilliseconds < 320) return;
+    _lastReactionTime = now;
+
+    final nowMs = now.millisecondsSinceEpoch;
+    final reactionId = 'rx_${nowMs}_${_random.nextInt(999999)}';
+
+    _seenReactionIds.add(reactionId);
+    _spawnFloatingEmoji(emoji, id: reactionId);
+
+    if (AuthService.isFirebaseAvailable) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('live_chats')
+            .doc(_safeDocId)
+            .collection('messages')
+            .add({
+          'type': 'reaction',
+          'emoji': emoji,
+          'text': emoji,
+          'clientMsgId': reactionId,
+          'sender': _currentUsername,
+          'isVip': _isVip,
+          'createdAtMs': nowMs,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      } catch (e) {
+        debugPrint('Error enviando reacción en vivo: $e');
+      }
+    }
   }
 
   Color _senderColor(String sender, bool isVip) {
@@ -404,17 +612,18 @@ Future<void> _sendPresencePing(String docId) async {
     return palette[sender.hashCode.abs() % palette.length];
   }
 
-  List<_LiveChatMsg> get _mergedMessages {
-    final map = <String, _LiveChatMsg>{};
-    for (final m in _serverMessages) {
-      map[m.id] = m;
-    }
-    for (final m in _optimisticMessages) {
-      map.putIfAbsent(m.id, () => m);
-    }
-    final list = map.values.toList()
-      ..sort((a, b) => b.createdAtMs.compareTo(a.createdAtMs));
-    return list.length > 45 ? list.sublist(0, 45) : list;
+  @override
+  void dispose() {
+    _leavePresence();
+    _messagesSub?.cancel();
+    _topExpireTimer?.cancel();
+    _fadeRemoveTimer?.cancel();
+    _queuePaceTimer?.cancel();
+    _noticeTimer?.cancel();
+    _chatController.dispose();
+    _inputFocusNode.dispose();
+    _tvChatScopeNode.dispose();
+    super.dispose();
   }
 
   @override
@@ -452,391 +661,393 @@ Future<void> _sendPresencePing(String docId) async {
     );
   }
 
-  /// Diseño Smartphone / Tablet: Estilo TikTok / Instagram Live (mensajes suben y se difuminan arriba)
+  /// Diseño Smartphone / Tablet: tope bajo (<= mitad del video), toques libres al video y 3s en tope
   Widget _buildMobileLiveChatLayout(bool profanityFilterOn) {
-    final messages = _mergedMessages;
     final onlineCount = max(1, _liveViewersCount);
 
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: _wakeUpFeed,
-      child: Stack(
-        children: [
-          // Capa de emojis flotantes
-          ..._buildFloatingEmojisLayer(),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double maxFeedHeight =
+            (constraints.maxHeight * 0.44).clamp(64.0, 128.0);
 
-          // Feed ascendente de mensajes (izquierda / abajo, sobre la barra de entrada)
-          Positioned(
-            left: 10,
-            right: 72,
-            bottom: 58,
-            top: 34,
-            child: Align(
-              alignment: Alignment.bottomLeft,
-              child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 500),
-                opacity: _isFeedAwake ? 1.0 : 0.35,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Cabecera compacta de sala en vivo
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 6),
+        return Stack(
+          children: [
+            ..._buildFloatingEmojisLayer(constraints.biggest),
+
+            Positioned(
+              top: 8,
+              left: 10,
+              child: IgnorePointer(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.58),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: const Color(0xFF00E5FF).withOpacity(0.45)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.circle,
+                          color: Color(0xFFFF1744), size: 7),
+                      const SizedBox(width: 4),
+                      Text(
+                        'LIVE • $onlineCount en sala',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (profanityFilterOn) ...[
+                        const SizedBox(width: 5),
+                        const Icon(Icons.shield_rounded,
+                            color: Color(0xFF00E676), size: 11),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            Positioned(
+              left: 10,
+              right: 20,
+              bottom: 54,
+              child: IgnorePointer(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: maxFeedHeight),
+                  child: ClipRect(
+                    child: Align(
+                      alignment: Alignment.bottomLeft,
+                      child: _visibleMessages.isEmpty
+                          ? const Padding(
+                              padding: EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                '💬 Sé el primero en comentar en vivo...',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                  shadows: [
+                                    Shadow(color: Colors.black, blurRadius: 4)
+                                  ],
+                                ),
+                              ),
+                            )
+                          : Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: _visibleMessages.map((msg) {
+                                final isFading = _fadingTopMsgId == msg.id;
+                                return _buildAnimatedMessageBubble(
+                                  msg,
+                                  profanityFilterOn,
+                                  isFadingOut: isFading,
+                                );
+                              }).toList(),
+                            ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            if (_moderationNotice.isNotEmpty)
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 54,
+                child: IgnorePointer(
+                  child: Center(
+                    child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
+                          horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.55),
-                        borderRadius: BorderRadius.circular(12),
+                        color: const Color(0xDD1A103C),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.amberAccent),
+                      ),
+                      child: Text(
+                        _moderationNotice,
+                        style: const TextStyle(
+                            color: Colors.amberAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+            Positioned(
+              left: 10,
+              right: 10,
+              bottom: 8,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.62),
+                        borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                            color: const Color(0xFF00E5FF).withOpacity(0.4)),
+                          color: const Color(0xFF00E5FF).withOpacity(0.35),
+                        ),
                       ),
                       child: Row(
-                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.circle,
-                              color: Color(0xFFFF1744), size: 7),
-                          const SizedBox(width: 4),
-                          Flexible(
-                            child: Text(
-                              'LIVE • $onlineCount en sala',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: _chatController,
+                              focusNode: _inputFocusNode,
                               style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
+                                  color: Colors.white, fontSize: 12.5),
+                              decoration: const InputDecoration(
+                                hintText: 'Comenta en vivo...',
+                                hintStyle: TextStyle(
+                                    color: Colors.white54, fontSize: 12),
+                                border: InputBorder.none,
+                                isDense: true,
                               ),
+                              textInputAction: TextInputAction.send,
+                              onSubmitted: (_) => _sendMessage(),
                             ),
                           ),
-                          if (profanityFilterOn) ...[
-                            const SizedBox(width: 5),
-                            const Icon(Icons.shield_rounded,
-                                color: Color(0xFF00E676), size: 11),
-                          ],
+                          IconButton(
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                                minWidth: 34, minHeight: 34),
+                            icon: const Icon(Icons.send_rounded,
+                                color: Color(0xFF00E5FF), size: 18),
+                            onPressed: () => _sendMessage(),
+                          ),
                         ],
                       ),
                     ),
-                    Flexible(
-                      child: ShaderMask(
-                        shaderCallback: (Rect bounds) {
-                          return const LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.transparent,
-                              Colors.black,
-                              Colors.black,
-                            ],
-                            stops: [0.0, 0.22, 1.0],
-                          ).createShader(bounds);
-                        },
-                        blendMode: BlendMode.dstIn,
-                        child: messages.isEmpty
-                            ? const Align(
-                                alignment: Alignment.bottomLeft,
-                                child: Padding(
-                                  padding: EdgeInsets.only(bottom: 4),
-                                  child: Text(
-                                    '💬 Sé el primero en comentar en vivo...',
-                                    style: TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 11,
-                                      shadows: [
-                                        Shadow(
-                                            color: Colors.black, blurRadius: 4)
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              )
-                            : ListView.builder(
-                                reverse: true,
-                                physics: const BouncingScrollPhysics(),
-                                padding: const EdgeInsets.only(top: 16),
-                                itemCount: messages.length,
-                                itemBuilder: (context, index) {
-                                  return _buildMessageBubble(
-                                      messages[index], profanityFilterOn);
-                                },
-                              ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // Aviso de moderación / anti-spam
-          if (_moderationNotice.isNotEmpty)
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 58,
-              child: Center(
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: const Color(0xDD1A103C),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.amberAccent),
                   ),
-                  child: Text(
-                    _moderationNotice,
-                    style: const TextStyle(
-                        color: Colors.amberAccent,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-            ),
-
-          // Barra inferior de escritura y reacciones
-          Positioned(
-            left: 10,
-            right: 10,
-            bottom: 8,
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.62),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: const Color(0xFF00E5FF).withOpacity(0.35),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: _chatController,
-                            focusNode: _inputFocusNode,
-                            onTap: _wakeUpFeed,
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 12.5),
-                            decoration: const InputDecoration(
-                              hintText: 'Comenta en vivo...',
-                              hintStyle: TextStyle(
-                                  color: Colors.white54, fontSize: 12),
-                              border: InputBorder.none,
-                              isDense: true,
-                            ),
-                            textInputAction: TextInputAction.send,
-                            onSubmitted: (_) => _sendMessage(),
-                          ),
-                        ),
-                        IconButton(
-                          padding: EdgeInsets.zero,
-                          constraints:
-                              const BoxConstraints(minWidth: 34, minHeight: 34),
-                          icon: const Icon(Icons.send_rounded,
-                              color: Color(0xFF00E5FF), size: 18),
-                          onPressed: () => _sendMessage(),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                _buildReactionButton('🔥'),
-                _buildReactionButton('⚽'),
-                _buildReactionButton('😂'),
-                _buildReactionButton('❤️'),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Diseño Smart TV: Panel lateral derecho semitransparente navegable con D-pad
-  Widget _buildTvChatLayout(bool profanityFilterOn) {
-    final messages = _mergedMessages;
-    final onlineCount = max(1, _liveViewersCount);
-
-    return Stack(
-      children: [
-        ..._buildFloatingEmojisLayer(),
-        Positioned(
-          top: 16,
-          right: 16,
-          bottom: 16,
-          width: 350,
-          child: FocusScope(
-            node: _tvChatScopeNode,
-            onKeyEvent: (node, event) {
-              if (event is KeyDownEvent &&
-                  (event.logicalKey == LogicalKeyboardKey.escape ||
-                      event.logicalKey == LogicalKeyboardKey.goBack)) {
-                widget.onClose?.call();
-                return KeyEventResult.handled;
-              }
-              return KeyEventResult.ignored;
-            },
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF080D18).withOpacity(0.84),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: const Color(0xFF00E5FF).withOpacity(0.45),
-                  width: 1.4,
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Cabecera TV
-                  Row(
-                    children: [
-                      const Icon(Icons.forum_rounded,
-                          color: Color(0xFF00E5FF), size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Chat en Vivo • ${widget.channelName}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            Row(
-                              children: [
-                                const Icon(Icons.circle,
-                                    color: Color(0xFFFF1744), size: 7),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '$onlineCount activo(s) ${profanityFilterOn ? "• 🛡️ Filtro activo" : ""}',
-                                  style: const TextStyle(
-                                    color: Colors.white60,
-                                    fontSize: 10.5,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (widget.onClose != null)
-                        _buildTvFocusableChip(
-                          label: '✕',
-                          color: Colors.white12,
-                          onTap: widget.onClose!,
-                        ),
-                    ],
-                  ),
-                  const Divider(color: Colors.white12, height: 18),
-
-                  // Feed ascendente con degradado superior
-                  Expanded(
-                    child: ShaderMask(
-                      shaderCallback: (Rect bounds) {
-                        return const LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.transparent,
-                            Colors.black,
-                            Colors.black,
-                          ],
-                          stops: [0.0, 0.14, 1.0],
-                        ).createShader(bounds);
-                      },
-                      blendMode: BlendMode.dstIn,
-                      child: messages.isEmpty
-                          ? const Center(
-                              child: Text(
-                                '¡El chat está listo!\nEnvía una reacción rápida abajo con tu control.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    color: Colors.white54, fontSize: 12.5),
-                              ),
-                            )
-                          : ListView.builder(
-                              reverse: true,
-                              padding: const EdgeInsets.only(top: 14),
-                              itemCount: messages.length,
-                              itemBuilder: (context, index) {
-                                return _buildMessageBubble(
-                                    messages[index], profanityFilterOn);
-                              },
-                            ),
-                    ),
-                  ),
-
-                  if (_moderationNotice.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      _moderationNotice,
-                      style: const TextStyle(
-                          color: Colors.amberAccent,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold),
-                    ),
-                  ],
-
-                  const Divider(color: Colors.white12, height: 16),
-
-                  // Frases rápidas navegables con control remoto (1 clic)
-                  const Text(
-                    'RESPUESTAS RÁPIDAS (OK):',
-                    style: TextStyle(
-                      color: Color(0xFF00E5FF),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: _tvQuickPhrases
-                        .map(
-                          (phrase) => _buildTvFocusableChip(
-                            label: phrase,
-                            color: const Color(0xFF161F33),
-                            onTap: () => _sendMessage(phrase),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                  const SizedBox(height: 10),
-
-                  // Reacciones flotantes con 1 clic
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: _quickEmojis
-                        .map(
-                          (emoji) => _buildTvFocusableChip(
-                            label: emoji,
-                            color: Colors.white10,
-                            fontSize: 17,
-                            onTap: () => _sendReaction(emoji),
-                          ),
-                        )
-                        .toList(),
-                  ),
+                  const SizedBox(width: 6),
+                  _buildReactionButton('🔥'),
+                  _buildReactionButton('⚽'),
+                  _buildReactionButton('😂'),
+                  _buildReactionButton('❤️'),
                 ],
               ),
             ),
-          ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Diseño Smart TV: Panel lateral derecho con cola ordenada, 3s al llegar al tope y emojis en vivo
+  Widget _buildTvChatLayout(bool profanityFilterOn) {
+    final onlineCount = max(1, _liveViewersCount);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Stack(
+          children: [
+            ..._buildFloatingEmojisLayer(constraints.biggest),
+            Positioned(
+              top: 16,
+              right: 16,
+              bottom: 16,
+              width: 350,
+              child: FocusScope(
+                node: _tvChatScopeNode,
+                onKeyEvent: (node, event) {
+                  if (event is KeyDownEvent &&
+                      (event.logicalKey == LogicalKeyboardKey.escape ||
+                          event.logicalKey == LogicalKeyboardKey.goBack)) {
+                    widget.onClose?.call();
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF080D18).withOpacity(0.84),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: const Color(0xFF00E5FF).withOpacity(0.45),
+                      width: 1.4,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.forum_rounded,
+                              color: Color(0xFF00E5FF), size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Chat en Vivo • ${widget.channelName}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.circle,
+                                        color: Color(0xFFFF1744), size: 7),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '$onlineCount activo(s) ${profanityFilterOn ? "• 🛡️ Filtro activo" : ""}',
+                                      style: const TextStyle(
+                                        color: Colors.white60,
+                                        fontSize: 10.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (widget.onClose != null)
+                            _buildTvFocusableChip(
+                              label: '✕',
+                              color: Colors.white12,
+                              onTap: widget.onClose!,
+                            ),
+                        ],
+                      ),
+                      const Divider(color: Colors.white12, height: 18),
+
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.bottomLeft,
+                          child: _visibleMessages.isEmpty
+                              ? const Center(
+                                  child: Text(
+                                    '¡El chat está listo!\nEnvía una reacción rápida abajo con tu control.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                        color: Colors.white54, fontSize: 12.5),
+                                  ),
+                                )
+                              : SingleChildScrollView(
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  reverse: true,
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: _visibleMessages.map((msg) {
+                                      final isFading =
+                                          _fadingTopMsgId == msg.id;
+                                      return _buildAnimatedMessageBubble(
+                                        msg,
+                                        profanityFilterOn,
+                                        isFadingOut: isFading,
+                                      );
+                                    }).toList(),
+                                  ),
+                                ),
+                        ),
+                      ),
+
+                      if (_moderationNotice.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          _moderationNotice,
+                          style: const TextStyle(
+                              color: Colors.amberAccent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ],
+
+                      const Divider(color: Colors.white12, height: 16),
+
+                      const Text(
+                        'RESPUESTAS RÁPIDAS (OK):',
+                        style: TextStyle(
+                          color: Color(0xFF00E5FF),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: _tvQuickPhrases
+                            .map(
+                              (phrase) => _buildTvFocusableChip(
+                                label: phrase,
+                                color: const Color(0xFF161F33),
+                                onTap: () => _sendMessage(phrase),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      const SizedBox(height: 10),
+
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: _quickEmojis
+                            .map(
+                              (emoji) => _buildTvFocusableChip(
+                                label: emoji,
+                                color: Colors.white10,
+                                fontSize: 17,
+                                onTap: () => _sendReaction(emoji),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildAnimatedMessageBubble(
+    _LiveChatMsg msg,
+    bool profanityFilterOn, {
+    required bool isFadingOut,
+  }) {
+    return KeyedSubtree(
+      key: ValueKey(msg.id),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 340),
+        opacity: isFadingOut ? 0.0 : 1.0,
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.0, end: 1.0),
+          duration: const Duration(milliseconds: 420),
+          curve: Curves.easeOutCubic,
+          builder: (context, value, child) {
+            return Opacity(
+              opacity: value.clamp(0.0, 1.0),
+              child: Transform.translate(
+                offset: Offset(0, 14 * (1 - value)),
+                child: child,
+              ),
+            );
+          },
+          child: _buildMessageBubble(msg, profanityFilterOn),
         ),
-      ],
+      ),
     );
   }
 
@@ -849,10 +1060,10 @@ Future<void> _sendPresencePing(String docId) async {
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 5),
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4.5),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.54),
+          color: Colors.black.withOpacity(0.58),
           borderRadius: BorderRadius.circular(12),
           border: msg.isVip
               ? Border.all(
@@ -860,6 +1071,8 @@ Future<void> _sendPresencePing(String docId) async {
               : null,
         ),
         child: RichText(
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           text: TextSpan(
             children: [
               if (msg.isVip)
@@ -876,15 +1089,15 @@ Future<void> _sendPresencePing(String docId) async {
                 style: TextStyle(
                   color: nameColor,
                   fontWeight: FontWeight.w800,
-                  fontSize: 12,
+                  fontSize: 11.5,
                 ),
               ),
               TextSpan(
                 text: displayText,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 12,
-                  height: 1.25,
+                  fontSize: 11.5,
+                  height: 1.2,
                 ),
               ),
             ],
@@ -894,22 +1107,24 @@ Future<void> _sendPresencePing(String docId) async {
     );
   }
 
-  List<Widget> _buildFloatingEmojisLayer() {
+  List<Widget> _buildFloatingEmojisLayer(Size areaSize) {
+    final double w = areaSize.width > 0 ? areaSize.width : 320;
+    final double h = areaSize.height > 0 ? areaSize.height : 200;
+
     return _activeEmojis.map((emojiData) {
       return TweenAnimationBuilder<double>(
         key: ValueKey(emojiData.id),
         tween: Tween(begin: 1.0, end: 0.0),
         duration: const Duration(milliseconds: 2400),
         builder: (context, value, child) {
-          final size = MediaQuery.of(context).size;
           return Positioned(
-            left: size.width * emojiData.startX,
-            bottom: 65 + (size.height * 0.42 * (1 - value)),
+            left: (w * emojiData.startX).clamp(16.0, max(16.0, w - 42.0)),
+            bottom: 52 + (h * 0.52 * (1 - value)),
             child: IgnorePointer(
               child: Opacity(
                 opacity: value.clamp(0.0, 1.0),
                 child: Transform.scale(
-                  scale: 0.9 + (1 - value) * 0.6,
+                  scale: 0.9 + (1 - value) * 0.55,
                   child: Text(emojiData.emoji,
                       style: const TextStyle(fontSize: 26)),
                 ),

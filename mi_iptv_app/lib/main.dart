@@ -1543,6 +1543,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _isPlayingDvrRecording = false;
       _activeDvrTitle = null;
     });
+    if (_channels.isNotEmpty && _selectedChannelIndex < _channels.length) {
+      unawaited(LiveChatOverlay.syncWatchingPresence(
+          _channels[_selectedChannelIndex].name));
+    }
   }
 
   void _warmUpAdjacentChannels() {
@@ -4231,15 +4235,6 @@ void _showColorBlindSelectorDialog() {
                           onPressed: _startVoiceSearch,
                         ),
 
-                        if (!ParentalService.isChatHiddenSync())
-
-                        _buildTopBarActionItem(
-                          icon: _showLiveChat ? Icons.forum : Icons.emoji_emotions_outlined,
-                          color: _showLiveChat ? const Color(0xFFFFD600) : Colors.white,
-                          tooltip: 'Chat y Reacciones en Vivo',
-                          onPressed: () => setState(() => _showLiveChat = !_showLiveChat),
-                        ),
-
                         _buildTopBarActionItem(
                           icon: Icons.settings_remote,
                           color: const Color(0xFF00E5FF),
@@ -4332,6 +4327,21 @@ void _showColorBlindSelectorDialog() {
                 ),
 
                 const SizedBox(width: 4),
+
+                if (!ParentalService.isChatHiddenSync())
+                  _buildTopBarActionItem(
+                    icon: _showLiveChat
+                        ? Icons.forum
+                        : Icons.emoji_emotions_outlined,
+                    color: _showLiveChat
+                        ? const Color(0xFFFFD600)
+                        : Colors.white,
+                    tooltip: _showLiveChat
+                        ? 'Ocultar Chat en Vivo'
+                        : 'Abrir Chat en Vivo',
+                    onPressed: () =>
+                        setState(() => _showLiveChat = !_showLiveChat),
+                  ),
 
                 IconButton(
                   visualDensity: VisualDensity.compact,
@@ -5057,29 +5067,37 @@ void _showColorBlindSelectorDialog() {
                 onToggleFullScreen: () => setState(() => _isFullScreenMode = true),
               ),
 
-            if (_showOsd)
+            if (_showOsd ||
+                (_showLiveChat && !ParentalService.isChatHiddenSync()))
               Positioned(
                 top: 8,
                 right: 8,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                     if (!ParentalService.isChatHiddenSync())
-                    _buildMiniPlayerPillButton(
-                      icon: _showLiveChat ? Icons.forum : Icons.emoji_emotions_outlined,
-                      label: _showLiveChat ? 'Cerrar Chat' : 'Vivo 💬',
-                      color: _showLiveChat ? const Color(0xFFFFD600) : Colors.black54,
-                      textColor: _showLiveChat ? Colors.black : Colors.white,
-                      onTap: () => setState(() => _showLiveChat = !_showLiveChat),
-                    ),
-                    const SizedBox(width: 6),
-                    _buildMiniPlayerPillButton(
-                      icon: Icons.picture_in_picture_alt_rounded,
-                      label: 'Flotar',
-                      color: Colors.black54,
-                      textColor: const Color(0xFF00E5FF),
-                      onTap: _enterNativePiP,
-                    ),
+                    if (!ParentalService.isChatHiddenSync())
+                      _buildMiniPlayerPillButton(
+                        icon: _showLiveChat
+                            ? Icons.close_rounded
+                            : Icons.emoji_emotions_outlined,
+                        label: _showLiveChat ? 'Cerrar Chat' : 'Vivo 💬',
+                        color: _showLiveChat
+                            ? const Color(0xFFFFD600)
+                            : Colors.black54,
+                        textColor: _showLiveChat ? Colors.black : Colors.white,
+                        onTap: () =>
+                            setState(() => _showLiveChat = !_showLiveChat),
+                      ),
+                    if (_showOsd) ...[
+                      const SizedBox(width: 6),
+                      _buildMiniPlayerPillButton(
+                        icon: Icons.picture_in_picture_alt_rounded,
+                        label: 'Flotar',
+                        color: Colors.black54,
+                        textColor: const Color(0xFF00E5FF),
+                        onTap: _enterNativePiP,
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -5446,59 +5464,69 @@ void _showColorBlindSelectorDialog() {
                 ),
               ),
 
-            if (_showOsd)
+         if (_showOsd ||
+                (_showLiveChat && !ParentalService.isChatHiddenSync()))
               Positioned(
                 top: 38,
                 right: 24,
                 child: Row(
                   children: [
-                    _buildMiniPlayerPillButton(
-                      icon: Icons.settings_remote,
-                      label: 'Mando TV',
-                      color: Colors.black54,
-                      textColor: const Color(0xFF00E5FF),
-                      onTap: _openRemoteControlModalScreen,
-                    ),
-                    if (!kIsWeb) ...[
+                    if (_showOsd) ...[
+                      _buildMiniPlayerPillButton(
+                        icon: Icons.settings_remote,
+                        label: 'Mando TV',
+                        color: Colors.black54,
+                        textColor: const Color(0xFF00E5FF),
+                        onTap: _openRemoteControlModalScreen,
+                      ),
+                      if (!kIsWeb) ...[
+                        const SizedBox(width: 8),
+                        _buildMiniPlayerPillButton(
+                          icon: Icons.fiber_smart_record,
+                          label: 'Grabaciones',
+                          color: Colors.black54,
+                          textColor: const Color(0xFFFF1744),
+                          onTap: _openDvrRecordingsVaultModal,
+                        ),
+                      ],
+                      const SizedBox(width: 8),
+                    ],
+                    if (!ParentalService.isChatHiddenSync())
+                      _buildMiniPlayerPillButton(
+                        icon: _showLiveChat ? Icons.close_rounded : Icons.forum,
+                        label: _showLiveChat ? 'Ocultar Chat' : 'Chat Vivo 🔥',
+                        color: _showLiveChat
+                            ? const Color(0xFFFFD600)
+                            : Colors.black54,
+                        textColor: _showLiveChat ? Colors.black : Colors.white,
+                        onTap: () =>
+                            setState(() => _showLiveChat = !_showLiveChat),
+                      ),
+                    if (_showOsd) ...[
                       const SizedBox(width: 8),
                       _buildMiniPlayerPillButton(
-                        icon: Icons.fiber_smart_record,
-                        label: 'Grabaciones',
+                        icon: Icons.picture_in_picture_alt_rounded,
+                        label: 'PiP Flotante',
                         color: Colors.black54,
-                        textColor: const Color(0xFFFF1744),
-                        onTap: _openDvrRecordingsVaultModal,
+                        textColor: const Color(0xFF00E5FF),
+                        onTap: _enterNativePiP,
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: const Icon(Icons.fullscreen_exit,
+                              color: Colors.white, size: 22),
+                        ),
+                        onPressed: () =>
+                            setState(() => _isFullScreenMode = false),
                       ),
                     ],
-                    const SizedBox(width: 8),
-                    if (!ParentalService.isChatHiddenSync())
-                    _buildMiniPlayerPillButton(
-                      icon: Icons.forum,
-                      label: _showLiveChat ? 'Ocultar Chat' : 'Chat Vivo 🔥',
-                      color: _showLiveChat ? const Color(0xFFFFD600) : Colors.black54,
-                      textColor: _showLiveChat ? Colors.black : Colors.white,
-                      onTap: () => setState(() => _showLiveChat = !_showLiveChat),
-                    ),
-                    const SizedBox(width: 8),
-                    _buildMiniPlayerPillButton(
-                      icon: Icons.picture_in_picture_alt_rounded,
-                      label: 'PiP Flotante',
-                      color: Colors.black54,
-                      textColor: const Color(0xFF00E5FF),
-                      onTap: _enterNativePiP,
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white24),
-                        ),
-                        child: const Icon(Icons.fullscreen_exit, color: Colors.white, size: 22),
-                      ),
-                      onPressed: () => setState(() => _isFullScreenMode = false),
-                    ),
                   ],
                 ),
               ),
@@ -5524,6 +5552,7 @@ void _showColorBlindSelectorDialog() {
     _syncProgressToCloud();
     WidgetsBinding.instance.removeObserver(this);
     RemoteControlService.dispose();
+    LiveChatOverlay.stopWatchingPresence();
     _pipChannel.setMethodCallHandler(null);
     _syncAutoPipState(false);
     if (!kIsWeb) {
