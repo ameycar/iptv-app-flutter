@@ -180,9 +180,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
          'stream-lavf-o',
           'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=3,fflags=+nobuffer+fastseek+flush_packets',
         );
-          'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,fflags=+nobuffer+fastseek+flush_packets',
-      
-      }
+        }
     } catch (e) {
       debugPrint('Aviso config bajo nivel: $e');
     }
@@ -228,7 +226,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
             'stream-lavf-o',
             'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=3,fflags=+nobuffer+fastseek+flush_packets',
           );
-            'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,fflags=+nobuffer+fastseek+flush_packets',
+          
           
         }
       }
