@@ -626,17 +626,7 @@ class _LiveChatOverlayState extends State<LiveChatOverlay> {
     super.dispose();
   }
 
-  @override
-  void dispose() {
-    _leavePresence();
-    _messagesSub?.cancel();
-    _fadeTimer?.cancel();
-    _noticeTimer?.cancel();
-    _chatController.dispose();
-    _inputFocusNode.dispose();
-    _tvChatScopeNode.dispose();
-    super.dispose();
-  }
+  
 
   @override
   Widget build(BuildContext context) {
