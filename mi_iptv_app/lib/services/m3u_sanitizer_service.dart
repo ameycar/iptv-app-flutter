@@ -174,7 +174,7 @@ class M3USanitizerService {
           final parsed = extractUrlAndHeaders('http://h|$headerStr');
           tempHeaders.addAll(parsed.headers);
         }
-       else if (!line.startsWith('#')) {
+       }else if (!line.startsWith('#')) {
         final lowerLine = line.toLowerCase();
         final isUrl = lowerLine.startsWith('http://') ||
             lowerLine.startsWith('https://') ||

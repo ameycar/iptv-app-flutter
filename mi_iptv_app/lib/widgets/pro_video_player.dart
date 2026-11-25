@@ -177,12 +177,11 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
         (platform as dynamic).setProperty('sid', 'auto');
         (platform as dynamic).setProperty('sub-auto', 'all');
         (platform as dynamic).setProperty(
-          (platform as dynamic).setProperty(
-          'stream-lavf-o',
+         'stream-lavf-o',
           'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=3,fflags=+nobuffer+fastseek+flush_packets',
         );
           'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,fflags=+nobuffer+fastseek+flush_packets',
-        );
+      
       }
     } catch (e) {
       debugPrint('Aviso config bajo nivel: $e');
@@ -224,13 +223,13 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
           await (platform as dynamic).setProperty('cache-pause-initial', 'no');
           await (platform as dynamic).setProperty('stream-buffer-size', '64k');
           await (platform as dynamic).setProperty('network-timeout', '10');
-          await (platform as dynamic).setProperty(
+          
             await (platform as dynamic).setProperty(
             'stream-lavf-o',
             'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=3,fflags=+nobuffer+fastseek+flush_packets',
           );
             'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,fflags=+nobuffer+fastseek+flush_packets',
-          );
+          
         }
       }
     } catch (e) {
