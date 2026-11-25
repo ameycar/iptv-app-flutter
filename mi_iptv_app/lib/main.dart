@@ -37,6 +37,7 @@ import 'widgets/alexa_voice_sheet.dart';
 import 'widgets/vod_grid_view.dart';
 import 'widgets/zapping_channel_overlay.dart';
 import 'widgets/live_chat_overlay.dart';
+import 'widgets/screen_lock_overlay.dart';
 import 'widgets/onboarding_tutorial_modal.dart';
 import 'firebase_options.dart';
 import 'services/parental_service.dart';
@@ -429,6 +430,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   bool _isInPipMode = false;
   bool _showLiveChat = false;
+  bool _isScreenLocked = false;
+
+  void _toggleScreenLock() {
+    setState(() {
+      _isScreenLocked = !_isScreenLocked;
+      if (_isScreenLocked) {
+        _showOsd = false;
+        _osdHideTimer?.cancel();
+      } else {
+        _showOsd = true;
+        _triggerOsdTimer();
+      }
+    });
+  }
   bool _isPremiumToolsExpanded = false;
   String _selectedLanguage = 'Español (Latinoamérica)';
   String _selectedColorBlindMode = 'Normal';
@@ -3757,9 +3772,10 @@ void _showColorBlindSelectorDialog() {
     }
 
     return PopScope(
-      canPop: !_isFullScreenMode,
+     canPop: !_isFullScreenMode && !_isScreenLocked,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && _isFullScreenMode) {
+        if (didPop || _isScreenLocked) return;
+        if (_isFullScreenMode) {
           setState(() => _isFullScreenMode = false);
         }
       },
@@ -3795,12 +3811,22 @@ void _showColorBlindSelectorDialog() {
           },
           child: Focus(
             autofocus: true,
-            child: OrientationBuilder(
-              builder: (context, orientation) {
-                return orientation == Orientation.portrait
-                    ? _buildPortraitLayout()
-                    : _buildLandscapeLayout();
-              },
+            child: Stack(
+              children: [
+                OrientationBuilder(
+                  builder: (context, orientation) {
+                    return orientation == Orientation.portrait
+                        ? _buildPortraitLayout()
+                        : _buildLandscapeLayout();
+                  },
+                ),
+                if (_isScreenLocked)
+                  Positioned.fill(
+                    child: ScreenLockOverlay(
+                      onUnlock: _toggleScreenLock,
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
@@ -5091,6 +5117,14 @@ void _showColorBlindSelectorDialog() {
                     if (_showOsd) ...[
                       const SizedBox(width: 6),
                       _buildMiniPlayerPillButton(
+                        icon: Icons.lock_outline_rounded,
+                        label: 'Bloquear',
+                        color: Colors.black54,
+                        textColor: const Color(0xFFFFD600),
+                        onTap: _toggleScreenLock,
+                      ),
+                      const SizedBox(width: 6),
+                      _buildMiniPlayerPillButton(
                         icon: Icons.picture_in_picture_alt_rounded,
                         label: 'Flotar',
                         color: Colors.black54,
@@ -5503,6 +5537,14 @@ void _showColorBlindSelectorDialog() {
                             setState(() => _showLiveChat = !_showLiveChat),
                       ),
                     if (_showOsd) ...[
+                      const SizedBox(width: 8),
+                      _buildMiniPlayerPillButton(
+                        icon: Icons.lock_outline_rounded,
+                        label: 'Bloquear',
+                        color: Colors.black54,
+                        textColor: const Color(0xFFFFD600),
+                        onTap: _toggleScreenLock,
+                      ),
                       const SizedBox(width: 8),
                       _buildMiniPlayerPillButton(
                         icon: Icons.picture_in_picture_alt_rounded,
