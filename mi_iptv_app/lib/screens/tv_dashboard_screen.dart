@@ -521,6 +521,10 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
   void _startProgressSync(String streamUrl) {
     _currentStreamId = streamUrl;
     _progressSyncTimer?.cancel();
+    if (_channels.isNotEmpty && _selectedChannelIndex < _channels.length) {
+      unawaited(LiveChatOverlay.syncWatchingPresence(
+          _channels[_selectedChannelIndex].name));
+    }
 
     _progressSyncTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
       if (_currentStreamId != null) {
@@ -1320,6 +1324,7 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
     _channelDrawerFocusNode.dispose();
     _cloudPlaylistSub?.cancel();
     RemoteControlService.dispose();
+    LiveChatOverlay.stopWatchingPresence();
     _tvSearchCtrl.dispose();
     super.dispose();
   }
@@ -1451,7 +1456,9 @@ class _TvDashboardScreenState extends State<TvDashboardScreen> {
                         : (activeChannel?.streamUrl ?? ''),
                         volume: _currentVolume,
                     isPlaying: !_isPlayerPaused,
-                    colorBlindMode: _selectedColorBlindMode,
+                    httpHeaders: (_isPlayingDvrRecording && _activeDvrFilePath != null)
+                        ? const {}
+                        : (activeChannel?.httpHeaders ?? const {}),
                   ),
                 ),
               ),

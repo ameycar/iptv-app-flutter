@@ -3,7 +3,74 @@ import 'dart:convert';
 import '../models/channel_model.dart';
 import 'epg_service.dart';
 
+class ParsedStreamTarget {
+  final String url;
+  final Map<String, String> headers;
+
+  const ParsedStreamTarget(this.url, this.headers);
+}
+
 class M3USanitizerService {
+  static final Map<String, Map<String, String>> _streamHeadersCache = {};
+
+  static Map<String, String> getHeadersForUrl(String url) {
+    final clean = url.trim();
+    return _streamHeadersCache[clean] ?? const {};
+  }
+
+  static String _canonicalHeaderKey(String rawKey) {
+    final lower = rawKey.trim().toLowerCase();
+    switch (lower) {
+      case 'user-agent':
+      case 'http-user-agent':
+      case 'useragent':
+        return 'User-Agent';
+      case 'referer':
+      case 'referrer':
+      case 'http-referrer':
+      case 'http-referer':
+        return 'Referer';
+      case 'origin':
+      case 'http-origin':
+        return 'Origin';
+      case 'cookie':
+      case 'http-cookie':
+        return 'Cookie';
+      case 'authorization':
+        return 'Authorization';
+      default:
+        return rawKey.trim();
+    }
+  }
+
+  /// Separa URLs estilo Kodi/VLC: http://servidor/canal.m3u8|User-Agent=...&Referer=...
+  static ParsedStreamTarget extractUrlAndHeaders(String rawLine) {
+    final trimmed = rawLine.trim();
+    final pipeIdx = trimmed.indexOf('|');
+    if (pipeIdx == -1 || !trimmed.substring(pipeIdx + 1).contains('=')) {
+      return ParsedStreamTarget(trimmed, const {});
+    }
+
+    final baseUrl = trimmed.substring(0, pipeIdx).trim();
+    final paramsPart = trimmed.substring(pipeIdx + 1).trim();
+    final Map<String, String> extracted = {};
+
+    for (final segment in paramsPart.split('&')) {
+      final eqIdx = segment.indexOf('=');
+      if (eqIdx <= 0) continue;
+      final rawKey = segment.substring(0, eqIdx).trim();
+      var rawVal = segment.substring(eqIdx + 1).trim();
+      try {
+        rawVal = Uri.decodeComponent(rawVal);
+      } catch (_) {}
+      final key = _canonicalHeaderKey(rawKey);
+      if (key.isNotEmpty && rawVal.isNotEmpty) {
+        extracted[key] = rawVal;
+      }
+    }
+
+    return ParsedStreamTarget(baseUrl, extracted);
+  }
   /// Limpia y separa con precisión estricta: Canales de TV (.m3u8) vs Películas/Series VOD (.mp4, .mkv, /movie/)
   /// Y registra automáticamente el EPG (url-tvg / x-tvg-url) y los tvg-id estilo TiviMate
   static List<ChannelModel> parseAndSanitize(String rawM3u) {
@@ -27,6 +94,7 @@ class M3USanitizerService {
     String tempGroup = 'General';
     String tempTvgId = '';
     String tempTvgName = '';
+    Map<String, String> tempHeaders = {};
     bool awaitingUrlAfterExtInf = false;
     int channelCounter = 1;
 
@@ -38,6 +106,23 @@ class M3USanitizerService {
         unawaited(EpgService.extractAndSaveEpgUrlFromM3u(line));
       } else if (line.toUpperCase().startsWith('#EXTINF:')) {
         awaitingUrlAfterExtInf = true;
+        tempHeaders = {};
+        final extUaMatch = RegExp(
+          r'(?:http-)?user-agent="([^"]*)"',
+          caseSensitive: false,
+        ).firstMatch(line);
+        if (extUaMatch != null &&
+            (extUaMatch.group(1)?.trim().isNotEmpty ?? false)) {
+          tempHeaders['User-Agent'] = extUaMatch.group(1)!.trim();
+        }
+        final extRefMatch = RegExp(
+          r'(?:http-)?referr?er="([^"]*)"',
+          caseSensitive: false,
+        ).firstMatch(line);
+        if (extRefMatch != null &&
+            (extRefMatch.group(1)?.trim().isNotEmpty ?? false)) {
+          tempHeaders['Referer'] = extRefMatch.group(1)!.trim();
+        }
 
         final logoMatch = RegExp(r'tvg-logo="([^"]*)"', caseSensitive: false).firstMatch(line);
         tempLogo = logoMatch?.group(1)?.trim() ?? '';
@@ -66,7 +151,30 @@ class M3USanitizerService {
         if (grp.isNotEmpty && tempGroup == 'General') {
           tempGroup = grp;
         }
-      } else if (!line.startsWith('#')) {
+      } else if (line.toUpperCase().startsWith('#EXTVLCOPT:')) {
+        final opt = line.substring(11).trim();
+        final eqIdx = opt.indexOf('=');
+        if (eqIdx > 0) {
+          final rawKey = opt.substring(0, eqIdx).trim();
+          final rawVal = opt.substring(eqIdx + 1).trim();
+          final key = _canonicalHeaderKey(rawKey);
+          if ((key == 'User-Agent' ||
+                  key == 'Referer' ||
+                  key == 'Origin' ||
+                  key == 'Cookie') &&
+              rawVal.isNotEmpty) {
+            tempHeaders[key] = rawVal;
+          }
+        }
+      } else if (line.toUpperCase().startsWith('#KODIPROP:')) {
+        final prop = line.substring(10).trim();
+        final lowerProp = prop.toLowerCase();
+        if (lowerProp.startsWith('inputstream.adaptive.stream_headers=')) {
+          final headerStr = prop.substring(prop.indexOf('=') + 1).trim();
+          final parsed = extractUrlAndHeaders('http://h|$headerStr');
+          tempHeaders.addAll(parsed.headers);
+        }
+       else if (!line.startsWith('#')) {
         final lowerLine = line.toLowerCase();
         final isUrl = lowerLine.startsWith('http://') ||
             lowerLine.startsWith('https://') ||
@@ -85,7 +193,15 @@ class M3USanitizerService {
         }
 
         if (isUrl) {
-          String cleanUrl = _normalizeStreamUrl(line);
+          final parsedTarget = extractUrlAndHeaders(line);
+          String cleanUrl = _normalizeStreamUrl(parsedTarget.url);
+          final Map<String, String> mergedHeaders = {
+            ...tempHeaders,
+            ...parsedTarget.headers,
+          };
+          if (mergedHeaders.isNotEmpty) {
+            _streamHeadersCache[cleanUrl] = Map.unmodifiable(mergedHeaders);
+          }
 
           // Respaldo inteligente para que nunca quede como "Canal sin nombre"
           if (tempName == 'Canal sin nombre' || tempName.startsWith('Canal ')) {
@@ -128,6 +244,9 @@ class M3USanitizerService {
               year: year,
               rating: contentType == 'live' ? 'HD' : '8.5',
               isValid: true,
+              httpHeaders: mergedHeaders.isEmpty
+                  ? const {}
+                  : Map.unmodifiable(mergedHeaders),
             ),
           );
           channelCounter++;
@@ -139,6 +258,7 @@ class M3USanitizerService {
           tempGroup = 'General';
           tempTvgId = '';
           tempTvgName = '';
+          tempHeaders = {};
           awaitingUrlAfterExtInf = false;
         }
       }

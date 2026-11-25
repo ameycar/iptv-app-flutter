@@ -7,12 +7,14 @@ import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../services/player_settings_service.dart';
+import '../services/m3u_sanitizer_service.dart';
 
 class ProVideoPlayer extends StatefulWidget {
   final String streamUrl;
   final double volume;
   final bool isPlaying;
   final String colorBlindMode; // Nuevo parámetro para daltonismo ('Normal', 'Protanopía', 'Deuteranopía', 'Tritanopía')
+  final Map<String, String> httpHeaders;
 
   const ProVideoPlayer({
     super.key,
@@ -20,6 +22,7 @@ class ProVideoPlayer extends StatefulWidget {
     this.volume = 1.0,
     this.isPlaying = true,
     this.colorBlindMode = 'Normal',
+    this.httpHeaders = const {},
   });
 
   @override
@@ -155,7 +158,7 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
         final maxBytes = (mb * 1024 * 1024).toInt();
 
         (platform as dynamic).setProperty('profile', 'low-latency');
-        (platform as dynamic).setProperty('hwdec', 'mediacodec-copy');
+        (platform as dynamic).setProperty('hwdec', 'mediacodec-copy,auto-safe');
         (platform as dynamic).setProperty('vd-lavc-threads', '4');
         (platform as dynamic).setProperty('framedrop', 'vo');
         (platform as dynamic).setProperty('video-sync', 'audio');
@@ -168,13 +171,16 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
         (platform as dynamic).setProperty('cache-pause', 'no');
         (platform as dynamic).setProperty('cache-pause-initial', 'no');
         (platform as dynamic).setProperty('stream-buffer-size', '64k');
-        (platform as dynamic).setProperty('network-timeout', '5');
+        (platform as dynamic).setProperty('network-timeout', '10');
         (platform as dynamic).setProperty('tls-verify', 'no');
         (platform as dynamic).setProperty('aid', '1');
         (platform as dynamic).setProperty('sid', 'auto');
         (platform as dynamic).setProperty('sub-auto', 'all');
         (platform as dynamic).setProperty(
+          (platform as dynamic).setProperty(
           'stream-lavf-o',
+          'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=3,fflags=+nobuffer+fastseek+flush_packets',
+        );
           'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,fflags=+nobuffer+fastseek+flush_packets',
         );
       }
@@ -217,9 +223,12 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
           await (platform as dynamic).setProperty('cache-pause', 'no');
           await (platform as dynamic).setProperty('cache-pause-initial', 'no');
           await (platform as dynamic).setProperty('stream-buffer-size', '64k');
-          await (platform as dynamic).setProperty('network-timeout', '5');
+          await (platform as dynamic).setProperty('network-timeout', '10');
           await (platform as dynamic).setProperty(
+            await (platform as dynamic).setProperty(
             'stream-lavf-o',
+            'reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=3,fflags=+nobuffer+fastseek+flush_packets',
+          );
             'reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,fflags=+nobuffer+fastseek+flush_packets',
           );
         }
@@ -231,7 +240,8 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
 
   
   Future<void> _tuneChannelFast(String rawUrl) async {
-    final url = _normalizeArchiveAndSpacesUrl(rawUrl);
+    final parsed = M3USanitizerService.extractUrlAndHeaders(rawUrl);
+    final url = _normalizeArchiveAndSpacesUrl(parsed.url);
     if (url.isEmpty) return;
 
     final token = ++_switchToken;
@@ -252,16 +262,32 @@ class ProVideoPlayerState extends State<ProVideoPlayer> {
       if (token != _switchToken || !mounted) return;
 
       final isVod = _isVodFileOrStream(url);
-      final headers = isVod
-          ? const {
+      final Map<String, String> headers = isVod
+          ? {
               'User-Agent':
                   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
               'Accept': '*/*',
             }
-          : const {
+          : {
               'User-Agent': 'TiviMate/4.7.0 (Linux; Android 13) ExoPlayerLib/2.19.1',
               'Connection': 'keep-alive',
             };
+
+      final cachedHeaders = M3USanitizerService.getHeadersForUrl(url);
+      if (cachedHeaders.isNotEmpty) {
+        headers.addAll(cachedHeaders);
+      } else {
+        final rawCached = M3USanitizerService.getHeadersForUrl(parsed.url);
+        if (rawCached.isNotEmpty) {
+          headers.addAll(rawCached);
+        }
+      }
+      if (parsed.headers.isNotEmpty) {
+        headers.addAll(parsed.headers);
+      }
+      if (widget.httpHeaders.isNotEmpty) {
+        headers.addAll(widget.httpHeaders);
+      }
 
       await player.open(
         Media(

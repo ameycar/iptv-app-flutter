@@ -14,6 +14,7 @@ class ChannelModel {
   final String tvgId;
   final String countryFeed;
   final String customName; // NUEVO: Para la personalización local de nombres
+  final Map<String, String> httpHeaders;
 
   ChannelModel({
     required this.id,
@@ -31,6 +32,7 @@ class ChannelModel {
     this.tvgId = '',
     this.countryFeed = '',
     this.customName = '',
+    this.httpHeaders = const {},
   });
 
   // Retorna el nombre personalizado si existe, de lo contrario el original
@@ -56,6 +58,7 @@ class ChannelModel {
     String? tvgId,
     String? countryFeed,
     String? customName,
+    Map<String, String>? httpHeaders,
   }) {
     return ChannelModel(
       id: id ?? this.id,
@@ -73,6 +76,7 @@ class ChannelModel {
       tvgId: tvgId ?? this.tvgId,
       countryFeed: countryFeed ?? this.countryFeed,
       customName: customName ?? this.customName,
+      httpHeaders: httpHeaders ?? this.httpHeaders,
     );
   }
 
@@ -92,6 +96,7 @@ class ChannelModel {
     'tvgId': tvgId,
     'countryFeed': countryFeed,
     'customName': customName,
+    'httpHeaders': httpHeaders,
   };
 
   factory ChannelModel.fromMap(Map<String, dynamic> map) {
@@ -111,6 +116,13 @@ class ChannelModel {
       tvgId: map['tvgId'] ?? '',
       countryFeed: map['countryFeed'] ?? '',
       customName: map['customName'] ?? '',
+      httpHeaders: map['httpHeaders'] is Map
+          ? Map<String, String>.from(
+              (map['httpHeaders'] as Map).map(
+                (k, v) => MapEntry(k.toString(), v.toString()),
+              ),
+            )
+          : const {},
     );
   }
 }
