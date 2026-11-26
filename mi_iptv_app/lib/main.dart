@@ -4805,10 +4805,39 @@ void _showColorBlindSelectorDialog() {
                       'Hardware ID Equipo: $hwId',
                       style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace'),
                     ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Correo: ${user?.email ?? "No registrado"}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'WhatsApp: ${user?.phone ?? "No registrado"}${user?.whatsappHandle != null && user!.whatsappHandle!.isNotEmpty ? " (${user.whatsappHandle})" : ""} ${user?.whatsappVerified == true ? "✓" : "(Pendiente)"}',
+                      style: TextStyle(
+                        color: user?.whatsappVerified == true ? const Color(0xFF00E676) : Colors.amberAccent,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
+              if (user != null) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _showRequestDataUpdateDialog(user);
+                    },
+                    icon: const Icon(Icons.edit_note_rounded, color: Color(0xFF00E5FF), size: 18),
+                    label: const Text('Solicitar actualización de datos', style: TextStyle(color: Color(0xFF00E5FF))),
+                    style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF00E5FF))),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -4830,7 +4859,72 @@ void _showColorBlindSelectorDialog() {
       ),
     );
   }
-
+void _showRequestDataUpdateDialog(UserModel user) {
+    final noteCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF131A29),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: Color(0xFF00E5FF), width: 1.2),
+        ),
+        title: const Text(
+          'Solicitar Cambio de Datos',
+          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Por seguridad, solo el Administrador puede modificar tu correo o WhatsApp. Indica qué dato deseas actualizar:',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteCtrl,
+              maxLines: 3,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Ej: Cambié mi WhatsApp a +51 988...',
+                hintStyle: const TextStyle(color: Colors.white38, fontSize: 12),
+                filled: true,
+                fillColor: const Color(0xFF1E293B),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF25D366),
+              foregroundColor: Colors.black,
+            ),
+            icon: const Icon(Icons.send_rounded, size: 16),
+            label: const Text('Enviar al Admin', style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: () async {
+              final note = noteCtrl.text.trim();
+              if (note.isEmpty) return;
+              Navigator.pop(ctx);
+              await AuthService.requestDataUpdate(userId: user.id, note: note);
+              const phoneNumber = '51905823660';
+              final msg = 'Hola AMEYCAR TV, soy el usuario ${user.username}. Solicito actualización de datos: $note';
+              final url = Uri.parse('https://wa.me/$phoneNumber?text=${Uri.encodeComponent(msg)}');
+              try {
+                await launchUrl(url, mode: LaunchMode.externalApplication);
+              } catch (_) {}
+            },
+          ),
+        ],
+      ),
+    );
+  }
   Widget _buildActiveSearchBar() {
     return Row(
       children: [
@@ -7277,6 +7371,124 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
       ),
     );
   }
+  Future<void> _openAdminEditContactDialog(String userId, Map<String, dynamic> data) async {
+    final username = (data['username'] ?? 'Cliente').toString();
+    final emailCtrl = TextEditingController(text: (data['email'] ?? '').toString());
+    final phoneCtrl = TextEditingController(text: (data['phone'] ?? '').toString());
+    final waHandleCtrl = TextEditingController(text: (data['whatsappHandle'] ?? '').toString());
+    bool waVerified = data['whatsappVerified'] == true;
+    final pendingNote = (data['pendingDataUpdateNote'] ?? '').toString();
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) => AlertDialog(
+          backgroundColor: const Color(0xFF111827),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: const BorderSide(color: Color(0xFF00E5FF), width: 1.2),
+          ),
+          title: Text(
+            'Contacto & WA • $username',
+            style: const TextStyle(color: Colors.white, fontSize: 15.5, fontWeight: FontWeight.bold),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (pendingNote.isNotEmpty) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0x22F59E0B),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFF59E0B)),
+                    ),
+                    child: Text(
+                      'Solicitud del cliente:\n$pendingNote',
+                      style: const TextStyle(color: Color(0xFFFDE68A), fontSize: 11.5),
+                    ),
+                  ),
+                ],
+                TextField(
+                  controller: emailCtrl,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    labelText: 'Correo electrónico',
+                    labelStyle: const TextStyle(color: Colors.white60),
+                    filled: true,
+                    fillColor: const Color(0xFF1F2937),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    labelText: 'WhatsApp (con código de país)',
+                    labelStyle: const TextStyle(color: Colors.white60),
+                    filled: true,
+                    fillColor: const Color(0xFF1F2937),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: waHandleCtrl,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    labelText: 'Usuario WhatsApp (@...)',
+                    labelStyle: const TextStyle(color: Colors.white60),
+                    filled: true,
+                    fillColor: const Color(0xFF1F2937),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  activeColor: const Color(0xFF25D366),
+                  title: const Text('WhatsApp Verificado ✓', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                  value: waVerified,
+                  onChanged: (v) => setModalState(() => waVerified = v),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00E5FF),
+                foregroundColor: Colors.black,
+              ),
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await AuthService.adminUpdateContactData(
+                  userId: userId,
+                  email: emailCtrl.text.trim(),
+                  phone: phoneCtrl.text.trim(),
+                  whatsappHandle: waHandleCtrl.text.trim(),
+                  whatsappVerified: waVerified,
+                );
+                await _loadUsersPage(reset: true);
+                _showToast('Datos de contacto actualizados para $username.');
+              },
+              child: const Text('Guardar', style: TextStyle(fontWeight: FontWeight.w900)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildClientRowCard(String userId, Map<String, dynamic> data) {
     final now = DateTime.now();
@@ -7358,6 +7570,18 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
               _showToast('Equipo liberado para $username');
             },
           ),
+          IconButton(
+          tooltip: 'Editar contacto / Verificar WhatsApp',
+          icon: Icon(
+            data['dataUpdateRequested'] == true
+                ? Icons.mark_chat_unread_rounded
+                : Icons.contact_phone_rounded,
+            color: data['dataUpdateRequested'] == true
+                ? const Color(0xFFF59E0B)
+                : const Color(0xFF00E5FF),
+          ),
+          onPressed: () => _openAdminEditContactDialog(userId, data),
+        ),
         ElevatedButton.icon(
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF25D366),
@@ -7451,8 +7675,11 @@ class _MasterAdminDashboardScreenState extends State<MasterAdminDashboardScreen>
                             ),
                             _buildMiniBadge(statusLabel, statusColor),
                             _buildMiniBadge(plan, const Color(0xFFC77DFF)),
-                            _buildMiniBadge(
-                                deviceCategory, const Color(0xFF00E5FF)),
+                            _buildMiniBadge(deviceCategory, const Color(0xFF00E5FF)),
+                             if (data['whatsappVerified'] == true)
+                            _buildMiniBadge('WA ✓', const Color(0xFF25D366)),
+                            if (data['dataUpdateRequested'] == true)
+                            _buildMiniBadge('Cambio Datos', const Color(0xFFF59E0B)),
                           ],
                         ),
                         const SizedBox(height: 5),
