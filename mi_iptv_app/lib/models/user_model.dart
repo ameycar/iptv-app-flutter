@@ -16,6 +16,15 @@ class UserModel {
   final DateTime? createdAt;
   final DateTime? lastActiveAt;
 
+  // Datos de contacto y verificación (Costo Cero + Control Admin)
+  final String? email;
+  final String? phone; // Número WhatsApp con código de país (solo dígitos)
+  final String? whatsappHandle; // @usuario de WhatsApp (opcional)
+  final bool emailVerified;
+  final bool whatsappVerified;
+  final bool dataUpdateRequested;
+  final String? pendingDataUpdateNote;
+
   // Campos para Grupos Familiares (Hasta 5 dispositivos) estilo Disney+
   final String? familyId; // Identificador del grupo familiar (ej: "FAM-CACOSTA-912")
   final bool isFamilyAdmin; // True si es el jefe/administrador de la cuenta familiar
@@ -39,6 +48,13 @@ class UserModel {
     this.maxScreens = 1,
     this.createdAt,
     this.lastActiveAt,
+    this.email,
+    this.phone,
+    this.whatsappHandle,
+    this.emailVerified = false,
+    this.whatsappVerified = false,
+    this.dataUpdateRequested = false,
+    this.pendingDataUpdateNote,
     this.familyId,
     this.isFamilyAdmin = false,
     this.familyPlan,
@@ -89,6 +105,13 @@ class UserModel {
       'maxScreens': maxScreens,
       'createdAt': createdAt?.toIso8601String(),
       'lastActiveAt': lastActiveAt?.toIso8601String(),
+      'email': email?.trim().toLowerCase(),
+      'phone': phone?.trim(),
+      'whatsappHandle': whatsappHandle?.trim(),
+      'emailVerified': emailVerified,
+      'whatsappVerified': whatsappVerified,
+      'dataUpdateRequested': dataUpdateRequested,
+      'pendingDataUpdateNote': pendingDataUpdateNote,
       'familyId': familyId,
       'isFamilyAdmin': isFamilyAdmin,
       'familyPlan': familyPlan,
@@ -141,6 +164,13 @@ class UserModel {
       maxScreens: (map['maxScreens'] as num?)?.toInt() ?? 1,
       createdAt: created,
       lastActiveAt: lastActive,
+      email: map['email']?.toString(),
+      phone: map['phone']?.toString(),
+      whatsappHandle: map['whatsappHandle']?.toString(),
+      emailVerified: map['emailVerified'] == true,
+      whatsappVerified: map['whatsappVerified'] == true,
+      dataUpdateRequested: map['dataUpdateRequested'] == true,
+      pendingDataUpdateNote: map['pendingDataUpdateNote']?.toString(),
       familyId: map['familyId']?.toString(),
       isFamilyAdmin: map['isFamilyAdmin'] == true,
       familyPlan: map['familyPlan']?.toString(),
@@ -165,6 +195,13 @@ class UserModel {
     int? maxScreens,
     DateTime? createdAt,
     DateTime? lastActiveAt,
+    String? email,
+    String? phone,
+    String? whatsappHandle,
+    bool? emailVerified,
+    bool? whatsappVerified,
+    bool? dataUpdateRequested,
+    String? pendingDataUpdateNote,
     String? familyId,
     bool? isFamilyAdmin,
     String? familyPlan,
@@ -187,6 +224,13 @@ class UserModel {
       maxScreens: maxScreens ?? this.maxScreens,
       createdAt: createdAt ?? this.createdAt,
       lastActiveAt: lastActiveAt ?? this.lastActiveAt,
+      email: email ?? this.email,
+      phone: phone ?? this.phone,
+      whatsappHandle: whatsappHandle ?? this.whatsappHandle,
+      emailVerified: emailVerified ?? this.emailVerified,
+      whatsappVerified: whatsappVerified ?? this.whatsappVerified,
+      dataUpdateRequested: dataUpdateRequested ?? this.dataUpdateRequested,
+      pendingDataUpdateNote: pendingDataUpdateNote ?? this.pendingDataUpdateNote,
       familyId: familyId ?? this.familyId,
       isFamilyAdmin: isFamilyAdmin ?? this.isFamilyAdmin,
       familyPlan: familyPlan ?? this.familyPlan,

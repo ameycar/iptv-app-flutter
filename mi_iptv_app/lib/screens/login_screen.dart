@@ -224,6 +224,9 @@ class _LoginScreenState extends State<LoginScreen> {
     final nameCtrl = TextEditingController();
     final lastNameCtrl = TextEditingController();
     final passCtrl = TextEditingController();
+    final emailCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController();
+    final waHandleCtrl = TextEditingController();
     bool isRegistering = false;
 
     showModalBottomSheet(
@@ -239,7 +242,8 @@ class _LoginScreenState extends State<LoginScreen> {
             left: 20, right: 20, top: 20,
             bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
           ),
-          child: Column(
+          child: SingleChildScrollView(
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.badge, color: Color(0xFF00E5FF), size: 40),
@@ -291,6 +295,50 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 12),
               TextField(
+                controller: emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Correo electrónico (Obligatorio)',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  prefixIcon: const Icon(Icons.email_outlined, color: Color(0xFF00E5FF)),
+                  filled: true,
+                  fillColor: const Color(0xFF1E293B),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: phoneCtrl,
+                keyboardType: TextInputType.phone,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'WhatsApp con código de país (Ej: 51999888777)',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  prefixIcon: const Icon(Icons.phone_android, color: Color(0xFF25D366)),
+                  filled: true,
+                  fillColor: const Color(0xFF1E293B),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: waHandleCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Usuario de WhatsApp @... (Opcional)',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  prefixIcon: const Icon(Icons.alternate_email, color: Color(0xFFC77DFF)),
+                  filled: true,
+                  fillColor: const Color(0xFF1E293B),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF00E5FF), width: 2)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
                 controller: passCtrl,
                 obscureText: true,
                 style: const TextStyle(color: Colors.white),
@@ -332,6 +380,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             nameCtrl.text.trim(),
                             lastNameCtrl.text.trim(),
                             passCtrl.text.trim(),
+                            email: emailCtrl.text.trim(),
+                            phone: phoneCtrl.text.trim(),
+                            whatsappHandle: waHandleCtrl.text.trim(),
                           );
                           
                           setModalState(() => isRegistering = false);
@@ -348,10 +399,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             );
                             
                             if (res.isSuccess && res.user != null) {
+                              
                               setState(() {
                                 _usernameController.text = res.user!.username;
                                 _passwordController.text = passCtrl.text.trim();
                               });
+                              _showPostRegisterWhatsAppDialog(res.user!);
                             }
                           }
                         },
@@ -362,7 +415,61 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ],
           ),
+         
         ),
+      ),
+    );
+  }
+
+void _showPostRegisterWhatsAppDialog(UserModel user) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF131A29),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: Color(0xFF25D366), width: 1.5),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.verified_user_rounded, color: Color(0xFF25D366)),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '¡Cuenta Creada! Valida tu WhatsApp',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Tu usuario es: ${user.username}\n\nPara vincular tu soporte y recibir renovaciones o recuperación de acceso, toca el botón para validar tu WhatsApp con nosotros.',
+          style: const TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Más tarde', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF25D366),
+              foregroundColor: Colors.black,
+            ),
+            icon: const Icon(Icons.chat_rounded, size: 18),
+            label: const Text('Validar WhatsApp', style: TextStyle(fontWeight: FontWeight.w900)),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              const phoneNumber = '51905823660';
+              final msg =
+                  'Hola AMEYCAR TV, soy el usuario ${user.username} (correo: ${user.email ?? "-"}). Valido mi WhatsApp para mi cuenta.';
+              final url = Uri.parse('https://wa.me/$phoneNumber?text=${Uri.encodeComponent(msg)}');
+              try {
+                await launchUrl(url, mode: LaunchMode.externalApplication);
+              } catch (_) {}
+            },
+          ),
+        ],
       ),
     );
   }

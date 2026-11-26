@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
 import 'dvr_recording_service.dart';
@@ -1400,19 +1401,42 @@ class AuthService {
   // ============================================================
   // REGISTRO CORPORATIVO EN MAYÚSCULAS CON CANDADO ESTRICTO POR HARDWARE ID
   // ============================================================
-  static Future<AuthResponse> registerUser(String firstName, String lastName, String password) async {
+  static Future<AuthResponse> registerUser(
+    String firstName,
+    String lastName,
+    String password, {
+    String email = '',
+    String phone = '',
+    String whatsappHandle = '',
+  }) async {
     try {
       final cleanFirst = normalizeUppercaseUsername(firstName);
       final cleanLast = normalizeUppercaseUsername(lastName);
       final cleanPassword = password.trim();
+      final cleanEmail = email.trim().toLowerCase();
+      final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
+      final cleanWaHandle = whatsappHandle.trim();
 
       if (cleanFirst.isEmpty || cleanLast.isEmpty || cleanPassword.isEmpty) {
         return AuthResponse(
           status: AuthStatus.invalidCredentials,
-          message: 'Por favor, llena todos los campos.',
+          message: 'Por favor, llena todos los campos obligatorios.',
         );
       }
 
+      if (cleanEmail.isEmpty || !cleanEmail.contains('@') || !cleanEmail.contains('.')) {
+        return AuthResponse(
+          status: AuthStatus.invalidCredentials,
+          message: 'Ingresa un correo electrónico válido.',
+        );
+      }
+
+      if (cleanPhone.length < 8) {
+        return AuthResponse(
+          status: AuthStatus.invalidCredentials,
+          message: 'Ingresa tu número de WhatsApp con código de país (ej: 51999888777).',
+        );
+      }
       // 1. Obtenemos el Hardware ID fijo del equipo
       final hwId = await getDeviceHardwareId();
       final prefs = await SharedPreferences.getInstance();
@@ -1517,12 +1541,29 @@ class AuthService {
         expirationDate: expirationDate,
         registeredHardwareId: hwId,
         deviceName: '${firstName.trim().toUpperCase()} ${lastName.trim().toUpperCase()}',
+        email: cleanEmail,
+        phone: cleanPhone,
+        whatsappHandle: cleanWaHandle.isEmpty ? null : cleanWaHandle,
+        emailVerified: false,
+        whatsappVerified: false,
         maxScreens: 1,
         createdAt: DateTime.now(),
         lastActiveAt: DateTime.now(),
       );
 
       await createClientUser(newUser);
+      // Envío automático y gratuito de correo de verificación (Firebase Auth)
+      if (isFirebaseAvailable && cleanEmail.isNotEmpty) {
+        try {
+          final authPass = cleanPassword.length < 6 ? '${cleanPassword}00' : cleanPassword;
+          final cred = await fb_auth.FirebaseAuth.instance
+              .createUserWithEmailAndPassword(email: cleanEmail, password: authPass)
+              .timeout(const Duration(seconds: 6));
+          await cred.user?.sendEmailVerification();
+        } catch (e) {
+          debugPrint('Aviso enviando verificación de correo Firebase: $e');
+        }
+      }
 
       // 8. Sellamos el Hardware ID en local, Firestore y Realtime Database
       await prefs.setBool('trial_claimed_$hwId', true);
@@ -1564,6 +1605,50 @@ class AuthService {
       );
     } catch (e) {
       return AuthResponse(status: AuthStatus.error, message: 'Error creando cuenta: $e');
+    }
+  }
+  /// Permite al cliente solicitar cambio de correo/WhatsApp sin editar directamente su ficha
+  static Future<bool> requestDataUpdate({
+    required String userId,
+    required String note,
+  }) async {
+    try {
+      await updateClientUser(userId, {
+        'dataUpdateRequested': true,
+        'pendingDataUpdateNote': note.trim(),
+      });
+      return true;
+    } catch (e) {
+      debugPrint('Error solicitando actualización de datos: $e');
+      return false;
+    }
+  }
+
+  /// Permite al Admin marcar WhatsApp verificado y/o actualizar datos aprobados
+  static Future<bool> adminUpdateContactData({
+    required String userId,
+    String? email,
+    String? phone,
+    String? whatsappHandle,
+    bool? whatsappVerified,
+    bool? emailVerified,
+  }) async {
+    try {
+      final Map<String, dynamic> updates = {
+        'dataUpdateRequested': false,
+        'pendingDataUpdateNote': null,
+      };
+      if (email != null) updates['email'] = email.trim().toLowerCase();
+      if (phone != null) updates['phone'] = phone.replaceAll(RegExp(r'[^0-9]'), '');
+      if (whatsappHandle != null) updates['whatsappHandle'] = whatsappHandle.trim();
+      if (whatsappVerified != null) updates['whatsappVerified'] = whatsappVerified;
+      if (emailVerified != null) updates['emailVerified'] = emailVerified;
+
+      await updateClientUser(userId, updates);
+      return true;
+    } catch (e) {
+      debugPrint('Error actualizando contacto desde Admin: $e');
+      return false;
     }
   }
 }
