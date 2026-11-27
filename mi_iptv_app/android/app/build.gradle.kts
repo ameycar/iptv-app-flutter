@@ -17,7 +17,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.mi_iptv_app"
+        applicationId = "com.ameycar.tv"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
