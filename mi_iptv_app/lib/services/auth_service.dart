@@ -1415,7 +1415,7 @@ class AuthService {
       final cleanPassword = password.trim();
       final cleanEmail = email.trim().toLowerCase();
       final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
-      final cleanWaHandle = whatsappHandle.trim();
+      final cleanWaHandle = whatsappHandle.trim().toLowerCase();
 
       if (cleanFirst.isEmpty || cleanLast.isEmpty || cleanPassword.isEmpty) {
         return AuthResponse(
@@ -1437,6 +1437,58 @@ class AuthService {
           message: 'Ingresa tu número de WhatsApp con código de país (ej: 51999888777).',
         );
       }
+      // Validación de unicidad: Correo, WhatsApp y @usuario (sin duplicados)
+      if (isFirebaseAvailable) {
+        try {
+          final emailSnap = await FirebaseFirestore.instance
+              .collection(_usersCollection)
+              .where('email', isEqualTo: cleanEmail)
+              .limit(1)
+              .get(const GetOptions(source: Source.serverAndCache))
+              .timeout(const Duration(seconds: 6));
+          if (emailSnap.docs.isNotEmpty) {
+            return AuthResponse(
+              status: AuthStatus.invalidCredentials,
+              message: '⛔ Este correo electrónico ya está registrado en otra cuenta.',
+            );
+          }
+
+          final phoneSnap = await FirebaseFirestore.instance
+              .collection(_usersCollection)
+              .where('phone', isEqualTo: cleanPhone)
+              .limit(1)
+              .get(const GetOptions(source: Source.serverAndCache))
+              .timeout(const Duration(seconds: 6));
+          if (phoneSnap.docs.isNotEmpty) {
+            return AuthResponse(
+              status: AuthStatus.invalidCredentials,
+              message: '⛔ Este número de WhatsApp ya está registrado en otra cuenta.',
+            );
+          }
+
+          if (cleanWaHandle.isNotEmpty) {
+            final waSnap = await FirebaseFirestore.instance
+                .collection(_usersCollection)
+                .where('whatsappHandle', isEqualTo: cleanWaHandle)
+                .limit(1)
+                .get(const GetOptions(source: Source.serverAndCache))
+                .timeout(const Duration(seconds: 6));
+            if (waSnap.docs.isNotEmpty) {
+              return AuthResponse(
+                status: AuthStatus.invalidCredentials,
+                message: '⛔ Este usuario de WhatsApp ($cleanWaHandle) ya está registrado en otra cuenta.',
+              );
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ Error validando duplicados en Firestore: $e');
+          return AuthResponse(
+            status: AuthStatus.error,
+            message: 'No se pudo validar tus datos con el servidor. Revisa tu conexión e intenta de nuevo.',
+          );
+        }
+      }
+  
       // 1. Obtenemos el Hardware ID fijo del equipo
       final hwId = await getDeviceHardwareId();
       final prefs = await SharedPreferences.getInstance();
