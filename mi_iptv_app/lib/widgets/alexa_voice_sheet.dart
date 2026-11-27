@@ -220,7 +220,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
         .trim();
   }
 
-  // MOTOR DE FILTRADO INTELIGENTE (NOMBRE + CATEGORÍA + EPG EN VIVO + ORDEN A-Z)
+  // MOTOR DE FILTRADO INTELIGENTE (PRIORIDAD: CANAL EXACTO > EPG > TEMA/CATEGORÍA)
   void _processSmartFilterCommand(String rawQuery) {
     final clean = _normalizeText(rawQuery);
     if (clean.isEmpty) return;
@@ -229,7 +229,7 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
 
     setState(() {
       _isProcessing = true;
-      _statusText = 'BUSCANDO EN CANALES Y GUÍA EPG...';
+      _statusText = 'BUSCANDO "$rawQuery"...';
     });
 
     if (clean.contains('guia') || clean.contains('epg') || clean.contains('programacion')) {
@@ -244,7 +244,58 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       widget.onSectionChange?.call('Series');
     }
 
-    // 1. Detección de tema/categoría y sinónimos para deportes, noticias, música, etc.
+    // 1. Limpiar palabras de relleno manteniendo letras y números (ej: "espn 2")
+    final queryWords = clean
+        .replaceAll(
+          RegExp(r'\b(coloca|pon|ponme|abre|busca|buscar|sintoniza|el|la|los|las|canal|canales|de|del|videos|por|favor|reproduce|mira|tv|ver|un|una|quiero|deseo|en|seccion|partido|partidos|estan|dando|pasando|hay)\b'),
+          ' ',
+        )
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    final userTokens = queryWords
+        .split(' ')
+        .where((w) => w.length >= 2 || RegExp(r'^\d+$').hasMatch(w))
+        .toList();
+
+    // 2. NIVEL 1: Búsqueda DIRECTA por nombre de canal (ej: "espn 2", "fox sports", "cnn")
+    if (queryWords.isNotEmpty &&
+        queryWords != 'futbol' &&
+        queryWords != 'deporte' &&
+        queryWords != 'deportes' &&
+        queryWords != 'noticias' &&
+        queryWords != 'musica') {
+      dynamic bestDirectMatch;
+      int bestScore = 0;
+
+      for (final c in widget.channels) {
+        final normName = _normalizeText((c.name ?? '').toString());
+        if (normName.isEmpty) continue;
+
+        int score = 0;
+        if (normName == queryWords) {
+          score = 100;
+        } else if (normName.contains(queryWords)) {
+          // Prioriza coincidencia más cercana en longitud (ej: "espn 2" sobre "espn 2 extra")
+          score = 90 - (normName.length - queryWords.length).clamp(0, 20);
+        } else if (userTokens.isNotEmpty && userTokens.every((t) => normName.contains(t))) {
+          score = 75;
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestDirectMatch = c;
+        }
+      }
+
+      if (bestDirectMatch != null) {
+        Navigator.of(context).pop();
+        widget.onChannelSelected(bestDirectMatch);
+        return;
+      }
+    }
+
+    // 3. NIVEL 2: Búsqueda por tema/categoría + Guía EPG (ej: "quiero ver un partido de fútbol")
     String? matchedCategory;
     List<String> topicKeywords = [];
 
@@ -253,24 +304,22 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
         clean.contains('partido') ||
         clean.contains('gol') ||
         clean.contains('liga') ||
-        clean.contains('champions') ||
-        clean.contains('espn') ||
-        clean.contains('fox')) {
+        clean.contains('champions')) {
       matchedCategory = 'Deportes';
       topicKeywords = [
         'futbol', 'deporte', 'sport', 'espn', 'fox', 'tnt', 'gol',
         'liga', 'tyc', 'dsports', 'directv', 'bein', 'dazn', 'win', 'movistar'
       ];
-    } else if (clean.contains('noticia') || clean.contains('noticias') || clean.contains('actualidad') || clean.contains('cnn')) {
+    } else if (clean.contains('noticia') || clean.contains('noticias') || clean.contains('actualidad')) {
       matchedCategory = 'Noticias';
       topicKeywords = ['noticia', 'news', 'cnn', 'rpp', 'canal n', 'bbc', 'telemundo', 'univision', '24h'];
-    } else if (clean.contains('religios') || clean.contains('cristian') || clean.contains('iglesia') || clean.contains('dios') || clean.contains('oracion')) {
+    } else if (clean.contains('religios') || clean.contains('cristian') || clean.contains('iglesia') || clean.contains('dios')) {
       matchedCategory = 'Religiosos';
       topicKeywords = ['religio', 'cristian', 'iglesia', 'enlace', 'ewtn', 'fe'];
-    } else if (clean.contains('musica') || clean.contains('htv') || clean.contains('mtv') || clean.contains('cancion')) {
+    } else if (clean.contains('musica') || clean.contains('cancion')) {
       matchedCategory = 'Música';
-      topicKeywords = ['musica', 'music', 'htv', 'mtv', 'vh1', 'telehit', 'ritmoson'];
-    } else if (clean.contains('infantil') || clean.contains('nino') || clean.contains('dibujo') || clean.contains('cartoon') || clean.contains('disney')) {
+      topicKeywords = ['musica', 'music', 'htv', 'mtv', 'vh1', 'telehit'];
+    } else if (clean.contains('infantil') || clean.contains('nino') || clean.contains('dibujo') || clean.contains('cartoon')) {
       matchedCategory = 'Infantil';
       topicKeywords = ['infantil', 'kids', 'disney', 'cartoon', 'nick', 'discovery kids'];
     } else if (clean.contains('entretenimiento') || clean.contains('variedades') || clean.contains('show')) {
@@ -282,24 +331,13 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       widget.onCategorySelected?.call(matchedCategory);
     }
 
-    // 2. Limpiar palabras de relleno
-    final queryWords = clean
-        .replaceAll(
-          RegExp(r'\b(coloca|pon|ponme|abre|busca|buscar|el|la|los|las|canal|canales|de|del|videos|por|favor|reproduce|mira|tv|ver|un|una|quiero|deseo|en|seccion|partido|partidos|estan|dando|pasando|hay)\b'),
-          ' ',
-        )
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-
-    final searchTerms = <String>{
-      if (queryWords.isNotEmpty) queryWords,
-      ...queryWords.split(' ').where((w) => w.length >= 2),
+    final fallbackTerms = <String>{
+      ...userTokens,
       ...topicKeywords,
     }.toList();
 
-    // 3. Buscar en Nombre del canal + Categoría + Programa actual de la Guía EPG
-    final List<dynamic> epgMatches = [];
-    final List<dynamic> nameOrCatMatches = [];
+    dynamic epgMatch;
+    dynamic catMatch;
 
     for (final c in widget.channels) {
       final rawName = (c.name ?? '').toString();
@@ -310,40 +348,29 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
       } catch (_) {}
       final normCat = _normalizeText(rawCat);
 
-      String normEpgTitle = '';
       try {
         final prog = EpgService.getCurrentProgram(rawName, rawCat);
-        normEpgTitle = _normalizeText(prog.title);
+        final normEpg = _normalizeText(prog.title);
+        if (epgMatch == null && fallbackTerms.any((t) => normEpg.contains(t))) {
+          epgMatch = c;
+          break;
+        }
       } catch (_) {}
 
-      final bool hitsEpg = searchTerms.any((t) => normEpgTitle.contains(t));
-      final bool hitsNameOrCat = searchTerms.any((t) => normName.contains(t) || normCat.contains(t));
-
-      if (hitsEpg) {
-        epgMatches.add(c);
-      } else if (hitsNameOrCat) {
-        nameOrCatMatches.add(c);
+      if (catMatch == null && fallbackTerms.any((t) => normName.contains(t) || normCat.contains(t))) {
+        catMatch = c;
       }
     }
 
-    // 4. Ordenar resultados alfabéticamente (A-Z), priorizando los que pasan el programa en EPG ahora
-    int alphaSort(dynamic a, dynamic b) =>
-        (a.name ?? '').toString().toLowerCase().compareTo((b.name ?? '').toString().toLowerCase());
-
-    epgMatches.sort(alphaSort);
-    nameOrCatMatches.sort(alphaSort);
-
-    final allMatches = [...epgMatches, ...nameOrCatMatches];
-
-    if (allMatches.isNotEmpty) {
-      final chosen = allMatches.first;
+    final chosen = epgMatch ?? catMatch;
+    if (chosen != null) {
       Navigator.of(context).pop();
       widget.onChannelSelected(chosen);
     } else {
       setState(() {
         _isProcessing = false;
         _statusText = matchedCategory != null
-            ? 'Categoría "$matchedCategory" aplicada, pero no hallé canales exactos.'
+            ? 'Categoría "$matchedCategory" aplicada.'
             : 'No hallé "$rawQuery" en tus canales ni en la guía EPG.';
       });
     }
