@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import '../services/epg_service.dart';
 
 class AlexaVoiceSheet extends StatefulWidget {
   final List<dynamic> channels;
@@ -205,74 +206,145 @@ class _AlexaVoiceSheetState extends State<AlexaVoiceSheet> with SingleTickerProv
   }
 
   // MOTOR DE FILTRADO INTELIGENTE
+  String _normalizeText(String text) {
+    return text
+        .toLowerCase()
+        .trim()
+        .replaceAll(RegExp(r'[áàäâ]'), 'a')
+        .replaceAll(RegExp(r'[éèëê]'), 'e')
+        .replaceAll(RegExp(r'[íìïî]'), 'i')
+        .replaceAll(RegExp(r'[óòöô]'), 'o')
+        .replaceAll(RegExp(r'[úùüû]'), 'u')
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  // MOTOR DE FILTRADO INTELIGENTE (NOMBRE + CATEGORÍA + EPG EN VIVO + ORDEN A-Z)
   void _processSmartFilterCommand(String rawQuery) {
-    final clean = rawQuery.trim().toLowerCase();
+    final clean = _normalizeText(rawQuery);
     if (clean.isEmpty) return;
 
     _stopVoiceListening();
 
     setState(() {
       _isProcessing = true;
-      _statusText = 'FILTRANDO CATEGORÍA Y CANAL...';
+      _statusText = 'BUSCANDO EN CANALES Y GUÍA EPG...';
     });
 
-    if (clean.contains('guia') || clean.contains('guía') || clean.contains('epg') || clean.contains('programacion')) {
+    if (clean.contains('guia') || clean.contains('epg') || clean.contains('programacion')) {
       Navigator.of(context).pop();
       widget.onOpenEpg?.call();
       return;
     }
 
+    if (clean.contains('pelicula') || clean.contains('peliculas') || clean.contains('cine')) {
+      widget.onSectionChange?.call('Películas');
+    } else if (clean.contains('serie') || clean.contains('series')) {
+      widget.onSectionChange?.call('Series');
+    }
+
+    // 1. Detección de tema/categoría y sinónimos para deportes, noticias, música, etc.
     String? matchedCategory;
-    if (clean.contains('deporte') || clean.contains('futbol') || clean.contains('fútbol') || clean.contains('espn') || clean.contains('fox')) {
+    List<String> topicKeywords = [];
+
+    if (clean.contains('deporte') ||
+        clean.contains('futbol') ||
+        clean.contains('partido') ||
+        clean.contains('gol') ||
+        clean.contains('liga') ||
+        clean.contains('champions') ||
+        clean.contains('espn') ||
+        clean.contains('fox')) {
       matchedCategory = 'Deportes';
+      topicKeywords = [
+        'futbol', 'deporte', 'sport', 'espn', 'fox', 'tnt', 'gol',
+        'liga', 'tyc', 'dsports', 'directv', 'bein', 'dazn', 'win', 'movistar'
+      ];
     } else if (clean.contains('noticia') || clean.contains('noticias') || clean.contains('actualidad') || clean.contains('cnn')) {
       matchedCategory = 'Noticias';
-    } else if (clean.contains('religios') || clean.contains('cristian') || clean.contains('iglesia') || clean.contains('dios') || clean.contains('oración')) {
-      matchedCategory = 'Religious';
-    } else if (clean.contains('musica') || clean.contains('música') || clean.contains('video') || clean.contains('htv') || clean.contains('audio')) {
+      topicKeywords = ['noticia', 'news', 'cnn', 'rpp', 'canal n', 'bbc', 'telemundo', 'univision', '24h'];
+    } else if (clean.contains('religios') || clean.contains('cristian') || clean.contains('iglesia') || clean.contains('dios') || clean.contains('oracion')) {
+      matchedCategory = 'Religiosos';
+      topicKeywords = ['religio', 'cristian', 'iglesia', 'enlace', 'ewtn', 'fe'];
+    } else if (clean.contains('musica') || clean.contains('htv') || clean.contains('mtv') || clean.contains('cancion')) {
       matchedCategory = 'Música';
+      topicKeywords = ['musica', 'music', 'htv', 'mtv', 'vh1', 'telehit', 'ritmoson'];
+    } else if (clean.contains('infantil') || clean.contains('nino') || clean.contains('dibujo') || clean.contains('cartoon') || clean.contains('disney')) {
+      matchedCategory = 'Infantil';
+      topicKeywords = ['infantil', 'kids', 'disney', 'cartoon', 'nick', 'discovery kids'];
     } else if (clean.contains('entretenimiento') || clean.contains('variedades') || clean.contains('show')) {
       matchedCategory = 'Entretenimiento';
+      topicKeywords = ['entretenimiento', 'variedades', 'star', 'warner', 'sony', 'tnt', 'axn'];
     }
 
     if (matchedCategory != null) {
       widget.onCategorySelected?.call(matchedCategory);
     }
 
+    // 2. Limpiar palabras de relleno
     final queryWords = clean
-        .replaceAll(RegExp(r'\b(coloca|pon|abre|busca|el|la|los|las|canal|de|videos|por|favor|reproduce|mira|tv|ver|un|una|quiero|en|la|seccion)\b'), '')
+        .replaceAll(
+          RegExp(r'\b(coloca|pon|ponme|abre|busca|buscar|el|la|los|las|canal|canales|de|del|videos|por|favor|reproduce|mira|tv|ver|un|una|quiero|deseo|en|seccion|partido|partidos|estan|dando|pasando|hay)\b'),
+          ' ',
+        )
+        .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
 
-    final searchKey = queryWords.isNotEmpty ? queryWords : clean;
+    final searchTerms = <String>{
+      if (queryWords.isNotEmpty) queryWords,
+      ...queryWords.split(' ').where((w) => w.length >= 2),
+      ...topicKeywords,
+    }.toList();
 
-    dynamic foundChannel;
-    try {
-      foundChannel = widget.channels.firstWhere((c) {
-        final name = (c.name ?? '').toString().toLowerCase();
-        return name.contains(searchKey) || searchKey.contains(name);
-      });
-    } catch (_) {
-      final words = searchKey.split(' ').where((w) => w.length > 1).toList();
-      for (final word in words) {
-        try {
-          foundChannel = widget.channels.firstWhere((c) {
-            final name = (c.name ?? '').toString().toLowerCase();
-            return name.contains(word);
-          });
-          if (foundChannel != null) break;
-        } catch (_) {}
+    // 3. Buscar en Nombre del canal + Categoría + Programa actual de la Guía EPG
+    final List<dynamic> epgMatches = [];
+    final List<dynamic> nameOrCatMatches = [];
+
+    for (final c in widget.channels) {
+      final rawName = (c.name ?? '').toString();
+      final normName = _normalizeText(rawName);
+      String rawCat = '';
+      try {
+        rawCat = (c.groupCategory ?? '').toString();
+      } catch (_) {}
+      final normCat = _normalizeText(rawCat);
+
+      String normEpgTitle = '';
+      try {
+        final prog = EpgService.getCurrentProgram(rawName, rawCat);
+        normEpgTitle = _normalizeText(prog.title);
+      } catch (_) {}
+
+      final bool hitsEpg = searchTerms.any((t) => normEpgTitle.contains(t));
+      final bool hitsNameOrCat = searchTerms.any((t) => normName.contains(t) || normCat.contains(t));
+
+      if (hitsEpg) {
+        epgMatches.add(c);
+      } else if (hitsNameOrCat) {
+        nameOrCatMatches.add(c);
       }
     }
 
-    if (foundChannel != null) {
+    // 4. Ordenar resultados alfabéticamente (A-Z), priorizando los que pasan el programa en EPG ahora
+    int alphaSort(dynamic a, dynamic b) =>
+        (a.name ?? '').toString().toLowerCase().compareTo((b.name ?? '').toString().toLowerCase());
+
+    epgMatches.sort(alphaSort);
+    nameOrCatMatches.sort(alphaSort);
+
+    final allMatches = [...epgMatches, ...nameOrCatMatches];
+
+    if (allMatches.isNotEmpty) {
+      final chosen = allMatches.first;
       Navigator.of(context).pop();
-      widget.onChannelSelected(foundChannel);
+      widget.onChannelSelected(chosen);
     } else {
       setState(() {
         _isProcessing = false;
         _statusText = matchedCategory != null
-            ? 'Categoría "$matchedCategory" aplicada con éxito.'
-            : 'No hallé el canal "$rawQuery". Prueba con otra palabra.';
+            ? 'Categoría "$matchedCategory" aplicada, pero no hallé canales exactos.'
+            : 'No hallé "$rawQuery" en tus canales ni en la guía EPG.';
       });
     }
   }

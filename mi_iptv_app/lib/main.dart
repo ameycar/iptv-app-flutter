@@ -1732,7 +1732,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           final match = _categories.firstWhere(
             (existing) => existing.toLowerCase().contains(cat.toLowerCase()) ||
                 cat.toLowerCase().contains(existing.toLowerCase()),
-            orElse: () => 'Favoritos (⭐)',
+            orElse: () => 'Todos',
           );
           _selectedCategory = match;
           _searchQuery = '';
