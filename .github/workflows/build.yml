@@ -1,4 +1,4 @@
-name: Build APK IPTV
+name: Build APK y AAB IPTV
 
 on:
   push:
@@ -28,15 +28,30 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
           yes | flutter doctor --android-licenses || true
 
+      - name: Decode Keystore and Create key.properties
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          echo "$KEYSTORE_BASE64" | tr -d '\r\n' | base64 --decode > mi_iptv_app/android/app/upload-keystore.jks
+          cat <<EOF > mi_iptv_app/android/key.properties
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=upload-keystore.jks
+          EOF
+
       - name: Install Dependencies
         run: |
           cd mi_iptv_app
           flutter pub get
 
-      - name: Build APK
+      - name: Build APK (Web - Con Pagos Directos)
         run: |
           cd mi_iptv_app
-          flutter build apk --release --obfuscate --split-debug-info=./debug_info --no-tree-shake-icons --android-skip-build-dependency-validation
+          flutter build apk --release --dart-define=PLAY_STORE_BUILD=false --obfuscate --split-debug-info=./debug_info --no-tree-shake-icons --android-skip-build-dependency-validation
 
       - name: Rename APK for Artifact Download
         run: |
@@ -48,3 +63,19 @@ jobs:
         with:
           name: AMEYCARTV-APK
           path: mi_iptv_app/build/app/outputs/flutter-apk/AMEYCARTV.apk
+
+      - name: Build AAB (Google Play - Sin Pagos Externos)
+        run: |
+          cd mi_iptv_app
+          flutter build appbundle --release --dart-define=PLAY_STORE_BUILD=true --obfuscate --split-debug-info=./debug_info_aab --no-tree-shake-icons --android-skip-build-dependency-validation
+
+      - name: Rename AAB for Artifact Download
+        run: |
+          cd mi_iptv_app
+          mv build/app/outputs/bundle/release/app-release.aab build/app/outputs/bundle/release/AMEYCARTV-PLAYSTORE.aab
+
+      - name: Upload AAB (Google Play)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AMEYCARTV-PLAYSTORE-AAB
+          path: mi_iptv_app/build/app/outputs/bundle/release/AMEYCARTV-PLAYSTORE.aab
