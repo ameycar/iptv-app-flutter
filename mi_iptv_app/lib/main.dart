@@ -177,7 +177,7 @@ class NotificationService {
     }
   }
 }
-
+const bool kIsPlayStoreBuild = bool.fromEnvironment('PLAY_STORE_BUILD', defaultValue: true);
 void main() async {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
@@ -509,6 +509,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   bool get _canSeePaymentBanks {
+    if (kIsPlayStoreBuild) return false;
     final user = AuthService.currentUser;
     if (user == null) return true;
     if (user.isAdmin || user.isFamilyAdmin) return true;
@@ -2323,8 +2324,8 @@ void _openParentalManagerDialog() async {
               _buildSettingsTile(
                 icon: Icons.confirmation_number_outlined,
                 color: const Color(0xFF00E676),
-                title: 'Renovar Suscripción / Canjear PIN',
-                subtitle: 'Activar PIN 24/7 o ver medios de pago oficiales',
+                title: kIsPlayStoreBuild ? 'Canjear PIN de Activación' : 'Renovar Suscripción / Canjear PIN',
+                subtitle: kIsPlayStoreBuild ? 'Activar acceso con PIN 24/7' : 'Activar PIN 24/7 o ver medios de pago oficiales',
                 onTap: () {
                   Navigator.pop(ctx);
                   _showRenewSubscriptionModal();
@@ -3977,7 +3978,7 @@ void _showColorBlindSelectorDialog() {
 
                       const Divider(color: Colors.white12),
 
-                      _buildSideMenuItem(Icons.confirmation_number_outlined, 'Renovar / Pagos', _showRenewSubscriptionModal),
+                      _buildSideMenuItem(Icons.confirmation_number_outlined, kIsPlayStoreBuild ? 'Canjear PIN' : 'Renovar / Pagos', _showRenewSubscriptionModal),
 
                       if (!ParentalService.isMenuItemHiddenSync('referral'))
                         _buildSideMenuItem(Icons.card_giftcard, 'Gana +15 Días', _showReferralClubModal),
